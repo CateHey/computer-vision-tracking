@@ -1,0 +1,66 @@
+# ============================================================================
+# HPC SAMURAI + SLEAP Pipeline Configuration (UQ Bunya)
+# ============================================================================
+# SAMURAI (SAM2 video predictor) drives masks and identity.
+# SLEAP provides keypoints (7 body parts per rat).
+# No contact classification (future addition).
+#
+# Usage (interactive):
+#   python -m src.pipelines.samurai_sleap.run --config configs/hpc_samurai_sleap.yaml
+#   python -m src.pipelines.samurai_sleap.run --config configs/hpc_samurai_sleap.yaml \
+#       video_path=data/raw/original_120s.avi
+# ============================================================================
+
+# --- Input video ---
+video_path: data/raw/original.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  # SAMURAI uses SAM2 large — best quality, use on HPC GPU nodes
+  samurai_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_large.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
+
+  # SLEAP bottom-up keypoint model
+  sleap_checkpoint: models/sleap/sleap.ckpt
+
+  device: cuda
+
+# --- Initial bounding boxes (REQUIRED for HPC — no interactive mode) ---
+# Provide [x, y, w, h] for each rat on the first frame.
+# Determine these from the first frame of the video before submitting the job.
+init_bboxes:
+  - [424, 701, 309, 147]   # Rat 1: x, y, width, height — ADJUST TO YOUR VIDEO
+  - [105, 709, 383, 179]   # Rat 2: x, y, width, height — ADJUST TO YOUR VIDEO
+
+# --- Detection (SLEAP keypoints) ---
+detection:
+  max_animals: 2
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+
+# --- Segmentation (SAMURAI mask threshold) ---
+segmentation:
+  sam_threshold: 0.0
+
+# --- Video output ---
+output:
+  video_codec: XVID
+  cleanup_frames: true
+  overlay_colors:
+    - [0, 255, 0, 150]    # Green (Rat 1)
+    - [255, 0, 0, 150]    # Red (Rat 2)
+
+# --- Scan limits ---
+scan:
+  max_frames: null
+  chunk_size: 300          # Frames per SAMURAI chunk (limits GPU memory)

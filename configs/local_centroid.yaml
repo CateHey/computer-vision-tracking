@@ -1,0 +1,78 @@
+# ============================================================================
+# Local Centroid Pipeline Configuration
+# ============================================================================
+# SAM2 centroid propagation (YOLO only on init) + YOLO keypoints + contacts.
+# SAM2 drives masks and identity; YOLO provides keypoints only.
+# No IdentityMatcher — identity comes from centroid ordering.
+#
+# Usage:
+#   python -m src.pipelines.centroid.run --config configs/local_centroid.yaml
+#   python -m src.pipelines.centroid.run --config configs/local_centroid.yaml \
+#       contacts.enabled=true
+# ============================================================================
+
+# --- Input video ---
+video_path: data/clips/output-10s.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  yolo_path: models/yolo/best.pt
+
+  # SAM2 tiny for local testing
+  sam2_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_tiny.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_t.yaml
+
+  device: auto
+
+# --- Detection (YOLO — used for keypoints only, not for SAM2 prompts) ---
+detection:
+  confidence: 0.25
+  max_animals: 2
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+  filter_class: null
+  nms_iou: 0.5  # no-op with YOLO26 (NMS-free architecture)
+
+# --- Segmentation (SAM2) ---
+segmentation:
+  sam_threshold: 0.0
+
+# --- Social contact classification ---
+contacts:
+  enabled: false
+  min_keypoint_conf: 0.3
+  contact_zone_bl: 0.3
+  proximity_zone_bl: 1.0
+  fallback_body_length_px: 120
+  sbs_mask_iou_min: 0.02
+  sbs_max_velocity_bl: 0.04
+  sbs_parallel_cos_min: 0.7
+  follow_radius_bl: 0.5
+  follow_min_speed_bl: 0.025
+  follow_alignment_cos: 0.7
+  follow_min_frames: 30
+  bout_max_gap_frames: 3
+  bout_min_duration_frames: 9
+  mask_overlap_warning: 0.5
+  det_slot_match_radius: 200.0
+
+# --- Video output ---
+output:
+  video_codec: XVID
+  overlay_colors:
+    - [0, 255, 0, 150]    # Green
+    - [255, 0, 0, 150]    # Red
+
+# --- Scan limits ---
+scan:
+  max_frames: null

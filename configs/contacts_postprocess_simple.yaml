@@ -1,0 +1,41 @@
+# ============================================================================
+# Contacts Post-Processing Configuration (Simple 3-Rule Pipeline)
+# ============================================================================
+# Temporal filtering to convert noisy per-frame contact labels into clean
+# behavioral events. See docs/contacts_postprocess_simple.md for research basis.
+#
+# Usage:
+#   python scripts/postprocess_contacts_simple.py path/to/contacts/
+#   python scripts/postprocess_contacts_simple.py path/to/contacts/ \
+#       --config configs/contacts_postprocess_simple.yaml --make_reports
+#   python scripts/postprocess_contacts_simple.py path/to/contacts/ \
+#       smoothing.window=7 min_bout.duration_sec=0.5
+# ============================================================================
+
+# --- Rule 1: Majority-vote smoothing ---
+# Slides a window over per-frame contact labels. Each frame adopts the
+# most frequent label in its window. Corrects 1-2 frame flickers.
+# MARS: 3-frame average. 7-frame window (~233ms) catches 2-3 frame flickers
+# while staying short enough to preserve real transitions.
+smoothing:
+  window: 7              # frames (must be odd). ~233ms at 30fps.
+
+# --- Rule 2: Gap bridging ---
+# If the same contact type reappears within max_gap frames of ending,
+# the gap is filled and the bout continues.
+# MARS: 1-3 frame FN as dominant error. JAABA: gap-fill before min-bout.
+# 5 frames (~167ms) bridges brief detector dropouts without merging distinct bouts.
+gap_bridging:
+  max_gap: 5             # frames. ~167ms at 30fps.
+
+# --- Rule 3: Minimum bout duration ---
+# After smoothing and gap bridging, bouts shorter than this are removed.
+# A-SOiD: 200ms floor, 400ms default. SimBA: per-classifier thresholds.
+# 500ms ensures only sustained interactions are reported — rats need ~300ms
+# minimum for meaningful social contact (literature consensus).
+min_bout:
+  duration_sec: 0.5      # seconds (15 frames at 30fps).
+
+# --- FPS fallback ---
+# Used only if no --fps flag, no session_summary.json, and no --video_path.
+fps_fallback: 30.0

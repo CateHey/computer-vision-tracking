@@ -1,0 +1,65 @@
+# ============================================================================
+# Local SAMURAI + SLEAP Pipeline Configuration
+# ============================================================================
+# SAMURAI (SAM2 video predictor) drives masks and identity.
+# SLEAP provides keypoints (7 body parts per rat).
+# No contact classification (future addition).
+#
+# Usage:
+#   python -m src.pipelines.samurai_sleap.run --config configs/local_samurai_sleap.yaml --interactive
+#   python -m src.pipelines.samurai_sleap.run --config configs/local_samurai_sleap.yaml
+# ============================================================================
+
+# --- Input video ---
+video_path: data/clips/output-120s.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  # SAMURAI uses SAM2 video predictor (same checkpoints as centroid pipeline)
+  samurai_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_tiny.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_t.yaml
+
+  # SLEAP bottom-up keypoint model
+  sleap_checkpoint: models/sleap/sleap.ckpt
+
+  device: auto
+
+# --- Initial bounding boxes (for automated/HPC mode) ---
+# Provide [x, y, w, h] for each rat on the first frame.
+# If omitted, use --interactive flag for manual bbox selection.
+# init_bboxes:
+#   - [100, 200, 150, 100]   # Rat 1: x, y, width, height
+#   - [400, 300, 150, 100]   # Rat 2: x, y, width, height
+
+# --- Detection (SLEAP keypoints) ---
+detection:
+  max_animals: 2
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+
+# --- Segmentation (SAMURAI mask threshold) ---
+segmentation:
+  sam_threshold: 0.0
+
+# --- Video output ---
+output:
+  video_codec: XVID
+  cleanup_frames: true
+  overlay_colors:
+    - [0, 255, 0, 150]    # Green (Rat 1)
+    - [255, 0, 0, 150]    # Red (Rat 2)
+
+# --- Scan limits ---
+scan:
+  max_frames: null
+  chunk_size: 300          # Frames per SAMURAI chunk (limits GPU memory)

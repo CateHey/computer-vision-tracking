@@ -1,0 +1,73 @@
+# ============================================================================
+# Local Isolated-Composite Pipeline Configuration
+# ============================================================================
+# SAM2 masks + "erase the other rat with computed background" + YOLO pose.
+# Local variant uses SAM2 tiny for speed and auto device selection.
+#
+# Usage:
+#   python -m src.pipelines.isolated_composite.run \
+#       --config configs/local_isolated_composite.yaml
+# ============================================================================
+
+# --- Input video ---
+video_path: data/clips/output-10s.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  # SAM2 tiny for local testing
+  samurai_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_tiny.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_t.yaml
+
+  yolo_path: models/yolo/best.pt
+  device: auto
+
+# --- Initial bounding boxes (set via --interactive or edit here) ---
+init_bboxes:
+  - [424, 701, 309, 147]
+  - [105, 709, 383, 179]
+
+# --- Detection (YOLO pose) ---
+detection:
+  max_animals: 2
+  confidence: 0.25
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+
+# --- Segmentation ---
+segmentation:
+  sam_threshold: 0.0
+
+# --- Background computation ---
+background:
+  n_samples: 120           # Fewer samples — short local clips
+  sampling_seed: 42
+  cache: true
+
+# --- Composition (erase the other rat) ---
+composition:
+  erase_dilate_px: 15
+  feather_px: 5
+
+# --- Video output ---
+output:
+  video_codec: XVID
+  cleanup_frames: true
+  write_individual_videos: true
+  overlay_colors:
+    - [0, 255, 0, 150]     # Green
+    - [255, 0, 0, 150]     # Red
+
+# --- Scan limits ---
+scan:
+  max_frames: null
+  chunk_size: 150

@@ -1,0 +1,228 @@
+# ============================================================================
+# Local Quick Test Configuration
+# ============================================================================
+# Use this config for fast iteration on short clips (5-10 seconds).
+# Runs on laptop with CPU or single GPU.
+#
+# Usage:
+#   python -m src.pipelines.sam2_yolo.run --config configs/local_quick.yaml
+#   python scripts/extract_frames.py all --config configs/local_quick.yaml
+# ============================================================================
+
+# --- Input video ---
+video_path: data/clips/output-10s.mp4
+#data/raw/original.mp4
+
+# --- Output ---
+# Run artifacts are written to: <output_dir>/<run_id>/
+# run_id is auto-generated as a timestamp (e.g., 2025-12-09_143022)
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  yolo_path: models/yolo/best.pt
+
+  # SAM2 checkpoint — available sizes:
+  #   sam2.1_hiera_tiny.pt    (~39 MB, fastest, good for local tests)
+  #   sam2.1_hiera_small.pt   (~46 MB)
+  #   sam2.1_hiera_base_plus.pt (~81 MB)
+  #   sam2.1_hiera_large.pt   (~225 MB, best quality, use on HPC)
+  sam2_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_tiny.pt
+
+  # SAM2 Hydra config — must match the checkpoint size:
+  #   configs/sam2.1/sam2.1_hiera_t.yaml   (tiny)
+  #   configs/sam2.1/sam2.1_hiera_s.yaml   (small)
+  #   configs/sam2.1/sam2.1_hiera_b+.yaml  (base_plus)
+  #   configs/sam2.1/sam2.1_hiera_l.yaml   (large)
+  sam2_config: configs/sam2.1/sam2.1_hiera_t.yaml
+
+  # Device selection: "auto" | "cuda" | "cpu"
+  # "auto" picks CUDA if available, otherwise CPU.
+  device: auto
+
+# --- Detection (YOLO) ---
+detection:
+  # Minimum confidence score to keep a detection.
+  # Range: [0.0, 1.0]. Lower = more detections (more noise).
+  # Typical values: 0.25 (permissive) to 0.5 (strict).
+  confidence: 0.25
+
+  # Maximum number of animals expected in the scene.
+  # Used to cap mask filtering — keeps at most this many instances.
+  max_animals: 2
+
+  # Keypoint names for pose models (must match training annotation order).
+  # The yolov8lrata.pt model has 7 keypoints per detection.
+  # Set to null to use defaults from infer_yolo.py.
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+
+  # Minimum confidence to render a keypoint. Range: [0.0, 1.0].
+  keypoint_min_conf: 0.3
+
+  # Only keep YOLO detections of this class. null = keep all classes.
+  # Set to "ratas" to filter out non-rat detections.
+  filter_class: null
+
+  # Mirror-pad frame borders before running YOLO (pixels).
+  # Helps detect rats partially outside the frame.
+  # 0 = no padding, 32-64 = recommended for border issues.
+  yolo_border_padding_px: 0
+
+  # Edge margin: reject detections whose centroid is within N pixels of frame border.
+  # Helps suppress flickering partial detections at walls.
+  # 0 = disabled. 10-15 = recommended for lab videos.
+  edge_margin: 0
+
+  # Custom NMS IoU threshold. null = use YOLO default (~0.7).
+  # Lower values (0.3-0.5) suppress merged boxes when animals touch.
+  nms_iou: 0.5  # no-op with YOLO26 (NMS-free architecture)
+
+# --- Segmentation (SAM2) ---
+segmentation:
+  # Threshold applied to raw SAM2 mask logits.
+  # Range: [-inf, +inf], typically 0.0. Higher = stricter mask boundary.
+  sam_threshold: 0.0
+
+  # IoU threshold for deduplicating overlapping masks.
+  # Range: [0.0, 1.0]. Masks with IoU above this are considered duplicates.
+  mask_iou_threshold: 0.5
+
+# --- Closeness analysis (for extract_frames) ---
+closeness:
+  # Normalized distance threshold for "close" classification.
+  # Distance between detection centroids is normalized by the frame diagonal.
+  # Range: [0.0, 1.0]. Lower = stricter (must be closer).
+  # 0.15 means centroids within 15% of the frame diagonal.
+  distance_threshold_norm: 0.15
+
+  # IoU threshold between bounding boxes for "close" classification.
+  # Range: [0.0, 1.0]. Any pair above this triggers "close".
+  iou_threshold: 0.1
+
+# --- Encounter grouping ---
+encounters:
+  # Maximum gap (seconds) between close frames to merge into one encounter.
+  # Larger = more merging of nearby events.
+  max_gap_seconds: 2.0
+
+  # Minimum duration (seconds) for an encounter to be kept.
+  # Shorter encounters are discarded as noise.
+  min_duration_seconds: 0.5
+
+# --- Frame sampling ---
+sampling:
+  # Total number of frames to export across all encounters.
+  target_total_frames: 50
+
+  # Minimum frames to export per encounter (even for short ones).
+  min_per_encounter: 5
+
+# --- Export ---
+export:
+  # Prefix for exported frame filenames.
+  # Output pattern: <prefix>_e<encounter>_f<frame>.jpg
+  filename_prefix: rat_close
+
+  # Output directory for exported frames.
+  # null = automatically placed under <run_dir>/frames/
+  output_dir: null
+
+# --- Social contact classification ---
+# Classifies pairwise interactions: N2N, N2AG, N2B, SBS, FOL.
+# Outputs CSV, JSON summary, and PDF report in <run_dir>/contacts/.
+# See docs/contacts/design.md for full specification.
+contacts:
+  # Enable/disable contact classification in the pipeline.
+  # false = no overhead, no contact outputs.
+  enabled: false
+
+  # Minimum keypoint confidence to use for contact geometry.
+  min_keypoint_conf: 0.3
+
+  # Proximity zones (in body-lengths, BL).
+  # body_length = dist(nose, tail_base) per rat.
+  contact_zone_bl: 0.3         # < 0.3 BL = physical contact
+  proximity_zone_bl: 1.0       # 0.3 - 1.0 BL = proximity
+  fallback_body_length_px: 120 # fallback when keypoints can't estimate BL
+
+  # Side-by-side detection parameters.
+  sbs_mask_iou_min: 0.02       # minimum mask overlap for SBS
+  sbs_max_velocity_bl: 0.04    # max centroid displacement per frame (in BL)
+  sbs_parallel_cos_min: 0.7    # min |cos(angle)| between body orientations
+
+  # Following detection parameters.
+  follow_radius_bl: 0.5        # nose-to-tail_base distance (in BL)
+  follow_min_speed_bl: 0.025   # min centroid displacement per frame (in BL)
+  follow_alignment_cos: 0.7    # min cos(angle) between velocity vectors
+  follow_min_frames: 5         # min consecutive frames to count as following
+
+  # Bout grouping.
+  bout_max_gap_frames: 3       # max gap (frames) within a single bout
+  bout_min_duration_frames: 2  # min frames for a bout to be recorded
+
+  # Quality flags.
+  mask_overlap_warning: 0.5    # mask_iou above this = tracking error flag
+
+# --- Tracking ---
+tracking:
+  # Ultralytics tracker config. Use our custom config optimized for lab rats
+  # (higher track_buffer, stricter new_track_thresh, no GMC for static camera).
+  # See docs/tracking-techniques-analysis.md for parameter details.
+  tracker_config: configs/trackers/lab_rats_botsort.yaml
+
+  # Maximum pixel distance for centroid-based cost normalization.
+  # Used as denominator: dist_cost = min(dist / max_centroid_distance, 1.0).
+  # 150px typical for 640x480. Scale up for higher resolutions.
+  max_centroid_distance: 150.0
+
+  # Consecutive frames a slot survives without a match before release.
+  # Prevents color swap when YOLO briefly misses a rat (e.g., at borders).
+  max_missing_frames: 5
+
+  # Hungarian assignment cost weights (must sum to ~1.0).
+  # w_dist: centroid distance (normalized by max_centroid_distance)
+  # w_iou:  1 - mask_iou with previous frame (shape similarity)
+  # w_area: area change ratio (soft penalty, NOT hard veto)
+  w_dist: 0.4
+  w_iou: 0.4
+  w_area: 0.2
+
+  # Assignments with total cost above this are rejected (unmatched).
+  # Lowered from 0.85 to accept slightly imperfect matches during occlusion.
+  cost_threshold: 0.75
+
+# --- Video output ---
+output:
+  # Video codec for overlay output.
+  #   "XVID" -> .avi, universal playback (recommended)
+  #   "avc1" -> .mp4 H.264, needs OpenH264 library installed
+  #   "mp4v" -> .mp4 MPEG-4 Part 2, may not play on Windows
+  video_codec: XVID
+
+  # RGBA colors for each tracked animal (up to max_animals).
+  # Format: [R, G, B, Alpha] where Alpha controls mask transparency (0-255).
+  overlay_colors:
+    - [0, 255, 0, 150]    # Green
+    - [255, 0, 0, 150]    # Red
+
+# --- Scan limits ---
+scan:
+  # Maximum frames to process. null = process entire video.
+  # Set to a small number for quick tests (e.g., 150 = ~6s at 25fps).
+  max_frames: null
+
+# --- Roboflow (for upload script) ---
+roboflow:
+  workspace: modelos-yolo
+  project: pruebasratslabs-c02t9
+  # Upload split: "train" | "valid" | "test"
+  split: train
+  # Optional batch name to group uploads (null = no grouping)
+  batch_name: null

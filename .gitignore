@@ -1,0 +1,49 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Virtual environment ---
+.venv/
+venv/
+env/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Data (large files, not committed) ---
+# Contents are ignored but .gitkeep preserves the directory structure
+data/raw/*
+!data/raw/.gitkeep
+data/videos/
+data/roboflow_export/*
+!data/roboflow_export/.gitkeep
+
+# --- Models ---
+# YOLO weights ARE committed (86MB, custom trained — essential for the pipeline)
+# SAM2 repo + checkpoints are NOT committed (225MB+, downloaded on each machine)
+models/sam2/
+models/sleap/
+
+# --- External repos ---
+external/
+
+# --- Run outputs ---
+outputs/runs/
+outputs/slurm/
+outputs/olds/
+
+# --- Legacy directories (migrated) ---
+bunya/
+frames/
+
+# --- OS ---
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
+      "WebSearch",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

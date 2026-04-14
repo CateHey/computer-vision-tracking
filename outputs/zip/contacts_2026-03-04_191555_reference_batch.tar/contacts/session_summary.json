@@ -1,0 +1,111 @@
+{
+  "metadata": {
+    "video_path": "/home/s4948012/Balbi/yolo-sam2-lab-tracking/data/raw/original_120s.avi",
+    "video_duration_sec": 118.57,
+    "total_frames": 3557,
+    "fps": 30.0,
+    "num_rats": 2,
+    "analysis_date": "2026-03-04T19:25:54",
+    "merged_from_chunks": 2
+  },
+  "zone_summary": {
+    "contact_frames": 347,
+    "contact_pct": 9.76,
+    "proximity_frames": 158,
+    "proximity_pct": 4.44,
+    "independent_frames": 3052,
+    "independent_pct": 85.8
+  },
+  "contact_type_summary": {
+    "FOL": {
+      "total_bouts": 3,
+      "total_duration_sec": 0.23,
+      "total_frames": 8,
+      "pct_of_session": 0.22,
+      "by_investigator": {
+        "slot_0": {
+          "bouts": 2,
+          "duration_sec": 0.13
+        },
+        "slot_1": {
+          "bouts": 1,
+          "duration_sec": 0.1
+        }
+      }
+    },
+    "N2AG": {
+      "total_bouts": 19,
+      "total_duration_sec": 4.07,
+      "total_frames": 125,
+      "pct_of_session": 3.51,
+      "by_investigator": {
+        "slot_1": {
+          "bouts": 12,
+          "duration_sec": 2.74
+        },
+        "slot_0": {
+          "bouts": 7,
+          "duration_sec": 1.33
+        }
+      }
+    },
+    "N2B": {
+      "total_bouts": 17,
+      "total_duration_sec": 4.53,
+      "total_frames": 134,
+      "pct_of_session": 3.77,
+      "by_investigator": {
+        "slot_0": {
+          "bouts": 11,
+          "duration_sec": 2.97
+        },
+        "slot_1": {
+          "bouts": 6,
+          "duration_sec": 1.57
+        }
+      }
+    },
+    "N2N": {
+      "total_bouts": 14,
+      "total_duration_sec": 2.1,
+      "total_frames": 71,
+      "pct_of_session": 2.0
+    },
+    "SBS": {
+      "total_bouts": 0,
+      "total_duration_sec": 0.0,
+      "total_frames": 0,
+      "pct_of_session": 0.0
+    }
+  },
+  "per_pair_summary": {
+    "pair_0_1": {
+      "total_contact_sec": 10.94,
+      "total_contact_pct": 9.23,
+      "contact_types": {
+        "N2N": {
+          "bouts": 14,
+          "duration_sec": 2.1
+        },
+        "N2AG": {
+          "bouts": 19,
+          "duration_sec": 4.07
+        },
+        "N2B": {
+          "bouts": 17,
+          "duration_sec": 4.53
+        },
+        "FOL": {
+          "bouts": 3,
+          "duration_sec": 0.23
+        }
+      }
+    }
+  },
+  "quality": {
+    "high_mask_overlap_frames": 0,
+    "missing_keypoints_frames": 0,
+    "single_detection_frames": 2287,
+    "total_flagged_pct": 64.3
+  }
+}

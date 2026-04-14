@@ -1,0 +1,56 @@
+# ============================================================================
+# HPC Configuration: Interaction Frame Extraction
+# ============================================================================
+# SAM2 centroid propagation to find close-interaction frames for YOLO retraining.
+#
+# Usage:
+#   bash roboflow/run_extract.sh data/raw/original.mp4
+#   bash roboflow/run_extract.sh data/raw/original.mp4 4
+#
+#   # Or directly:
+#   python roboflow/extract_interaction_frames.py all --config configs/hpc_extract.yaml
+# ============================================================================
+
+# --- Input video ---
+video_path: data/raw/original.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  yolo_path: models/yolo/best.pt
+  sam2_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_large.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
+  device: cuda
+
+# --- Detection (YOLO — init frame only) ---
+detection:
+  confidence: 0.25
+  max_animals: 2
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+  filter_class: null
+  nms_iou: 0.5
+
+# --- Segmentation (SAM2) ---
+segmentation:
+  sam_threshold: 0.0
+
+# --- Frame extraction ---
+extract:
+  max_frames: 200
+  min_gap_frames: 15
+  interaction_threshold_px: 200
+
+# --- Scan limits ---
+# Frame limit is controlled by run_extract.sh (4th argument), not here
+scan:
+  max_frames: null

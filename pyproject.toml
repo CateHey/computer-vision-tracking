@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "yolo-sam2-lab-tracking"
+version = "0.1.0"
+description = "AI-based mouse movement tracking from laboratory videos using YOLOv8 + SAM2"
+requires-python = ">=3.10"
+readme = "README.md"
+
+dependencies = [
+    # Core scientific stack
+    "numpy",
+    "opencv-python",
+    "matplotlib",
+    "Pillow",
+    "scipy",
+
+    # Deep learning
+    "torch",
+    "torchvision",
+    "torchaudio",
+
+    # YOLOv8
+    "ultralytics",
+
+    # SAM2 config management
+    "hydra-core",
+
+    # Config loading
+    "pyyaml",
+
+    # Annotation platform
+    "roboflow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipython",
+    "notebook",
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

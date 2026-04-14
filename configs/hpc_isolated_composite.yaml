@@ -1,0 +1,82 @@
+# ============================================================================
+# HPC Isolated-Composite Pipeline Configuration (UQ Bunya)
+# ============================================================================
+# SAM2 masks + "erase the other rat with computed background" + YOLO pose.
+# Aims to improve keypoint detection on close-contact frames by removing the
+# interfering rat from the input YOLO sees.
+#
+# Usage:
+#   python -m src.pipelines.isolated_composite.run \
+#       --config configs/hpc_isolated_composite.yaml
+#
+#   # Multi-GPU parallel (same contract as samurai/centroid):
+#   bash scripts/run_parallel_isolated.sh data/raw/original_120s.avi 4 \
+#       configs/hpc_isolated_composite.yaml
+# ============================================================================
+
+# --- Input video ---
+video_path: data/raw/original.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  # SAM2 large — best quality, use on HPC GPU nodes
+  samurai_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_large.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
+
+  # YOLO keypoint model
+  yolo_path: models/yolo/best.pt
+
+  device: cuda
+
+# --- Initial bounding boxes (REQUIRED on HPC — no interactive mode) ---
+# [x, y, w, h] for each rat on the first frame of the range processed.
+init_bboxes:
+  - [424, 701, 309, 147]   # Rat 1 — ADJUST TO YOUR VIDEO
+  - [105, 709, 383, 179]   # Rat 2 — ADJUST TO YOUR VIDEO
+
+# --- Detection (YOLO pose) ---
+detection:
+  max_animals: 2
+  confidence: 0.25
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+
+# --- Segmentation ---
+segmentation:
+  sam_threshold: 0.0
+
+# --- Background computation ---
+background:
+  n_samples: 300           # frames sampled for per-pixel median
+  sampling_seed: 42        # deterministic across multi-GPU workers
+  cache: true              # reuse across runs with the same video fingerprint
+  # cache_dir: outputs/runs/_background_cache   # optional override
+
+# --- Composition (erase the other rat) ---
+composition:
+  erase_dilate_px: 15      # grow mask_other before erasing to cover halos
+  feather_px: 5            # Gaussian feather on the erase edge
+
+# --- Video output ---
+output:
+  video_codec: XVID
+  cleanup_frames: true
+  write_individual_videos: true
+  overlay_colors:
+    - [0, 255, 0, 150]     # Green (Rat 1)
+    - [255, 0, 0, 150]     # Red   (Rat 2)
+
+# --- Scan limits ---
+scan:
+  max_frames: null
+  chunk_size: 300          # Frames per SAM2 chunk (limits GPU memory)

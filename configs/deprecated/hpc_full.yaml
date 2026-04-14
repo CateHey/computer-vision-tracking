@@ -1,0 +1,137 @@
+# ============================================================================
+# HPC Full Run Configuration (UQ Bunya)
+# ============================================================================
+# Use this config for full-length video processing on Bunya GPU nodes.
+# Expects CUDA-capable GPU and sufficient memory for large SAM2 model.
+#
+# Usage (via Slurm):
+#   sbatch slurm/run_infer.sbatch
+#
+# Usage (interactive):
+#   python -m src.pipelines.sam2_yolo.run --config configs/hpc_full.yaml
+#   python scripts/extract_frames.py all --config configs/hpc_full.yaml
+# ============================================================================
+
+# --- Input video ---
+video_path: data/raw/original.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  yolo_path: models/yolo/best.pt
+
+  # SAM2 checkpoint — available sizes:
+  #   sam2.1_hiera_tiny.pt    (~39 MB, fastest, good for local tests)
+  #   sam2.1_hiera_small.pt   (~46 MB)
+  #   sam2.1_hiera_base_plus.pt (~81 MB)
+  #   sam2.1_hiera_large.pt   (~225 MB, best quality, use on HPC)
+  sam2_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_large.pt
+
+  # SAM2 Hydra config — must match the checkpoint size:
+  #   configs/sam2.1/sam2.1_hiera_t.yaml   (tiny)
+  #   configs/sam2.1/sam2.1_hiera_s.yaml   (small)
+  #   configs/sam2.1/sam2.1_hiera_b+.yaml  (base_plus)
+  #   configs/sam2.1/sam2.1_hiera_l.yaml   (large)
+  sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
+
+  # Device: "cuda" for HPC GPU nodes
+  device: cuda
+
+# --- Detection (YOLO) ---
+detection:
+  confidence: 0.25
+  max_animals: 2
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+  filter_class: null
+  yolo_border_padding_px: 0
+
+  # Edge margin: reject detections whose centroid is within N pixels of frame border.
+  # 0 = disabled. 10-15 = recommended for lab videos.
+  edge_margin: 0
+
+  # Custom NMS IoU threshold. null = use YOLO default (~0.7).
+  # Lower values (0.3-0.5) suppress merged boxes when animals touch.
+  nms_iou: 0.5  # no-op with YOLO26 (NMS-free architecture)
+
+# --- Segmentation (SAM2) ---
+segmentation:
+  sam_threshold: 0.0
+  mask_iou_threshold: 0.5
+
+# --- Closeness analysis ---
+closeness:
+  distance_threshold_norm: 0.15
+  iou_threshold: 0.1
+
+# --- Encounter grouping ---
+encounters:
+  max_gap_seconds: 2.0
+  min_duration_seconds: 0.5
+
+# --- Frame sampling ---
+sampling:
+  target_total_frames: 200
+  min_per_encounter: 10
+
+# --- Export ---
+export:
+  filename_prefix: rat_close
+  output_dir: null
+
+# --- Social contact classification ---
+contacts:
+  enabled: false
+  min_keypoint_conf: 0.3
+  contact_zone_bl: 0.3
+  proximity_zone_bl: 1.0
+  fallback_body_length_px: 120
+  sbs_mask_iou_min: 0.02
+  sbs_max_velocity_bl: 0.04
+  sbs_parallel_cos_min: 0.7
+  follow_radius_bl: 0.5
+  follow_min_speed_bl: 0.025
+  follow_alignment_cos: 0.7
+  follow_min_frames: 5
+  bout_max_gap_frames: 3
+  bout_min_duration_frames: 2
+  mask_overlap_warning: 0.5
+
+# --- Tracking ---
+tracking:
+  tracker_config: configs/trackers/lab_rats_botsort.yaml
+  max_centroid_distance: 150.0
+  max_missing_frames: 5
+  w_dist: 0.4
+  w_iou: 0.4
+  w_area: 0.2
+  cost_threshold: 0.75
+
+# --- Video output ---
+output:
+  # "XVID" -> .avi (universal), "avc1" -> .mp4 (needs OpenH264)
+  video_codec: XVID
+  overlay_colors:
+    - [0, 255, 0, 150]
+    - [255, 0, 0, 150]
+
+# --- Scan limits ---
+scan:
+  # null = process the entire video (all ~30,000 frames for 20min @ 25fps)
+  max_frames: null
+
+# --- Roboflow ---
+roboflow:
+  workspace: modelos-yolo
+  project: pruebasratslabs-c02t9
+  split: train
+  batch_name: null

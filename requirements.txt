@@ -1,0 +1,29 @@
+# --- Core scientific stack ---
+numpy
+opencv-python
+matplotlib
+Pillow
+scipy
+pandas
+
+# --- Deep learning ---
+torch
+torchvision
+torchaudio
+
+# --- YOLOv8 ---
+ultralytics
+
+# --- SAM2 (local editable install) ---
+-e ./models/sam2/segment-anything-2
+hydra-core
+
+# --- Config loading ---
+pyyaml
+
+# --- Annotation platform ---
+roboflow
+
+# --- Utilities ---
+ipython
+notebook
