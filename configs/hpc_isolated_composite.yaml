@@ -80,3 +80,74 @@ output:
 scan:
   max_frames: null
   chunk_size: 300          # Frames per SAM2 chunk (limits GPU memory)
+
+
+contacts:
+  enabled: false                    # Master switch: set true to enable contact analysis
+  version: "v2"                     # "v1" (original) o "v2" (hysteresis + soft scores)
+
+  # ==========================================================================
+  # v1 PARAMETERS (solo usados si version: "v1")
+  # ==========================================================================
+  min_keypoint_conf: 0.3
+  contact_zone_bl: 0.3
+  proximity_zone_bl: 1.0
+  fallback_body_length_px: 120
+  sbs_mask_iou_min: 0.02
+  sbs_max_velocity_bl: 0.04
+  sbs_parallel_cos_min: 0.7
+  follow_radius_bl: 0.5
+  follow_min_speed_bl: 0.025
+  follow_alignment_cos: 0.7
+  follow_min_frames: 30
+  bout_max_gap_frames: 3
+  bout_min_duration_frames: 9
+  mask_overlap_warning: 0.5
+  det_slot_match_radius: 200.0
+
+  # ==========================================================================
+  # v2 PARAMETERS (solo usados si version: "v2")
+  # Basado en defaults de DeepOF (Miranda et al. 2023) adaptados a body lengths
+  # ==========================================================================
+
+  # --- Keypoint quality ---
+  # (reutiliza min_keypoint_conf de arriba)
+
+  # --- Hysteresis (Schmitt triggers) ---
+  # Umbrales duales: "enter" es más estricto, "exit" más permisivo.
+  # Equivale a un 25mm en DeepOF / 85mm body length ≈ 0.29 BL.
+  contact_zone_bl_enter: 0.30       # entrada al contacto (tau_high)
+  contact_zone_bl_exit: 0.45        # salida del contacto (tau_low)
+
+  # --- SBS (Side-by-Side) ---
+  sbs_mask_iou_enter: 0.05          # IoU mínimo para entrar en SBS
+  sbs_mask_iou_exit: 0.02           # IoU mínimo para mantener SBS
+  sbs_max_velocity_bls: 0.5         # velocidad máx en body_lengths/seg (quietos)
+  sbs_parallel_cos_min: 0.7         # cos(orientación) mínimo (paralelo)
+
+  # --- FOL (Following) con path-based (DeepOF style) ---
+  # Menos estricto que v1: tolera followed quieto
+  follow_radius_bl: 0.40            # nose del follower → path del followed
+  follow_radius_bl_exit: 0.60       # salida del estado FOL
+  follow_min_speed_bls: 0.15        # follower debe moverse (pero followed puede estar quieto)
+  follow_alignment_cos: 0.6         # orientación hacia el target (menos estricto que v1)
+
+  # --- Scoring multi-label ---
+  activation_threshold: 0.5         # score mínimo para considerar contacto "activo"
+  activation_threshold_rare: 0.35   # umbral más bajo para tipos raros (FOL)
+
+  # --- Bout management ---
+  # A 25 fps: frame_rate/4 = 6 frames (0.25s) / frame_rate/2 = 12 frames (0.5s)
+  bout_max_gap_frames: 3            # tolerancia de huecos (DeepOF default)
+  bout_min_frames_n2n: 6            # 0.25s a 25fps
+  bout_min_frames_n2ag: 6
+  bout_min_frames_t2t: 6
+  bout_min_frames_fol: 12           # 0.5s — FOL más estricto (previene falsos positivos)
+  bout_min_frames_sbs: 6
+  bout_min_frames_n2b: 6
+
+  # --- Warnings ---
+  mask_overlap_warning: 0.5
+
+  # --- Detection-to-slot matching ---
+  det_slot_match_radius: 200.0

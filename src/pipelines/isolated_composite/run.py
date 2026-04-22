@@ -42,6 +42,10 @@ from src.common.config_loader import (
 from src.common.constants import DEFAULT_KEYPOINT_NAMES
 from src.common.io_video import create_video_writer
 from src.common.metrics import compute_centroid
+
+from src.common.contacts import ContactTracker
+from src.common.contacts_v2 import ContactTrackerV2
+
 from src.common.model_loaders import load_yolo
 from src.common.utils import Detection
 from src.common.visualization import (
@@ -288,6 +292,33 @@ def run_pipeline(
             )
 
     # ==================================================================
+    # Contact classification (optional) — instantiated ONCE, not per chunk
+    # ==================================================================
+    contacts_enabled = config.get("contacts", {}).get("enabled", False)
+    contact_tracker = None
+    if contacts_enabled:
+        contacts_version = config.get("contacts", {}).get("version", "v1")
+        if contacts_version == "v2":
+            logger.info("Using ContactTrackerV2 (hysteresis + soft scores)")
+            contact_tracker = ContactTrackerV2(
+                output_dir=run_dir / "contacts",
+                fps=fps,
+                num_slots=max_animals,
+                video_path=str(video_path),
+                config=config,
+            )
+        else:
+            logger.info("Using ContactTracker v1 (legacy)")
+            contact_tracker = ContactTracker(
+                output_dir=run_dir / "contacts",
+                fps=fps,
+                num_slots=max_animals,
+                video_path=str(video_path),
+                config=config,
+            )
+        logger.info("Contact classification enabled -> %s", run_dir / "contacts")
+
+    # ==================================================================
     # Phase 5: Chunked streaming — SAM2 propagate → erase → YOLO → render
     # ==================================================================
     n_chunks = (num_frames + chunk_size - 1) // chunk_size
@@ -466,6 +497,16 @@ def run_pipeline(
                 prev_slot_dets = [copy.deepcopy(d) for d in slot_dets]
                 prev_centroids = list(slot_centroids)
 
+
+                # --- Contact classification ---
+                if contact_tracker is not None:
+                    contact_tracker.update(
+                        slot_dets, slot_masks, slot_centroids, global_frame_idx,
+                    )
+
+
+
+
                 # --- Render overlay on the original frame ---
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 frame_out = frame_rgb.copy()
@@ -556,6 +597,26 @@ def run_pipeline(
     for iw in individual_writers:
         if iw is not None:
             iw.release()
+
+
+    # ==================================================================
+    # Finalize contacts (after ALL chunks processed)
+    # ==================================================================
+    if contact_tracker is not None:
+        summary = contact_tracker.finalize()
+        total_bouts = sum(
+            v.get("total_bouts", 0)
+            for v in summary.get("contact_type_summary", {}).values()
+        )
+        logger.info("Contact analysis: %d bouts detected", total_bouts)
+
+        try:
+            from scripts.postprocess_contacts_simple import run_postprocess
+            run_postprocess(run_dir / "contacts", fps=fps)
+        except Exception as e:
+            logger.warning("Contact post-processing failed: %s", e)
+
+
 
     cleanup_frames = out_cfg.get("cleanup_frames", True)
     if cleanup_frames:

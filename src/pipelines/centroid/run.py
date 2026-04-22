@@ -33,6 +33,9 @@ import torch
 
 from src.common.config_loader import load_config, setup_run_dir, setup_logging
 from src.common.contacts import ContactTracker
+
+from src.common.contacts_v2 import ContactTrackerV2
+
 from src.common.io_video import (
     open_video_reader, get_video_properties, create_video_writer, iter_frames,
 )
@@ -244,13 +247,26 @@ def run_pipeline(
     contacts_enabled = config.get("contacts", {}).get("enabled", False)
     contact_tracker = None
     if contacts_enabled:
-        contact_tracker = ContactTracker(
-            output_dir=run_dir / "contacts",
-            fps=props["fps"],
-            num_slots=max_animals,
-            video_path=str(video_path),
-            config=config,
-        )
+        # Elegir versión del ContactTracker según config
+        contacts_version = config.get("contacts", {}).get("version", "v1")
+        if contacts_version == "v2":
+            logger.info("Using ContactTrackerV2 (hysteresis + soft scores)")
+            contact_tracker = ContactTrackerV2(
+                output_dir=run_dir / "contacts",
+                fps=props["fps"],
+                num_slots=max_animals,
+                video_path=str(video_path),
+                config=config,
+            )
+        else:
+            logger.info("Using ContactTracker v1 (legacy)")
+            contact_tracker = ContactTracker(
+                output_dir=run_dir / "contacts",
+                fps=props["fps"],
+                num_slots=max_animals,
+                video_path=str(video_path),
+                config=config,
+            )
         logger.info("Contact classification enabled -> %s", run_dir / "contacts")
 
     # Centroid propagation state
