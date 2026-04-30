@@ -27,7 +27,7 @@ models:
   sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
 
   # YOLO keypoint model
-  yolo_path: models/yolo/best.pt
+  yolo_path: models/yolo/yolo8l_mouse_correct.pt
 
   device: cuda
 
