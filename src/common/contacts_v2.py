@@ -127,6 +127,27 @@ class ScoreMap:
         """Retorna TODOS los tipos activos (para análisis multi-label)."""
         return [ct for ct in ContactType.all_contact_types() if self.get(ct) >= threshold]
 
+    def secondary_type(
+        self,
+        primary: ContactType,
+        threshold: float = 0.4,
+    ) -> Tuple[ContactType, float]:
+        """Retorna el segundo tipo activo más fuerte (distinto al primary).
+
+        Útil para detectar comportamientos concurrentes (ej. N2AG + FOL).
+        Si no hay un segundo tipo que supere el umbral, retorna (NONE, 0.0).
+        """
+        best_type = ContactType.NONE
+        best_score = 0.0
+        for ct in ContactType.all_contact_types():
+            if ct == primary:
+                continue
+            score = self.get(ct)
+            if score >= threshold and score > best_score:
+                best_score = score
+                best_type = ct
+        return best_type, best_score
+
     def max_score(self) -> float:
         """El score más alto en este frame."""
         return max(self.n2n, self.n2ag, self.t2t, self.fol, self.sbs, self.n2b)
@@ -156,6 +177,11 @@ class ContactEvent:
     # Compatibilidad v1: tipo discreto + zona
     contact_type: ContactType = ContactType.NONE
     zone: Zone = Zone.INDEPENDENT
+
+    # NUEVO en v2: tipo secundario concurrente (cuando hay 2 comportamientos a la vez)
+    # Ejemplo típico: N2AG + FOL simultáneos (rata investigando mientras sigue)
+    secondary_type: ContactType = ContactType.NONE
+    secondary_score: float = 0.0
 
     # Métricas geométricas (todas normalizadas en body lengths)
     nose_nose_dist_bl: float = float("inf")
@@ -189,34 +215,61 @@ class ContactEvent:
     merged_state: bool = False
 
     def to_csv_row(self) -> Dict[str, Any]:
-        """Convierte a dict para escribir al CSV."""
+        """Convierte a dict para escribir al CSV.
+
+        Orden de columnas:
+          1. Identificación: frame_idx, time_str, time_sec, pair_key
+          2. Clasificación: contact_type, name_contact, secondary_type, secondary_name, secondary_score
+          3. Zona: zone
+          4. Distancias geométricas (todas en body lengths)
+          5. Cinemática
+          6. Body lengths (px)
+          7. Rol del investigador
+          8. Bout tracking
+          9. Soft scores por tipo
+          10. Flags de calidad
+        """
         row = {
+            # 1. Identificación
             "frame_idx": self.frame_idx,
+            "time_str": _fmt_time(self.time_sec),
             "time_sec": round(self.time_sec, 3),
             "pair_key": self.pair_key,
+            # 2. Clasificación principal + secundaria
             "contact_type": self.contact_type.value,
+            "name_contact": CONTACT_TYPE_NAMES.get(self.contact_type.value, ""),
+            "secondary_type": self.secondary_type.value if self.secondary_type != ContactType.NONE else "",
+            "secondary_name": CONTACT_TYPE_NAMES.get(self.secondary_type.value, "") if self.secondary_type != ContactType.NONE else "",
+            "secondary_score": round(self.secondary_score, 4),
+            # 3. Zona
             "zone": self.zone.value,
+            # 4. Distancias en body lengths
             "nose_nose_dist_bl": _fmt(self.nose_nose_dist_bl),
             "centroid_dist_bl": _fmt(self.centroid_dist_bl),
             "nose_tailbase_ij_bl": _fmt(self.nose_tailbase_ij_bl),
             "nose_tailbase_ji_bl": _fmt(self.nose_tailbase_ji_bl),
             "tail_tail_dist_bl": _fmt(self.tail_tail_dist_bl),
             "mask_iou": round(self.mask_iou, 4),
+            # 5. Cinemática
             "velocity_i_bls": round(self.velocity_i_bls, 4),
             "velocity_j_bls": round(self.velocity_j_bls, 4),
             "velocity_alignment_cos": round(self.velocity_alignment_cos, 4),
             "orientation_alignment_cos": round(self.orientation_alignment_cos, 4),
+            # 6. Body lengths (referencia)
             "body_length_i_px": round(self.body_length_i_px, 2),
             "body_length_j_px": round(self.body_length_j_px, 2),
+            # 7. Rol del investigador
             "investigator_role": self.investigator_role or "",
+            # 8. Bout tracking
             "bout_id": self.bout_id or "",
+            # 10. Flags de calidad
             "stale_keypoints": int(self.stale_keypoints),
             "high_mask_overlap": int(self.high_mask_overlap),
             "missing_keypoints": int(self.missing_keypoints),
             "single_detection": int(self.single_detection),
             "merged_state": int(self.merged_state),
         }
-        # Añadir scores con prefijo
+        # 9. Soft scores con prefijo (insertados después del orden lógico)
         row.update(self.scores.to_dict())
         return row
 
@@ -292,15 +345,32 @@ class Bout:
             self.mean_velocity_j_bls = self._sum_velocity_j / self.n_frames
 
     def to_csv_row(self) -> Dict[str, Any]:
+        """Orden de columnas pedido por usuario:
+          1. id (bout_id), pair_key
+          2. contact_type, name_contact
+          3. start_frame, end_frame
+          4. start_time (mm:ss.ms), end_time (mm:ss.ms), duration_sec
+          5. start_time_sec, end_time_sec (en segundos para análisis numérico)
+          6. n_frames + métricas acumuladas
+        """
         return {
-            "bout_id": self.bout_id,
+            # 1. ID
+            "id": self.bout_id,
             "pair_key": self.pair_key,
+            # 2. Clasificación
             "contact_type": self.contact_type.value,
+            "name_contact": CONTACT_TYPE_NAMES.get(self.contact_type.value, ""),
+            # 3. Frames
             "start_frame": self.start_frame,
             "end_frame": self.end_frame,
+            # 4. Tiempos legibles (mm:ss.ms)
+            "start_time": _fmt_time(self.start_time_sec),
+            "end_time": _fmt_time(self.end_time_sec),
+            "duration_sec": round(self.duration_sec, 3),
+            # 5. Tiempos numéricos
             "start_time_sec": round(self.start_time_sec, 3),
             "end_time_sec": round(self.end_time_sec, 3),
-            "duration_sec": round(self.duration_sec, 3),
+            # 6. Métricas
             "n_frames": self.n_frames,
             "mean_nose_nose_dist_bl": _fmt(self.mean_nose_nose_dist_bl),
             "mean_centroid_dist_bl": _fmt(self.mean_centroid_dist_bl),
@@ -317,6 +387,30 @@ def _fmt(x: float) -> float:
     if not math.isfinite(x):
         return -1.0
     return round(x, 4)
+
+
+def _fmt_time(seconds: float) -> str:
+    """Formato mm:ss.ms para columnas de tiempo legibles.
+
+    Ejemplos: 6.7 → "00:06.700", 90.6 → "01:30.600", 3559/30 → "01:58.633"
+    """
+    if not math.isfinite(seconds) or seconds < 0:
+        return "00:00.000"
+    minutes = int(seconds // 60)
+    secs = seconds - minutes * 60
+    return f"{minutes:02d}:{secs:06.3f}"
+
+
+# Mapping de sigla → nombre completo (para columna name_contact)
+CONTACT_TYPE_NAMES: Dict[str, str] = {
+    "none": "None",
+    "N2N": "Nose-to-Nose",
+    "N2AG": "Nose-to-Anogenital",
+    "T2T": "Tail-to-Tail",
+    "FOL": "Following",
+    "SBS": "Side-by-Side",
+    "N2B": "Nose-to-Body",
+}
 
 
 # ============================================================================
@@ -822,13 +916,19 @@ class ContactClassifier:
 
         # --- SCORES ---
 
-        # 1. N2N — bilateral
-        event.scores.n2n = self._score_n2n(event.nose_nose_dist_bl)
+        # 1. N2N — bilateral con factor de vectores opuestos (mejora v2.1)
+        event.scores.n2n = self._score_n2n(event.nose_nose_dist_bl, orient_i, orient_j)
 
-        # 2. N2AG — asimétrico (devuelve score + role)
+        # 2. N2AG — asimétrico con factor de vector mirada (mejora v2.1)
         n2ag_score, n2ag_role = self._score_n2ag(
             event.nose_tailbase_ij_bl,
             event.nose_tailbase_ji_bl,
+            nose_i=nose_i,
+            nose_j=nose_j,
+            tail_i=tail_i,
+            tail_j=tail_j,
+            orient_i=orient_i,
+            orient_j=orient_j,
         )
         event.scores.n2ag = n2ag_score
 
@@ -854,13 +954,17 @@ class ContactClassifier:
             event.orientation_alignment_cos,
         )
 
-        # 6. N2B — catch-all, con guardas contra N2N/N2AG
+        # 6. N2B — catch-all con guardas + vector mirada (mejora v2.1)
         n2b_score, n2b_role = self._score_n2b(
             nose_i, nose_j,
             mask_i, mask_j,
             event.nose_nose_dist_bl,
             event.nose_tailbase_ij_bl,
             event.nose_tailbase_ji_bl,
+            centroid_i=centroid_i,
+            centroid_j=centroid_j,
+            orient_i=orient_i,
+            orient_j=orient_j,
         )
         event.scores.n2b = n2b_score
 
@@ -871,6 +975,15 @@ class ContactClassifier:
             activation_threshold=activation,
             rare_threshold=rare,
         )
+
+        # --- NUEVO v2.1: secondary_type (comportamiento concurrente) ---
+        secondary_threshold = float(self.config.get("secondary_threshold", 0.4))
+        sec_type, sec_score = event.scores.secondary_type(
+            primary=event.contact_type,
+            threshold=secondary_threshold,
+        )
+        event.secondary_type = sec_type
+        event.secondary_score = sec_score
 
         # --- Determinar investigator_role según el tipo ganador ---
         if event.contact_type == ContactType.N2AG:
@@ -894,16 +1007,42 @@ class ContactClassifier:
 
     # -------------------------- Scoring por tipo --------------------------
 
-    def _score_n2n(self, nose_nose_bl: float) -> float:
-        """Score de nose-to-nose. Schmitt trigger + soft score."""
+    def _score_n2n(
+        self,
+        nose_nose_bl: float,
+        orient_i: Optional[Tuple[float, float]] = None,
+        orient_j: Optional[Tuple[float, float]] = None,
+    ) -> float:
+        """Score de nose-to-nose. Schmitt trigger + soft score + vectores opuestos.
+
+        Mejora v2.1: penaliza si las orientaciones NO son opuestas. En un N2N
+        real las ratas se miran de frente, por lo que sus vectores cuerpo
+        (tail→nose) apuntan en direcciones contrarias (cos≈-1).
+
+        Si los vectores apuntan al mismo lado (ratas paralelas, casualmente con
+        narices cerca) → score×factor reducido.
+        """
         # El trigger da estabilidad temporal (evita flicker)
         active = self.trig_n2n.update(nose_nose_bl)
         # El soft score da continuidad
         soft = reversed_trapezoidal_score(nose_nose_bl, self.contact_near, self.contact_far)
-        # Si el trigger está activo, el score mínimo es 0.5 (no cae bruscamente)
+        # Si el trigger está activo, el score mínimo es 0.5
         if active:
-            return max(soft, 0.5)
-        return soft
+            soft = max(soft, 0.5)
+
+        # Factor de orientación opuesta (vectores -orient_j vs orient_i)
+        # Si están de frente: cos(orient_i, -orient_j) ≈ 1 → factor 1
+        # Si están paralelas: cos ≈ 0 → factor 0.65
+        # Si están una atrás de otra: cos ≈ -1 → factor 0.3 (piso)
+        if orient_i is not None and orient_j is not None:
+            opposite_j = (-orient_j[0], -orient_j[1])
+            cos_face = cos_angle(orient_i, opposite_j)
+            # Mapear cos ∈ [-1, 1] → factor ∈ [0.3, 1.0]
+            face_factor = 0.3 + 0.7 * (cos_face + 1.0) / 2.0
+        else:
+            face_factor = 1.0  # sin datos, no penalizar
+
+        return soft * face_factor
 
     def _score_t2t(self, tail_tail_bl: float) -> float:
         """Score de tail-to-tail."""
@@ -917,11 +1056,27 @@ class ContactClassifier:
         self,
         nose_i_tail_j_bl: float,
         nose_j_tail_i_bl: float,
+        nose_i: Optional[Tuple[float, float]] = None,
+        nose_j: Optional[Tuple[float, float]] = None,
+        tail_i: Optional[Tuple[float, float]] = None,
+        tail_j: Optional[Tuple[float, float]] = None,
+        orient_i: Optional[Tuple[float, float]] = None,
+        orient_j: Optional[Tuple[float, float]] = None,
     ) -> Tuple[float, Optional[str]]:
         """Score de nose-to-anogenital + quién investiga.
 
+        Mejora v2.1: usa el VECTOR DIRECCIÓN del investigador para confirmar
+        que está realmente mirando hacia la zona anogenital del otro, no que
+        está cerca por casualidad.
+
+        Lógica:
+          1. Distancia nariz↔tail_base normalizada en BL
+          2. Si los keypoints están disponibles: factor de alineación =
+             coseno entre vector_cuerpo_investigador y vector_a_target_tail
+          3. Si la nariz APUNTA hacia el tail_base, score se multiplica por
+             cos≈1 (preserva). Si NO apunta, score×cos≈0 (anula).
+
         Retorna (score, role) donde role ∈ {"i", "j", None}.
-        Evalúa las dos direcciones y retorna la más fuerte.
         """
         # Dirección i->j (nariz de i cerca de cola de j)
         active_ij = self.trig_n2ag_ij.update(nose_i_tail_j_bl)
@@ -933,13 +1088,54 @@ class ContactClassifier:
         soft_ji = reversed_trapezoidal_score(nose_j_tail_i_bl, self.contact_near, self.contact_far)
         score_ji = max(soft_ji, 0.5) if active_ji else soft_ji
 
+        # Factor de alineación con vector mirada (i investiga a j)
+        align_ij = self._gaze_alignment(orient_i, nose_i, tail_j)
+        # Factor de alineación con vector mirada (j investiga a i)
+        align_ji = self._gaze_alignment(orient_j, nose_j, tail_i)
+
+        score_ij *= align_ij
+        score_ji *= align_ji
+
         if score_ij > score_ji:
             return score_ij, "i"
         elif score_ji > score_ij:
             return score_ji, "j"
         elif score_ij > 0:
-            return score_ij, "i"  # empate: desempatamos arbitrariamente
+            return score_ij, "i"
         return 0.0, None
+
+    def _gaze_alignment(
+        self,
+        orient_investigator: Optional[Tuple[float, float]],
+        nose_investigator: Optional[Tuple[float, float]],
+        target_point: Optional[Tuple[float, float]],
+    ) -> float:
+        """Factor [floor, 1.0] que indica si el investigador mira al target.
+
+        Si el vector cuerpo (mid_body→nose) apunta al target → 1.0
+        Si no apunta → escala con coseno, con piso de 0.4 para no anular del todo
+        cuando los keypoints son ruidosos.
+
+        Si falta algún keypoint, retorna 1.0 (sin penalización, fallback seguro).
+        """
+        if orient_investigator is None or nose_investigator is None or target_point is None:
+            return 1.0  # sin datos, no penalizar
+
+        # Vector desde la nariz del investigador al target
+        dx = target_point[0] - nose_investigator[0]
+        dy = target_point[1] - nose_investigator[1]
+        mag = math.sqrt(dx * dx + dy * dy)
+        if mag < 1e-6:
+            return 1.0  # están en el mismo punto
+
+        to_target = (dx / mag, dy / mag)
+        cos_align = cos_angle(orient_investigator, to_target)
+
+        # Mapear cos_align ∈ [-1, 1] → factor ∈ [0.4, 1.0]
+        # cos = 1 (mira directo) → factor 1.0
+        # cos = 0 (perpendicular) → factor 0.7
+        # cos = -1 (espalda) → factor 0.4
+        return 0.4 + 0.6 * (cos_align + 1.0) / 2.0
 
     def _score_fol(
         self,
@@ -1093,18 +1289,23 @@ class ContactClassifier:
         nose_nose_bl: float,
         nose_i_tail_j_bl: float,
         nose_j_tail_i_bl: float,
+        centroid_i: Optional[Tuple[float, float]] = None,
+        centroid_j: Optional[Tuple[float, float]] = None,
+        orient_i: Optional[Tuple[float, float]] = None,
+        orient_j: Optional[Tuple[float, float]] = None,
     ) -> Tuple[float, Optional[str]]:
         """Score de nose-to-body (catch-all).
 
         Verifica si la nariz de un animal está DENTRO de la máscara del otro.
-        Aplica guardas: si ya hay N2N o N2AG claro, se reduce el score
-        (el argmax general decidirá el ganador, pero evitamos que N2B domine).
+        Aplica guardas: si ya hay N2N o N2AG claro, se reduce el score.
+
+        Mejora v2.1: usa vector mirada para confirmar que la nariz APUNTA al
+        cuerpo del otro (no está cerca por casualidad geométrica).
         """
         # Guardia: si hay contacto específico ya cerca del umbral, reducir N2B
-        # para que no absorba N2N/N2AG. argmax respetará prioridad.
         guard_factor = 1.0
         if nose_nose_bl < self.contact_far or nose_i_tail_j_bl < self.contact_far or nose_j_tail_i_bl < self.contact_far:
-            guard_factor = 0.7  # no anula, solo penaliza
+            guard_factor = 0.7
 
         score_i_in_j = 0.0
         if nose_i is not None and mask_j is not None:
@@ -1120,8 +1321,13 @@ class ContactClassifier:
                 if mask_i[jy, jx]:
                     score_j_in_i = 1.0
 
-        score_i_in_j *= guard_factor
-        score_j_in_i *= guard_factor
+        # Factor de alineación con el centroide del target (mejora 1)
+        # i investiga el cuerpo de j → vector i debe apuntar al centroide de j
+        align_i = self._gaze_alignment(orient_i, nose_i, centroid_j)
+        align_j = self._gaze_alignment(orient_j, nose_j, centroid_i)
+
+        score_i_in_j *= guard_factor * align_i
+        score_j_in_i *= guard_factor * align_j
 
         if score_i_in_j > score_j_in_i:
             return score_i_in_j, "i"
@@ -1439,9 +1645,21 @@ class ContactTrackerV2:
             json.dump(summary, f, indent=2, default=str)
         logger.info("Summary written: %s", json_path)
 
-        # 6. PDF report
+        # 6. NUEVO v2.1: calcular métricas individuales por rata
+        calc = None
         try:
-            self._generate_report(summary, bouts)
+            from src.common.individual_metrics import IndividualMetricsCalculator
+            calc = IndividualMetricsCalculator(num_slots=self.num_slots)
+            calc.process_bouts(bouts, self._all_events)
+            calc.write_json(self.output_dir / "individual_summary.json")
+            logger.info("Individual metrics written: %s", self.output_dir / "individual_summary.json")
+        except Exception as e:
+            logger.warning("Individual metrics generation failed: %s", e)
+            calc = None
+
+        # 7. PDF report (recibe calc para añadir páginas individuales)
+        try:
+            self._generate_report(summary, bouts, calc=calc)
         except Exception as e:
             logger.warning("PDF report generation failed: %s", e)
 
@@ -1577,6 +1795,13 @@ class ContactTrackerV2:
             if len(active) > 1:
                 concurrent_frames += 1
 
+        # NUEVO v2.1: detalle de combinaciones concurrentes
+        concurrent_pairs: Dict[str, int] = {}
+        for e in self._all_events:
+            if e.contact_type != ContactType.NONE and e.secondary_type != ContactType.NONE:
+                key = f"{e.contact_type.value}+{e.secondary_type.value}"
+                concurrent_pairs[key] = concurrent_pairs.get(key, 0) + 1
+
         return {
             "metadata": {
                 "video_path": self.video_path,
@@ -1592,14 +1817,23 @@ class ContactTrackerV2:
             "pair_summary": pair_summary,
             "quality_flags": quality_flags,
             "concurrent_frames": concurrent_frames,
+            "concurrent_pairs": concurrent_pairs,
             "total_bouts": len(bouts),
         }
 
-    def _generate_report(self, summary: Dict[str, Any], bouts: List[Bout]) -> None:
-        """Genera report.pdf.
+    def _generate_report(
+        self,
+        summary: Dict[str, Any],
+        bouts: List[Bout],
+        calc: Any = None,
+    ) -> None:
+        """Genera report.pdf con páginas grupales + páginas individuales.
 
-        Por ahora: versión simple con matplotlib. Se puede mejorar después
-        añadiendo las páginas que el v1 tenía (etograma, histogramas, etc.).
+        Args:
+            summary: dict del session_summary.json
+            bouts: lista de bouts cerrados
+            calc: IndividualMetricsCalculator (opcional). Si se proporciona,
+                  se añaden páginas individuales al PDF.
         """
         try:
             import matplotlib
@@ -1613,6 +1847,8 @@ class ContactTrackerV2:
         pdf_path = self.output_dir / "report.pdf"
 
         with PdfPages(str(pdf_path)) as pdf:
+            # ===== PÁGINAS GRUPALES (existentes) =====
+
             # Página 1: resumen por tipo (bar chart)
             fig, ax = plt.subplots(figsize=(11, 7))
             types = list(summary["contact_type_summary"].keys())
@@ -1655,5 +1891,14 @@ class ContactTrackerV2:
                     verticalalignment="top", family="monospace")
             pdf.savefig(fig)
             plt.close(fig)
+
+            # ===== PÁGINAS INDIVIDUALES (NUEVAS v2.1) =====
+            if calc is not None:
+                try:
+                    from src.common.individual_metrics import add_individual_pages_to_pdf
+                    add_individual_pages_to_pdf(pdf, calc.build_summary(), bouts)
+                    logger.info("Individual pages added to PDF report")
+                except Exception as e:
+                    logger.warning("Individual pages generation failed: %s", e)
 
         logger.info("PDF report written: %s", pdf_path)
