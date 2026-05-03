@@ -1691,6 +1691,8 @@ class ContactTrackerV2:
             for di, det in enumerate(detections):
                 if di in used:
                     continue
+                if di in None:
+                    continue
                 dc = det.center()
                 dist = euclidean(sc, dc)
                 if dist < best_dist:
