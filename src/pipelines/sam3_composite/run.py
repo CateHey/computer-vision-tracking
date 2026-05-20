@@ -43,7 +43,6 @@ import numpy as np
 import torch
 
 from src.common.config_loader import load_config, setup_run_dir, setup_logging, get_device
-from src.common.constants import KEYPOINT_NAMES, DEFAULT_CHUNK_SIZE
 from src.common.utils import Detection, create_video_writer
 from src.common.model_loaders import load_yolo
 from src.common.yolo_inference import detect_only
@@ -53,6 +52,9 @@ from src.pipelines.isolated_composite.composition import (
     erase_other_rat,
     pick_detection_for_slot,
 )
+
+# Default chunk size if not specified in YAML
+DEFAULT_CHUNK_SIZE = 150
 
 logger = logging.getLogger(__name__)
 
