@@ -38,7 +38,6 @@ import numpy as np
 import torch
 
 from src.common.config_loader import load_config, setup_run_dir, setup_logging, get_device
-from src.common.constants import DEFAULT_CHUNK_SIZE
 from src.common.utils import Detection
 from src.common.io_video import create_video_writer
 from src.common.model_loaders import load_yolo
@@ -64,6 +63,7 @@ from src.pipelines.sam3_composite.run import (
     extract_frames_to_memory,
     mask_centroid,
     assign_identities_by_centroid,
+    DEFAULT_CHUNK_SIZE,
 )
 
 logger = logging.getLogger(__name__)
