@@ -43,7 +43,8 @@ import numpy as np
 import torch
 
 from src.common.config_loader import load_config, setup_run_dir, setup_logging, get_device
-from src.common.utils import Detection, create_video_writer
+from src.common.utils import Detection
+from src.common.io_video import create_video_writer
 from src.common.model_loaders import load_yolo
 from src.common.yolo_inference import detect_only
 from src.common.contacts_v2 import ContactTrackerV2
