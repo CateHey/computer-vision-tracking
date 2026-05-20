@@ -68,7 +68,7 @@ def load_sam3_model(device: str):
     """Load SAM3 model + processor from HuggingFace.
 
     Requires HF_TOKEN env variable to be set.
-    Applies the necessary forward patch for transformers compatibility.
+    Works with transformers 5.x (no patch needed).
     """
     from huggingface_hub import login
     from transformers import Sam3VideoModel, Sam3VideoProcessor
@@ -85,35 +85,7 @@ def load_sam3_model(device: str):
     model = Sam3VideoModel.from_pretrained("facebook/sam3", torch_dtype=dtype).to(device)
     processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
 
-    # Apply the patch needed for transformers compatibility
-    # (text_embeds.pooler_output extraction)
-    import transformers.models.sam3.modeling_sam3 as sam3_module
-    original_forward = sam3_module.Sam3Model.forward
-
-
-
-
-    def patched_forward(self, pixel_values=None, vision_embeds=None, input_ids=None,
-                        attention_mask=None, text_embeds=None, input_boxes=None,
-                        input_boxes_labels=None, **kwargs):
-        # Wrap text_embeds tensor in a fake object so internal `.pooler_output` access works
-        if text_embeds is not None and not hasattr(text_embeds, 'pooler_output'):
-            class _Wrapper:
-                def __init__(self, tensor):
-                    self.pooler_output = tensor
-                    self._tensor = tensor
-                def __getattr__(self, name):
-                    return getattr(self._tensor, name)
-            text_embeds = _Wrapper(text_embeds)
-        return original_forward(self, pixel_values, vision_embeds, input_ids,
-                                attention_mask, text_embeds, input_boxes,
-                                input_boxes_labels, **kwargs)
-
-
-
-    sam3_module.Sam3Model.forward = patched_forward
-    logger.info("SAM3 model loaded and patched.")
-
+    logger.info("SAM3 model loaded (transformers 5.x).")
     return model, processor
 
 
@@ -466,7 +438,12 @@ def run_pipeline(
                     union_other = np.zeros_like(slot_masks[slot_idx], dtype=bool)
                     for m in other_masks:
                         union_other = union_other | m
-                    composite = erase_other_rat(frame_bgr, union_other, background)
+                    composite = erase_other_rat(
+                        frame_bgr=frame_bgr,
+                        background_bgr=background,
+                        mask_self=slot_masks[slot_idx],
+                        mask_other=union_other,
+                    )
                 else:
                     composite = frame_bgr.copy()
                 composites.append(composite)
