@@ -1,0 +1,91 @@
+# SAM3 reset pipeline config (HPC)
+#
+# Same as hpc_sam3_composite.yaml but with reset/recovery enabled.
+#
+# Required environment variable:
+#   export HF_TOKEN="hf_..."
+
+video_path: data/raw/original.mp4
+
+# Output settings
+output:
+  base_dir: outputs/runs
+  video_codec: XVID
+  overlay_colors:
+    - [0, 0, 255]      # R1 = red
+    - [0, 255, 0]      # R2 = green
+    - [255, 0, 0]      # R3 = blue
+    - [255, 255, 0]    # R4 = yellow
+
+# Device
+device: cuda
+
+# Scan / chunking
+scan:
+  max_frames: null
+  chunk_size: 150
+
+# Detection
+detection:
+  max_animals: 2
+  keypoint_min_conf: 0.3
+  keypoint_names: [nose, right_ear, left_ear, mid_body, tail_base]
+
+# SAM3 specific
+sam3:
+  text_prompt: "mouse"
+  score_threshold: 0.5
+
+# Reset behavior
+reset:
+  enabled: true
+  cooldown_frames: 10          # mínimo de frames entre 2 resets
+  min_history_frames: 30       # no resetear antes de 1 seg
+  lookback_frames: 5           # promedio de últimos K frames para identidad
+
+# Failure detection thresholds
+failure_detection:
+  area_growth_threshold: 2.5   # >250% crecimiento → fallo
+  area_shrink_threshold: 0.10  # <10% del tamaño previo → fallo
+  overlap_threshold: 0.90      # >90% overlap relativo → fallo
+  min_area: 100                # área mínima para evaluar
+
+# Reset strategies (cascade order)
+reset_strategies:
+  try_masks: true              # intentar máscaras primero (mejor calidad)
+  try_points: true             # fallback a puntos inteligentes
+  try_bboxes: true             # último fallback a bboxes
+  points_per_mask: 7
+
+# YOLO model
+models:
+  yolo_path: models/yolo/best.pt
+
+# Background
+background:
+  cache_dir: outputs/backgrounds
+  num_samples: 50
+  seed: 42
+
+# Contacts
+contacts:
+  enabled: true
+  contact_zone_bl_enter: 0.30
+  contact_zone_bl_exit: 0.45
+  proximity_zone_bl: 1.0
+  sbs_mask_iou_enter: 0.05
+  sbs_mask_iou_exit: 0.02
+  follow_radius_bl: 0.4
+  follow_radius_bl_exit: 0.6
+  follow_min_speed_bls: 0.15
+  follow_alignment_cos: 0.6
+  activation_threshold: 0.5
+  activation_threshold_rare: 0.35
+  secondary_threshold: 0.4
+  bout_max_gap_frames: 3
+  bout_min_frames_n2n: 6
+  bout_min_frames_n2ag: 6
+  bout_min_frames_t2t: 6
+  bout_min_frames_fol: 12
+  bout_min_frames_sbs: 6
+  bout_min_frames_n2b: 6

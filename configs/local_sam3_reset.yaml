@@ -1,0 +1,77 @@
+# SAM3 reset pipeline config (LOCAL)
+#
+# Same as hpc_sam3_reset.yaml but tuned for local testing.
+
+video_path: data/raw/original_120s.avi
+
+output:
+  base_dir: outputs/runs
+  video_codec: XVID
+  overlay_colors:
+    - [0, 0, 255]
+    - [0, 255, 0]
+    - [255, 0, 0]
+    - [255, 255, 0]
+
+device: cuda
+
+scan:
+  max_frames: 900              # 30s a 30fps para test rápido
+  chunk_size: 75               # chunks chicos para menos memoria
+
+detection:
+  max_animals: 2
+  keypoint_min_conf: 0.3
+  keypoint_names: [nose, left_ear, right_ear, mid_body, tail_base]
+
+sam3:
+  text_prompt: "mouse"
+  score_threshold: 0.5
+
+reset:
+  enabled: true
+  cooldown_frames: 10
+  min_history_frames: 30
+  lookback_frames: 5
+
+failure_detection:
+  area_growth_threshold: 2.5
+  area_shrink_threshold: 0.10
+  overlap_threshold: 0.90
+  min_area: 100
+
+reset_strategies:
+  try_masks: true
+  try_points: true
+  try_bboxes: true
+  points_per_mask: 7
+
+models:
+  yolo_path: models/yolo/best.pt
+
+background:
+  cache_dir: outputs/backgrounds
+  num_samples: 30
+  seed: 42
+
+contacts:
+  enabled: true
+  contact_zone_bl_enter: 0.30
+  contact_zone_bl_exit: 0.45
+  proximity_zone_bl: 1.0
+  sbs_mask_iou_enter: 0.05
+  sbs_mask_iou_exit: 0.02
+  follow_radius_bl: 0.4
+  follow_radius_bl_exit: 0.6
+  follow_min_speed_bls: 0.15
+  follow_alignment_cos: 0.6
+  activation_threshold: 0.5
+  activation_threshold_rare: 0.35
+  secondary_threshold: 0.4
+  bout_max_gap_frames: 3
+  bout_min_frames_n2n: 6
+  bout_min_frames_n2ag: 6
+  bout_min_frames_t2t: 6
+  bout_min_frames_fol: 12
+  bout_min_frames_sbs: 6
+  bout_min_frames_n2b: 6
