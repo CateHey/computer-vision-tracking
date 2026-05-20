@@ -1,0 +1,72 @@
+# SAM3 composite pipeline config (HPC)
+#
+# Same architecture as isolated_composite but uses SAM3 (text-prompted)
+# instead of SAM2 video predictor.
+#
+# Required environment variable:
+#   export HF_TOKEN="hf_..."
+
+video_path: data/raw/original.mp4
+
+# Output settings
+output:
+  base_dir: outputs/runs
+  video_codec: XVID                # 'XVID' (.avi) or 'mp4v' (.mp4)
+  overlay_colors:
+    - [0, 0, 255]                  # R1 = red
+    - [0, 255, 0]                  # R2 = green
+    - [255, 0, 0]                  # R3 = blue
+    - [255, 255, 0]                # R4 = yellow
+
+# Device
+device: cuda                       # cuda | cpu
+
+# Scan / chunking
+scan:
+  max_frames: null                 # null = all frames, or set int (e.g. 9000 = 5 min @ 30 fps)
+  chunk_size: 150                  # frames per SAM3 chunk (lower if OOM, e.g. 100 or 75)
+
+# Detection (number of rats expected)
+detection:
+  max_animals: 2                   # set to 4 for 4-rat experiments
+  keypoint_min_conf: 0.3
+  keypoint_names: [nose, left_ear, right_ear, mid_body, tail_base]
+
+# SAM3 specific
+sam3:
+  text_prompt: "mouse"             # prompt to detect rats
+  score_threshold: 0.5             # minimum SAM3 detection score
+
+# YOLO model
+models:
+  yolo_path: models/yolo/best.pt
+
+# Background computation (shared helper)
+background:
+  cache_dir: outputs/backgrounds
+  num_samples: 50
+  seed: 42
+
+# Contacts (analysis module)
+contacts:
+  enabled: true
+  # All shared contact_v2 parameters
+  contact_zone_bl_enter: 0.30
+  contact_zone_bl_exit: 0.45
+  proximity_zone_bl: 1.0
+  sbs_mask_iou_enter: 0.05
+  sbs_mask_iou_exit: 0.02
+  follow_radius_bl: 0.4
+  follow_radius_bl_exit: 0.6
+  follow_min_speed_bls: 0.15
+  follow_alignment_cos: 0.6
+  activation_threshold: 0.5
+  activation_threshold_rare: 0.35
+  secondary_threshold: 0.4
+  bout_max_gap_frames: 3
+  bout_min_frames_n2n: 6
+  bout_min_frames_n2ag: 6
+  bout_min_frames_t2t: 6
+  bout_min_frames_fol: 12
+  bout_min_frames_sbs: 6
+  bout_min_frames_n2b: 6

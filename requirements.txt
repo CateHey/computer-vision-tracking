@@ -18,8 +18,15 @@ ultralytics
 -e ./models/sam2/segment-anything-2
 hydra-core
 
+# --- SAM3 (via HuggingFace) ---
+transformers>=4.45.0
+accelerate
+huggingface_hub
+av
+
 # --- Config loading ---
 pyyaml
+python-dotenv
 
 # --- Annotation platform ---
 roboflow

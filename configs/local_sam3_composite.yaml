@@ -1,0 +1,74 @@
+# SAM3 composite pipeline config (LOCAL)
+#
+# Same as hpc_sam3_composite.yaml but tuned for local machine:
+#   - Smaller chunk size (less GPU/CPU memory)
+#   - Shorter video clip for testing
+#   - Local file paths
+#
+# Required environment variable:
+#   Windows PowerShell: $env:HF_TOKEN="hf_..."
+#   Linux/Mac:          export HF_TOKEN="hf_..."
+
+video_path: data/raw/original_120s.avi   # video corto para pruebas locales
+
+# Output settings
+output:
+  base_dir: outputs/runs
+  video_codec: XVID                # 'XVID' (.avi) or 'mp4v' (.mp4)
+  overlay_colors:
+    - [0, 0, 255]                  # R1 = red
+    - [0, 255, 0]                  # R2 = green
+    - [255, 0, 0]                  # R3 = blue
+    - [255, 255, 0]                # R4 = yellow
+
+# Device
+device: cuda                       # cuda | cpu (cpu va a ser MUY lento)
+
+# Scan / chunking
+scan:
+  max_frames: 900                  # 30 segundos a 30fps (cambiar a null para todo el video)
+  chunk_size: 75                   # chunks chicos para no saturar RAM local
+
+# Detection
+detection:
+  max_animals: 2                   # 2 ratas para pruebas
+  keypoint_min_conf: 0.3
+  keypoint_names: [nose, left_ear, right_ear, mid_body, tail_base]
+
+# SAM3 specific
+sam3:
+  text_prompt: "mouse"             # también podés probar "rat" o "rodent"
+  score_threshold: 0.5             # umbral mínimo de confianza
+
+# YOLO model
+models:
+  yolo_path: models/yolo/best.pt
+
+# Background computation
+background:
+  cache_dir: outputs/backgrounds
+  num_samples: 30                  # menos samples local (más rápido)
+  seed: 42
+
+# Contacts (analysis module)
+contacts:
+  enabled: true
+  contact_zone_bl_enter: 0.30
+  contact_zone_bl_exit: 0.45
+  proximity_zone_bl: 1.0
+  sbs_mask_iou_enter: 0.05
+  sbs_mask_iou_exit: 0.02
+  follow_radius_bl: 0.4
+  follow_radius_bl_exit: 0.6
+  follow_min_speed_bls: 0.15
+  follow_alignment_cos: 0.6
+  activation_threshold: 0.5
+  activation_threshold_rare: 0.35
+  secondary_threshold: 0.4
+  bout_max_gap_frames: 3
+  bout_min_frames_n2n: 6
+  bout_min_frames_n2ag: 6
+  bout_min_frames_t2t: 6
+  bout_min_frames_fol: 12
+  bout_min_frames_sbs: 6
+  bout_min_frames_n2b: 6
