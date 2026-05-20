@@ -39,7 +39,8 @@ import torch
 
 from src.common.config_loader import load_config, setup_run_dir, setup_logging, get_device
 from src.common.constants import DEFAULT_CHUNK_SIZE
-from src.common.utils import Detection, create_video_writer
+from src.common.utils import Detection
+from src.common.io_video import create_video_writer
 from src.common.model_loaders import load_yolo
 from src.common.yolo_inference import detect_only
 from src.common.contacts_v2 import ContactTrackerV2
@@ -415,15 +416,22 @@ def run_pipeline(
                     union_other = np.zeros_like(slot_masks[slot_idx], dtype=bool)
                     for m in other_masks:
                         union_other = union_other | m
-                    composite = erase_other_rat(frame_bgr, union_other, background)
+                    composite = erase_other_rat(
+                        frame_bgr=frame_bgr,
+                        background_bgr=background,
+                        mask_self=slot_masks[slot_idx],
+                        mask_other=union_other,
+                    )
                 else:
                     composite = frame_bgr.copy()
                 composites.append(composite)
 
-                dets = detect_only(yolo_model, composite, device=device)
+                composite_rgb = cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
+                dets = detect_only(yolo_model, composite_rgb, confidence=0.25)
                 if dets:
                     chosen = pick_detection_for_slot(
-                        dets, slot_masks[slot_idx], slot_centroids[slot_idx],
+                        detections=dets,
+                        mask_self=slot_masks[slot_idx],
                     )
                     slot_detections[slot_idx] = chosen
 
