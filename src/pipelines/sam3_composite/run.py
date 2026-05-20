@@ -449,10 +449,13 @@ def run_pipeline(
                 composites.append(composite)
 
                 # YOLO on composite
-                dets = detect_only(yolo_model, composite, device=device)
+                composite_rgb = cv2.cvtColor(composite, cv2.COLOR_BGR2RGB)
+                dets = detect_only(yolo_model, composite_rgb, confidence=0.25)
+
                 if dets:
                     chosen = pick_detection_for_slot(
-                        dets, slot_masks[slot_idx], slot_centroids[slot_idx],
+                        detections=dets,
+                        mask_self=slot_masks[slot_idx],
                     )
                     slot_detections[slot_idx] = chosen
 
