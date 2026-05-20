@@ -90,14 +90,26 @@ def load_sam3_model(device: str):
     import transformers.models.sam3.modeling_sam3 as sam3_module
     original_forward = sam3_module.Sam3Model.forward
 
+
+
+
     def patched_forward(self, pixel_values=None, vision_embeds=None, input_ids=None,
                         attention_mask=None, text_embeds=None, input_boxes=None,
                         input_boxes_labels=None, **kwargs):
-        if text_embeds is not None and hasattr(text_embeds, 'pooler_output'):
-            text_embeds = text_embeds.pooler_output
+        # Wrap text_embeds tensor in a fake object so internal `.pooler_output` access works
+        if text_embeds is not None and not hasattr(text_embeds, 'pooler_output'):
+            class _Wrapper:
+                def __init__(self, tensor):
+                    self.pooler_output = tensor
+                    self._tensor = tensor
+                def __getattr__(self, name):
+                    return getattr(self._tensor, name)
+            text_embeds = _Wrapper(text_embeds)
         return original_forward(self, pixel_values, vision_embeds, input_ids,
                                 attention_mask, text_embeds, input_boxes,
                                 input_boxes_labels, **kwargs)
+
+
 
     sam3_module.Sam3Model.forward = patched_forward
     logger.info("SAM3 model loaded and patched.")
