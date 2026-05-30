@@ -40,6 +40,18 @@ sam3:
 # YOLO model
 models:
   yolo_path: models/yolo/yolo26_v11.pt
+  
+
+detection:
+  confidence: 0.25              # ← antes hardcodeado
+
+composition:
+  erase_dilate_px: 15
+  feather_px: 5
+  mask_dilate_for_pick: 7       # nuevo — dilata mask antes de pick keypoint
+  unitary_feather_px: 3         # nuevo — feather del video unitario
+
+  
 
 # Background computation (shared helper)
 background:
