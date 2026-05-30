@@ -44,6 +44,8 @@ models:
 
 detection:
   confidence: 0.25              # ← antes hardcodeado
+  max_assignment_dist: 200    # píxeles. Si rata "salta" más que esto, NO asignar.
+
 
 composition:
   erase_dilate_px: 15
@@ -51,7 +53,7 @@ composition:
   mask_dilate_for_pick: 7       # nuevo — dilata mask antes de pick keypoint
   unitary_feather_px: 3         # nuevo — feather del video unitario
 
-  
+
 
 # Background computation (shared helper)
 background:
