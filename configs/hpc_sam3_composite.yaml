@@ -39,7 +39,7 @@ sam3:
 
 # YOLO model
 models:
-  yolo_path: models/yolo/best.pt
+  yolo_path: models/yolo/yolo26_v11.pt
 
 # Background computation (shared helper)
 background:
