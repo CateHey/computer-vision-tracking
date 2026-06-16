@@ -128,6 +128,27 @@ def mask_centroid(mask: np.ndarray) -> Optional[Tuple[float, float]]:
     return (float(xs.mean()), float(ys.mean()))
 
 
+def shift_mask_by_velocity(
+    mask: np.ndarray,
+    dx: float,
+    dy: float,
+) -> np.ndarray:
+    """Shift a binary mask by (dx, dy) pixels.
+
+    Used for mask carry-over when SAM3 misses a rat on a frame:
+    we reuse the previous mask, displaced by the estimated velocity.
+    """
+    h, w = mask.shape
+    M = np.array([[1, 0, dx], [0, 1, dy]], dtype=np.float32)
+    shifted = cv2.warpAffine(
+        mask.astype(np.uint8), M, (w, h),
+        flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+    return shifted.astype(bool)
+
+
 def assign_identities_by_centroid(
     new_masks: List[np.ndarray],
     new_centroids: List[Optional[Tuple[float, float]]],
@@ -228,7 +249,14 @@ def process_chunk_with_sam3(
     text_prompt: str,
     device: str,
     score_threshold: float = 0.5,
+    init_points: Optional[List[Tuple[float, float]]] = None,
 ) -> Dict[int, Dict[str, Any]]:
+    """Run SAM3 on a chunk of frames.
+
+    If init_points is provided, use them as point prompts (one rat per point).
+    Each point gets a unique obj_id, forcing exactly N rats.
+    Otherwise, use text prompt for automatic detection.
+    """
     from PIL import Image
 
     pil_frames = [Image.fromarray(f) for f in frames_chunk]
@@ -240,7 +268,33 @@ def process_chunk_with_sam3(
         video_storage_device="cpu",
         dtype=torch.bfloat16 if device == "cuda" else torch.float32,
     )
-    session = processor.add_text_prompt(inference_session=session, text=text_prompt)
+
+    use_point_init = init_points is not None and len(init_points) > 0
+
+    if use_point_init:
+        # Inject one point per rat with unique obj_id
+        # This forces SAM3 to track exactly N rats from frame 0
+        for rat_idx, (px, py) in enumerate(init_points):
+            obj_id = rat_idx + 1   # 1-indexed obj_id
+            point_coords = np.array([[float(px), float(py)]], dtype=np.float32)
+            point_labels = np.array([1], dtype=np.int64)   # 1 = positive
+            try:
+                session = processor.add_point_input(
+                    inference_session=session,
+                    frame_idx=0,
+                    obj_id=obj_id,
+                    input_points=point_coords,
+                    input_labels=point_labels,
+                )
+            except (AttributeError, TypeError) as e:
+                logger.warning(
+                    "add_point_input not available, falling back to text prompt: %s", e
+                )
+                use_point_init = False
+                break
+
+    if not use_point_init:
+        session = processor.add_text_prompt(inference_session=session, text=text_prompt)
 
     results = {}
     for model_out in model.propagate_in_video_iterator(inference_session=session):
@@ -308,6 +362,13 @@ def run_pipeline(
     sam3_cfg = config.get("sam3", {})
     text_prompt = sam3_cfg.get("text_prompt", "mouse")
     score_threshold = float(sam3_cfg.get("score_threshold", 0.5))
+    # Optional: manual init points to force N rats in frame 0
+    # Format: list of [x, y] coordinates, one per rat
+    init_points_raw = sam3_cfg.get("init_points", None)
+    init_points = None
+    if init_points_raw:
+        init_points = [tuple(p) for p in init_points_raw]
+        logger.info("Using %d manual init points for SAM3 initialization", len(init_points))
 
     comp_cfg = config.get("composition", {}) or {}
     erase_dilate_px = int(comp_cfg.get("erase_dilate_px", 15))
@@ -388,11 +449,19 @@ def run_pipeline(
     prev_frame_centroids: Optional[List[Optional[Tuple[float, float]]]] = None
     prev_slot_dets: Optional[List[Optional[Detection]]] = None
 
+    # MASK CARRY-OVER state
+    # When SAM3 fails on a frame, reuse previous mask shifted by velocity
+    prev_masks: List[Optional[np.ndarray]] = [None] * num_slots
+    prev_velocities: List[Tuple[float, float]] = [(0.0, 0.0)] * num_slots
+    missing_counter: List[int] = [0] * num_slots   # consecutive missing frames per slot
+    MAX_MASK_CARRY = int(config.get("composition", {}).get("max_mask_carry_frames", 5))
+
     # Bug 1 fix: robust first-frame init flag (works with multi-GPU / chunk_id)
     first_assignment_done = False
 
     yolo_hit_counts = [0] * num_slots
     carried_frames = 0
+    carried_mask_frames = 0   # frames where we carried at least one mask
     global_frame_idx = 0
 
     for chunk_idx in range(n_chunks):
@@ -402,10 +471,15 @@ def run_pipeline(
         logger.info("Chunk %d/%d (frames %d-%d, %d frames)",
                     chunk_idx + 1, n_chunks, chunk_start, chunk_end - 1, len(chunk_frames))
 
+        # Only use init_points on the first chunk (frame 0 of video)
+        # Subsequent chunks use centroid matching for identity continuity
+        chunk_init_points = init_points if chunk_idx == 0 else None
+
         sam3_results = process_chunk_with_sam3(
             sam3_model, sam3_processor, chunk_frames,
             text_prompt=text_prompt, device=device,
             score_threshold=score_threshold,
+            init_points=chunk_init_points,
         )
 
         for local_idx in range(len(chunk_frames)):
@@ -471,10 +545,50 @@ def run_pipeline(
                         slot_masks[slot_idx] = raw_masks[new_i]
                         slot_centroids[slot_idx] = new_centroids[new_i]
 
+            # ==========================================================
+            # MASK CARRY-OVER: if SAM3 missed a rat, reuse previous mask
+            # shifted by velocity (only if missing < MAX_MASK_CARRY frames)
+            # ==========================================================
+            frame_had_carry = False
+            for s in range(num_slots):
+                if slot_masks[s] is not None:
+                    # SAM3 detected this rat -> reset counter
+                    missing_counter[s] = 0
+                    continue
+                # Slot is missing — try carry-over
+                if prev_masks[s] is None:
+                    continue
+                missing_counter[s] += 1
+                if missing_counter[s] > MAX_MASK_CARRY:
+                    # Too many consecutive misses — give up, don't carry
+                    continue
+                # Apply shift by last known velocity
+                dx, dy = prev_velocities[s]
+                carried_mask = shift_mask_by_velocity(prev_masks[s], dx, dy)
+                if carried_mask.any():
+                    slot_masks[s] = carried_mask
+                    slot_centroids[s] = mask_centroid(carried_mask)
+                    frame_had_carry = True
+            if frame_had_carry:
+                carried_mask_frames += 1
+
+            # Update velocity: how much each centroid moved since prev frame
+            for s in range(num_slots):
+                if slot_centroids[s] is not None and prev_centroids[s] is not None:
+                    dx = slot_centroids[s][0] - prev_centroids[s][0]
+                    dy = slot_centroids[s][1] - prev_centroids[s][1]
+                    # Clamp to reasonable values (avoid huge jumps)
+                    prev_velocities[s] = (
+                        max(-50.0, min(50.0, dx)),
+                        max(-50.0, min(50.0, dy)),
+                    )
+
             # Update "last known" centroids (for identity continuity)
             for s in range(num_slots):
                 if slot_centroids[s] is not None:
                     prev_centroids[s] = slot_centroids[s]
+                if slot_masks[s] is not None:
+                    prev_masks[s] = slot_masks[s].copy()
 
             # Build composites and run YOLO
             slot_detections: List[Optional[Detection]] = [None] * num_slots
@@ -632,9 +746,14 @@ def run_pipeline(
             100 * yolo_hit_counts[i] / max(global_frame_idx, 1),
         )
     logger.info(
-        "Frames with any carry-over: %d/%d (%.1f%%)",
+        "Frames with any keypoint carry-over: %d/%d (%.1f%%)",
         carried_frames, global_frame_idx,
         100 * carried_frames / max(global_frame_idx, 1),
+    )
+    logger.info(
+        "Frames with any mask carry-over: %d/%d (%.1f%%)",
+        carried_mask_frames, global_frame_idx,
+        100 * carried_mask_frames / max(global_frame_idx, 1),
     )
 
     logger.info("Pipeline complete. Output directory: %s", run_dir)
