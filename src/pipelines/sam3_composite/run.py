@@ -243,19 +243,140 @@ def _carry_over_keypoints(
 # SAM3 PROCESSING
 # ============================================================================
 
+def sam3_image_segment(
+    model, processor,
+    frame_rgb: np.ndarray,
+    text_prompt: str,
+    device: str,
+    score_threshold: float = 0.5,
+) -> Tuple[np.ndarray, List[float]]:
+    """Run SAM3 in IMAGE mode (single frame, no video tracking).
+
+    Used at the start of each chunk to get fresh, clean masks and centroids.
+    SAM3 image segmentation tends to be cleaner than video tracking for a
+    single frame (no temporal drift, no "line-shaped" false masks).
+
+    Returns: (masks: np.ndarray (N, H, W) bool, scores: List[float])
+    """
+    from PIL import Image
+    pil_frame = Image.fromarray(frame_rgb)
+
+    # Use a one-frame video session as image segmentation
+    session = processor.init_video_session(
+        video=[pil_frame],
+        inference_device=device,
+        processing_device="cpu",
+        video_storage_device="cpu",
+        dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+    )
+    session = processor.add_text_prompt(inference_session=session, text=text_prompt)
+
+    masks_out = None
+    scores_out = None
+    for model_out in model.propagate_in_video_iterator(inference_session=session):
+        processed = processor.postprocess_outputs(session, model_out)
+        masks_out = processed['masks'].cpu().numpy()
+        scores_out = processed['scores'].cpu().tolist()
+        break  # only need the first (and only) frame
+
+    del session
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+    if masks_out is None or len(masks_out) == 0:
+        H, W = frame_rgb.shape[:2]
+        return np.zeros((0, H, W), dtype=bool), []
+
+    keep = [i for i, s in enumerate(scores_out) if s >= score_threshold]
+    if not keep:
+        H, W = frame_rgb.shape[:2]
+        return np.zeros((0, H, W), dtype=bool), []
+
+    masks_filtered = masks_out[keep] > 0.5
+    scores_filtered = [scores_out[i] for i in keep]
+    return masks_filtered, scores_filtered
+
+
+def get_chunk_init_points(
+    model, processor,
+    first_frame_rgb: np.ndarray,
+    text_prompt: str,
+    device: str,
+    score_threshold: float,
+    num_slots: int,
+    prev_centroids: List[Optional[Tuple[float, float]]],
+    is_first_chunk: bool,
+    manual_init_points: Optional[List[Tuple[float, float]]] = None,
+    max_dist: Optional[float] = None,
+) -> Optional[List[Optional[Tuple[float, float]]]]:
+    """Compute init points for a chunk using SAM3 image on the first frame.
+
+    Returns a list of length num_slots with (x, y) per slot (or None if a slot
+    couldn't be filled). The points carry identity:
+      - First chunk: assign by detection order (or manual override)
+      - Later chunks: assign by matching against prev_centroids
+
+    Returns None if SAM3 image found no masks (caller falls back to text prompt).
+    """
+    # Manual override for first chunk
+    if is_first_chunk and manual_init_points:
+        logger.info("Chunk 0: using %d manual init points from YAML", len(manual_init_points))
+        result: List[Optional[Tuple[float, float]]] = [None] * num_slots
+        for i, p in enumerate(manual_init_points[:num_slots]):
+            result[i] = tuple(p)
+        return result
+
+    # SAM3 image on first frame → fresh masks
+    fresh_masks, fresh_scores = sam3_image_segment(
+        model, processor, first_frame_rgb,
+        text_prompt=text_prompt, device=device,
+        score_threshold=score_threshold,
+    )
+
+    if len(fresh_masks) == 0:
+        logger.warning("SAM3 image found no masks for chunk init, falling back to text prompt")
+        return None
+
+    fresh_centroids = [mask_centroid(m) for m in fresh_masks]
+
+    result: List[Optional[Tuple[float, float]]] = [None] * num_slots
+
+    if is_first_chunk:
+        # Assign by detection order
+        for i in range(min(len(fresh_centroids), num_slots)):
+            result[i] = fresh_centroids[i]
+    else:
+        # Assign by matching against previous chunk's last centroids
+        assignment = assign_identities_by_centroid(
+            list(fresh_masks), fresh_centroids, prev_centroids, num_slots,
+            max_dist=max_dist,
+        )
+        for new_i, slot_idx in enumerate(assignment):
+            if slot_idx >= 0:
+                result[slot_idx] = fresh_centroids[new_i]
+
+    n_found = sum(1 for r in result if r is not None)
+    logger.info("Chunk init: SAM3 image found %d/%d rats", n_found, num_slots)
+    return result
+
+
 def process_chunk_with_sam3(
     model, processor,
     frames_chunk: List[np.ndarray],
     text_prompt: str,
     device: str,
     score_threshold: float = 0.5,
-    init_points: Optional[List[Tuple[float, float]]] = None,
+    init_points: Optional[List[Optional[Tuple[float, float]]]] = None,
 ) -> Dict[int, Dict[str, Any]]:
     """Run SAM3 on a chunk of frames.
 
     If init_points is provided, use them as point prompts (one rat per point).
     Each point gets a unique obj_id, forcing exactly N rats.
     Otherwise, use text prompt for automatic detection.
+
+    Note: init_points may contain None entries (rats not found by image segment).
+    Those slots are skipped (no point injected for them).
     """
     from PIL import Image
 
@@ -269,13 +390,17 @@ def process_chunk_with_sam3(
         dtype=torch.bfloat16 if device == "cuda" else torch.float32,
     )
 
-    use_point_init = init_points is not None and len(init_points) > 0
+    use_point_init = init_points is not None and any(p is not None for p in init_points)
 
     if use_point_init:
-        # Inject one point per rat with unique obj_id
-        # This forces SAM3 to track exactly N rats from frame 0
-        for rat_idx, (px, py) in enumerate(init_points):
-            obj_id = rat_idx + 1   # 1-indexed obj_id
+        # Inject one point per rat with unique obj_id (skip None slots)
+        # This forces SAM3 to track the rats found by image segmentation
+        injected = 0
+        for slot_idx, pt in enumerate(init_points):
+            if pt is None:
+                continue   # rat not found by image segment, skip this slot
+            px, py = pt
+            obj_id = slot_idx + 1   # 1-indexed obj_id matches slot identity
             point_coords = np.array([[float(px), float(py)]], dtype=np.float32)
             point_labels = np.array([1], dtype=np.int64)   # 1 = positive
             try:
@@ -286,12 +411,15 @@ def process_chunk_with_sam3(
                     input_points=point_coords,
                     input_labels=point_labels,
                 )
+                injected += 1
             except (AttributeError, TypeError) as e:
                 logger.warning(
                     "add_point_input not available, falling back to text prompt: %s", e
                 )
                 use_point_init = False
                 break
+        if injected == 0:
+            use_point_init = False
 
     if not use_point_init:
         session = processor.add_text_prompt(inference_session=session, text=text_prompt)
@@ -471,9 +599,21 @@ def run_pipeline(
         logger.info("Chunk %d/%d (frames %d-%d, %d frames)",
                     chunk_idx + 1, n_chunks, chunk_start, chunk_end - 1, len(chunk_frames))
 
-        # Only use init_points on the first chunk (frame 0 of video)
-        # Subsequent chunks use centroid matching for identity continuity
-        chunk_init_points = init_points if chunk_idx == 0 else None
+        # FORMA B: compute init points via SAM3 image on the first frame of
+        # this chunk. Carries identity from previous chunk (or detection order
+        # / manual override for the first chunk).
+        chunk_init_points = get_chunk_init_points(
+            sam3_model, sam3_processor,
+            first_frame_rgb=chunk_frames[0],
+            text_prompt=text_prompt,
+            device=device,
+            score_threshold=score_threshold,
+            num_slots=num_slots,
+            prev_centroids=prev_centroids,
+            is_first_chunk=(chunk_idx == 0),
+            manual_init_points=init_points,
+            max_dist=max_assignment_dist,
+        )
 
         sam3_results = process_chunk_with_sam3(
             sam3_model, sam3_processor, chunk_frames,
