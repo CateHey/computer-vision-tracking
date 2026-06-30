@@ -12,6 +12,7 @@ video_path: data/raw/original.mp4
 output:
   base_dir: outputs/runs
   video_codec: XVID                # 'XVID' (.avi) or 'mp4v' (.mp4)
+  write_individual_videos: true
   overlay_colors:
     - [0, 0, 255]      # R1 rojo
     - [0, 255, 0]      # R2 verde
@@ -28,35 +29,37 @@ scan:
   max_frames: null                 # null = all frames, or set int (e.g. 9000 = 5 min @ 30 fps)
   chunk_size: 150                  # frames per SAM3 chunk (lower if OOM, e.g. 100 or 75)
 
-# Detection (number of rats expected)
+# Detection (number of rats expected) — UNA SOLA seccion (no duplicar)
 detection:
-  max_animals: 2                   # set to 4 for 4-rat experiments
+  max_animals: 2                   # set to 6 for 6-rat experiments
   keypoint_min_conf: 0.3
   keypoint_names: [nose, left_ear, right_ear, mid_body, tail_base]
+  confidence: 0.25                 # YOLO confidence (antes hardcodeado)
+  max_assignment_dist: 200         # px. Si rata "salta" mas que esto, NO asignar (util con 3+ ratas)
 
 # SAM3 specific
 sam3:
   text_prompt: "mouse"             # prompt to detect rats
   score_threshold: 0.5             # minimum SAM3 detection score
 
+# Composition (erase + carry-over tuning)
+composition:
+  erase_dilate_px: 15
+  feather_px: 5
+  mask_dilate_for_pick: 7          # dilata mask antes de pick keypoint
+  unitary_feather_px: 3            # feather del video unitario
+  max_mask_carry_frames: 5         # max frames consecutivos con mask carry-over
+
+# Checkpoint verification (Etapa 2)
+checkpoint:
+  enabled: true                    # false = solo Etapa 1 (sin checkpoints)
+  interval: 38                     # checkpoints cada 38 frames
+  iou_threshold: 0.80              # < 0.90 = fallo, re-segmenta
+
 # YOLO model
 models:
   yolo_path: models/yolo/yolo26_v11.pt
   
-
-detection:
-  confidence: 0.25              # ← antes hardcodeado
-  max_assignment_dist: 200    # píxeles. Si rata "salta" más que esto, NO asignar.
-
-
-composition:
-  erase_dilate_px: 15
-  feather_px: 5
-  mask_dilate_for_pick: 7       # nuevo — dilata mask antes de pick keypoint
-  unitary_feather_px: 3         # nuevo — feather del video unitario
-
-
-
 # Background computation (shared helper)
 background:
   cache_dir: outputs/backgrounds

@@ -361,6 +361,86 @@ def get_chunk_init_points(
     return result
 
 
+# ============================================================================
+# CHECKPOINT VERIFICATION (Etapa 2)
+# ============================================================================
+
+def build_union_mask(masks: List[np.ndarray], shape: Tuple[int, int]) -> np.ndarray:
+    """Combine a list of masks into one binary B/W image (union)."""
+    union = np.zeros(shape, dtype=bool)
+    for m in masks:
+        if m is not None:
+            union = union | m
+    return union
+
+
+def masks_agree(
+    video_masks: List[Optional[np.ndarray]],
+    image_masks: np.ndarray,
+    frame_shape: Tuple[int, int],
+    iou_threshold: float = 0.90,
+) -> Tuple[bool, float, int, int]:
+    """Method D: check if SAM3 video masks agree with SAM3 image masks.
+
+    Step 1 — count: must have the same number of detected rats.
+    Step 2 — IoU global over the UNION of masks (ignores background).
+
+    Returns: (agree: bool, iou: float, n_video: int, n_image: int)
+    """
+    # Count valid masks
+    valid_video = [m for m in video_masks if m is not None]
+    n_video = len(valid_video)
+    n_image = len(image_masks)
+
+    # Step 1: count check
+    if n_video != n_image:
+        return False, 0.0, n_video, n_image
+
+    if n_video == 0:
+        # Both empty — treat as agree (nothing to compare)
+        return True, 1.0, 0, 0
+
+    # Step 2: IoU global over union of masks
+    union_video = build_union_mask(valid_video, frame_shape)
+    union_image = build_union_mask(list(image_masks), frame_shape)
+
+    intersection = np.logical_and(union_video, union_image).sum()
+    union = np.logical_or(union_video, union_image).sum()
+
+    if union == 0:
+        iou = 1.0
+    else:
+        iou = float(intersection) / float(union)
+
+    agree = iou >= iou_threshold
+    return agree, iou, n_video, n_image
+
+
+def verify_checkpoint(
+    model, processor,
+    frame_rgb: np.ndarray,
+    video_masks: List[Optional[np.ndarray]],
+    text_prompt: str,
+    device: str,
+    score_threshold: float,
+    iou_threshold: float,
+) -> Tuple[bool, float]:
+    """Run SAM3 image on a frame and compare with video masks (Method D).
+
+    Returns: (agree: bool, iou: float)
+    """
+    image_masks, _ = sam3_image_segment(
+        model, processor, frame_rgb,
+        text_prompt=text_prompt, device=device,
+        score_threshold=score_threshold,
+    )
+    frame_shape = frame_rgb.shape[:2]
+    agree, iou, n_v, n_i = masks_agree(
+        video_masks, image_masks, frame_shape, iou_threshold=iou_threshold,
+    )
+    return agree, iou
+
+
 def process_chunk_with_sam3(
     model, processor,
     frames_chunk: List[np.ndarray],
@@ -452,6 +532,189 @@ def process_chunk_with_sam3(
     return results
 
 
+def process_chunk_with_checkpoints(
+    model, processor,
+    chunk_frames: List[np.ndarray],
+    text_prompt: str,
+    device: str,
+    score_threshold: float,
+    init_points: Optional[List[Optional[Tuple[float, float]]]],
+    num_slots: int,
+    checkpoint_interval: int,
+    iou_threshold: float,
+    max_assignment_dist: Optional[float],
+    prev_centroids: List[Optional[Tuple[float, float]]],
+) -> Dict[int, Dict[str, Any]]:
+    """Process a chunk with checkpoint verification + sub-sessions.
+
+    Runs SAM3 video over the chunk. At checkpoint frames (e.g. 38, 76, 114, 147),
+    verifies the video masks against fresh SAM3 image masks (Method D).
+    If a checkpoint fails, finds the last good frame (backtrack) and re-segments
+    from there with a new sub-session, until the chunk is fully covered.
+
+    Returns: dict frame_idx (local to chunk) -> {'masks', 'scores'}
+    Chunk boundaries stay FIXED — sub-sessions only continue within the chunk.
+    """
+    chunk_len = len(chunk_frames)
+    final_results: Dict[int, Dict[str, Any]] = {}
+
+    # Compute checkpoint positions within the chunk (relative indices)
+    checkpoints = list(range(checkpoint_interval, chunk_len, checkpoint_interval))
+    if chunk_len - 1 not in checkpoints and chunk_len > 1:
+        checkpoints.append(chunk_len - 1)   # always verify the last frame
+
+    sub_start = 0   # where the current sub-session starts (relative to chunk)
+    current_init_points = init_points
+    safety_counter = 0
+    MAX_SUBSESSIONS = 10   # safety guard against infinite loops
+
+    while sub_start < chunk_len:
+        safety_counter += 1
+        if safety_counter > MAX_SUBSESSIONS:
+            logger.warning("Max sub-sessions reached in chunk, accepting remaining frames as-is")
+            # Process the rest without verification
+            sub_frames = chunk_frames[sub_start:]
+            sub_res = process_chunk_with_sam3(
+                model, processor, sub_frames,
+                text_prompt=text_prompt, device=device,
+                score_threshold=score_threshold,
+                init_points=current_init_points,
+            )
+            for local_k, v in sub_res.items():
+                final_results[sub_start + local_k] = v
+            break
+
+        # Run SAM3 video on the sub-session [sub_start, chunk_len)
+        sub_frames = chunk_frames[sub_start:]
+        sub_res = process_chunk_with_sam3(
+            model, processor, sub_frames,
+            text_prompt=text_prompt, device=device,
+            score_threshold=score_threshold,
+            init_points=current_init_points,
+        )
+
+        # Checkpoints that fall within this sub-session (relative to chunk)
+        sub_checkpoints = [cp for cp in checkpoints if cp >= sub_start]
+
+        failed_at = None   # chunk-relative index where verification failed
+        for cp in sub_checkpoints:
+            local_cp = cp - sub_start   # index within sub_res
+            if local_cp not in sub_res:
+                continue
+            video_masks = list(sub_res[local_cp]['masks'])
+            agree, iou = verify_checkpoint(
+                model, processor,
+                chunk_frames[cp],
+                video_masks,
+                text_prompt=text_prompt, device=device,
+                score_threshold=score_threshold,
+                iou_threshold=iou_threshold,
+            )
+            if not agree:
+                logger.info("Checkpoint FAILED at chunk-frame %d (IoU=%.2f)", cp, iou)
+                failed_at = cp
+                break
+            else:
+                logger.debug("Checkpoint OK at chunk-frame %d (IoU=%.2f)", cp, iou)
+
+        if failed_at is None:
+            # All checkpoints passed for this sub-session — accept all frames
+            for local_k, v in sub_res.items():
+                final_results[sub_start + local_k] = v
+            break
+
+        # A checkpoint failed → find last good frame to restart from
+        # Determine the previous good checkpoint (if any)
+        prev_good_cp = None
+        for cp in sub_checkpoints:
+            if cp < failed_at:
+                prev_good_cp = cp   # last checkpoint before failure (was OK)
+
+        if prev_good_cp is not None:
+            # Restart from the previous good checkpoint
+            restart = prev_good_cp
+        else:
+            # Failed at first checkpoint of this sub-session → binary backtrack (max 2)
+            restart = _binary_backtrack(
+                model, processor, chunk_frames, sub_start, failed_at,
+                text_prompt, device, score_threshold, iou_threshold,
+                num_slots, sub_res,
+            )
+
+        # Accept frames [sub_start, restart) as good
+        for local_k, v in sub_res.items():
+            abs_k = sub_start + local_k
+            if abs_k < restart:
+                final_results[abs_k] = v
+
+        # Compute fresh init points at the restart frame via SAM3 image
+        restart_init = get_chunk_init_points(
+            model, processor,
+            first_frame_rgb=chunk_frames[restart],
+            text_prompt=text_prompt, device=device,
+            score_threshold=score_threshold,
+            num_slots=num_slots,
+            prev_centroids=prev_centroids,
+            is_first_chunk=False,   # always use matching for restart
+            manual_init_points=None,
+            max_dist=max_assignment_dist,
+        )
+        current_init_points = restart_init
+        sub_start = restart
+        logger.info("Restarting sub-session from chunk-frame %d", restart)
+
+    return final_results
+
+
+def _binary_backtrack(
+    model, processor,
+    chunk_frames: List[np.ndarray],
+    sub_start: int,
+    failed_at: int,
+    text_prompt: str,
+    device: str,
+    score_threshold: float,
+    iou_threshold: float,
+    num_slots: int,
+    sub_res: Dict[int, Dict[str, Any]],
+    max_tries: int = 2,
+) -> int:
+    """Binary backtrack to find last good frame when first checkpoint failed.
+
+    Tries the midpoint between sub_start and failed_at (max 2 levels).
+    Returns the frame index to restart from.
+    """
+    low = sub_start
+    high = failed_at
+    restart = sub_start   # fallback: restart from sub-session start
+
+    for _ in range(max_tries):
+        mid = (low + high) // 2
+        if mid <= low:
+            break
+        local_mid = mid - sub_start
+        if local_mid not in sub_res:
+            break
+        video_masks = list(sub_res[local_mid]['masks'])
+        agree, iou = verify_checkpoint(
+            model, processor,
+            chunk_frames[mid],
+            video_masks,
+            text_prompt=text_prompt, device=device,
+            score_threshold=score_threshold,
+            iou_threshold=iou_threshold,
+        )
+        if agree:
+            # mid is good → restart from here, try to push higher
+            restart = mid
+            low = mid
+        else:
+            # mid is bad → search lower half
+            high = mid
+
+    return restart
+
+
 # ============================================================================
 # MAIN PIPELINE
 # ============================================================================
@@ -503,6 +766,12 @@ def run_pipeline(
     erase_feather_px = int(comp_cfg.get("feather_px", 5))
     mask_dilate_for_pick = int(comp_cfg.get("mask_dilate_for_pick", 7))
     unitary_feather_px = int(comp_cfg.get("unitary_feather_px", 3))
+
+    # Etapa 2: checkpoint verification config
+    ckpt_cfg = config.get("checkpoint", {}) or {}
+    checkpoint_verification = bool(ckpt_cfg.get("enabled", True))
+    checkpoint_interval = int(ckpt_cfg.get("interval", 38))
+    checkpoint_iou_threshold = float(ckpt_cfg.get("iou_threshold", 0.90))
 
     out_cfg = config.get("output", {}) or {}
     colors_raw = out_cfg.get("overlay_colors")
@@ -615,12 +884,27 @@ def run_pipeline(
             max_dist=max_assignment_dist,
         )
 
-        sam3_results = process_chunk_with_sam3(
-            sam3_model, sam3_processor, chunk_frames,
-            text_prompt=text_prompt, device=device,
-            score_threshold=score_threshold,
-            init_points=chunk_init_points,
-        )
+        if checkpoint_verification:
+            # Etapa 2: process with checkpoint verification + sub-sessions
+            sam3_results = process_chunk_with_checkpoints(
+                sam3_model, sam3_processor, chunk_frames,
+                text_prompt=text_prompt, device=device,
+                score_threshold=score_threshold,
+                init_points=chunk_init_points,
+                num_slots=num_slots,
+                checkpoint_interval=checkpoint_interval,
+                iou_threshold=checkpoint_iou_threshold,
+                max_assignment_dist=max_assignment_dist,
+                prev_centroids=prev_centroids,
+            )
+        else:
+            # Etapa 1 only: single SAM3 video pass over the chunk
+            sam3_results = process_chunk_with_sam3(
+                sam3_model, sam3_processor, chunk_frames,
+                text_prompt=text_prompt, device=device,
+                score_threshold=score_threshold,
+                init_points=chunk_init_points,
+            )
 
         for local_idx in range(len(chunk_frames)):
             frame_rgb = chunk_frames[local_idx]
