@@ -1,0 +1,104 @@
+# Cutie composite pipeline config (HPC)
+#
+# Cutie tracks continuously; SAM3 is used only for frame-0 init and safety recovery.
+#
+# Required environment variable:
+#   export HF_TOKEN="hf_..."
+#
+# Requires Cutie installed:
+#   git clone https://github.com/hkchengrex/Cutie.git models/cutie
+#   cd models/cutie && pip install -e .
+
+video_path: data/raw/original.mp4
+
+# Output
+output:
+  base_dir: outputs/runs
+  video_codec: XVID
+  write_individual_videos: true
+  overlay_colors:
+    - [0, 0, 255]      # R1 rojo
+    - [0, 255, 0]      # R2 verde
+    - [255, 0, 0]      # R3 azul
+    - [255, 255, 0]    # R4 amarillo
+    - [255, 0, 255]    # R5 magenta
+    - [0, 255, 255]    # R6 cyan
+
+# Device
+device: cuda
+
+# Scan
+scan:
+  max_frames: null                 # null = all frames (Cutie handles long videos)
+
+# Detection (rats + YOLO keypoints)
+detection:
+  max_animals: 6
+  keypoint_min_conf: 0.3
+  keypoint_names: [nose, left_ear, right_ear, mid_body, tail_base]
+  confidence: 0.25
+  max_assignment_dist: 200         # px, for identity reassignment during recovery
+
+# SAM3 (only for init + safety recovery, NOT continuous tracking)
+sam3:
+  text_prompt: "mouse"
+  score_threshold: 0.5
+
+# Cutie (the continuous tracker)
+cutie:
+  max_internal_size: 720           # mask detail (tail). 480/720/960. Higher=more VRAM
+  mem_every: 5                     # write memory every N frames
+  max_mem_frames: 5                # working memory size
+  use_long_term: true              # essential for long videos
+  # weights_path: null             # optional custom weights (default auto-downloads)
+
+# Safety systems
+safety:
+  checkpoint_interval: 150         # SAM3 verification every N frames
+  checkpoint_iou_threshold: 0.85   # < this in checkpoint -> SAM3 wins
+  protection_enabled: true         # detect < N masks (lost rat)
+  fusion_enabled: true             # detect two rats merging
+  max_search_frames: 30            # SAM3 recovery search limit
+  fusion_area_tolerance: 0.15      # grown area must be ±15% of vanished area
+  fusion_min_growth: 1.5           # a mask must grow >= 1.5x to count as fusion
+
+# Composition (erase + carry-over)
+composition:
+  erase_dilate_px: 15
+  feather_px: 5
+  mask_dilate_for_pick: 7
+  unitary_feather_px: 3
+  max_mask_carry_frames: 5
+
+# YOLO
+models:
+  yolo_path: models/yolo/yolo26_v11.pt
+
+# Background
+background:
+  cache_dir: outputs/backgrounds
+  num_samples: 50
+  seed: 42
+
+# Contacts
+contacts:
+  enabled: true
+  contact_zone_bl_enter: 0.30
+  contact_zone_bl_exit: 0.45
+  proximity_zone_bl: 1.0
+  sbs_mask_iou_enter: 0.05
+  sbs_mask_iou_exit: 0.02
+  follow_radius_bl: 0.4
+  follow_radius_bl_exit: 0.6
+  follow_min_speed_bls: 0.15
+  follow_alignment_cos: 0.6
+  activation_threshold: 0.5
+  activation_threshold_rare: 0.35
+  secondary_threshold: 0.4
+  bout_max_gap_frames: 3
+  bout_min_frames_n2n: 6
+  bout_min_frames_n2ag: 6
+  bout_min_frames_t2t: 6
+  bout_min_frames_fol: 12
+  bout_min_frames_sbs: 6
+  bout_min_frames_n2b: 6

@@ -1,0 +1,1 @@
+"""Cutie composite pipeline — Cutie tracking + SAM3 safety net for multi-rat tracking."""
