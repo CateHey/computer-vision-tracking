@@ -43,6 +43,8 @@ detection:
 sam3:
   text_prompt: "mouse"
   score_threshold: 0.5
+  sam3_phase_frames: 125           # frames que trackea SAM3 antes de pasar a Cutie
+  init_video_frames: 10            # (no usado en 2-fases, se mantiene por compat)
 
 # Cutie (the continuous tracker)
 cutie:
