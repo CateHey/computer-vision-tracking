@@ -32,8 +32,33 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Cutie tensor helpers (copied from Cutie's gui/interactive_utils.py to avoid
+# depending on the repo's internal 'gui' module path).
+# ============================================================================
+
+def _image_to_torch(frame: np.ndarray, device: str = "cuda") -> torch.Tensor:
+    """RGB (H,W,3) uint8 numpy -> torch (3,H,W) float in [0,1]."""
+    frame = frame.transpose(2, 0, 1)
+    frame = torch.from_numpy(frame).float().to(device, non_blocking=True) / 255
+    return frame
+
+
+def _torch_prob_to_numpy_mask(prob: torch.Tensor) -> np.ndarray:
+    """Prob tensor (num_objs+1, H, W) -> ID mask (H,W) uint8 (argmax over channels)."""
+    mask = torch.max(prob, dim=0).indices
+    return mask.cpu().numpy().astype(np.uint8)
+
+
+def _index_numpy_to_one_hot_torch(mask: np.ndarray, num_classes: int) -> torch.Tensor:
+    """Index mask (H,W) -> one-hot torch (num_classes, H, W) float."""
+    mask = torch.from_numpy(mask).long()
+    return F.one_hot(mask, num_classes=num_classes).permute(2, 0, 1).float()
 
 
 class CutieTracker:
@@ -61,18 +86,10 @@ class CutieTracker:
         self.device = device
         self.max_internal_size = max_internal_size
 
-        # Import Cutie (from the installed repo)
+        # Import Cutie core (from the installed repo)
         from cutie.utils.get_default_model import get_default_model
         from cutie.inference.inference_core import InferenceCore
-        from cutie.interactive_utils import (  # noqa: F401
-            image_to_torch,
-            torch_prob_to_numpy_mask,
-            index_numpy_to_one_hot_torch,
-        )
 
-        self._image_to_torch = image_to_torch
-        self._torch_prob_to_numpy_mask = torch_prob_to_numpy_mask
-        self._index_numpy_to_one_hot_torch = index_numpy_to_one_hot_torch
         self._InferenceCore = InferenceCore
 
         logger.info("Loading Cutie model...")
@@ -118,7 +135,7 @@ class CutieTracker:
 
     def _frame_to_torch(self, frame_rgb: np.ndarray) -> torch.Tensor:
         """Convert an RGB numpy frame to Cutie's expected torch tensor."""
-        return self._image_to_torch(frame_rgb, device=self.device)
+        return _image_to_torch(frame_rgb, device=self.device)
 
     def init_with_masks(
         self,
@@ -140,7 +157,7 @@ class CutieTracker:
         frame_torch = self._frame_to_torch(frame_rgb)
 
         # Convert index mask to one-hot, drop background channel [0]
-        one_hot = self._index_numpy_to_one_hot_torch(
+        one_hot = _index_numpy_to_one_hot_torch(
             index_mask, num_objects + 1
         ).to(self.device)
 
@@ -152,7 +169,7 @@ class CutieTracker:
                     idx_mask=False,        # we pass one-hot object masks
                     force_permanent=True,  # commit as permanent memory
                 )
-        return self._torch_prob_to_numpy_mask(prob)
+        return _torch_prob_to_numpy_mask(prob)
 
     def track(self, frame_rgb: np.ndarray) -> np.ndarray:
         """Propagate one frame (no mask). Returns (H, W) ID mask."""
@@ -160,7 +177,7 @@ class CutieTracker:
         with torch.inference_mode():
             with torch.amp.autocast(self.device, enabled=(self.device == "cuda")):
                 prob = self.processor.step(frame_torch)
-        return self._torch_prob_to_numpy_mask(prob)
+        return _torch_prob_to_numpy_mask(prob)
 
     def reinject_masks(
         self,
@@ -185,7 +202,7 @@ class CutieTracker:
         self._num_objects = max(self._num_objects, num_objects)
         frame_torch = self._frame_to_torch(frame_rgb)
 
-        one_hot = self._index_numpy_to_one_hot_torch(
+        one_hot = _index_numpy_to_one_hot_torch(
             index_mask, num_objects + 1
         ).to(self.device)
 
@@ -197,7 +214,7 @@ class CutieTracker:
                     idx_mask=False,
                     force_permanent=True,
                 )
-        return self._torch_prob_to_numpy_mask(prob)
+        return _torch_prob_to_numpy_mask(prob)
 
     # ------------------------------------------------------------------
     # Helpers
