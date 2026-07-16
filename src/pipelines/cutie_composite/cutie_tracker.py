@@ -92,6 +92,16 @@ class CutieTracker:
 
         self._InferenceCore = InferenceCore
 
+        # Cutie's get_default_model() calls hydra.initialize(), which fails if
+        # Hydra was already initialized elsewhere (e.g. by another model).
+        # Clear any existing global Hydra instance first.
+        try:
+            from hydra.core.global_hydra import GlobalHydra
+            if GlobalHydra.instance().is_initialized():
+                GlobalHydra.instance().clear()
+        except Exception as e:
+            logger.debug("Could not clear GlobalHydra: %s", e)
+
         logger.info("Loading Cutie model...")
         self.cutie = get_default_model()
 
