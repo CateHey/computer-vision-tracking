@@ -58,6 +58,7 @@ from src.pipelines.isolated_composite.composition import (
 from src.pipelines.sam3_composite.run import (
     load_sam3_model,
     sam3_image_segment,
+    process_chunk_with_sam3,
     extract_frames_to_memory,
     mask_centroid,
     assign_identities_by_centroid,
@@ -104,6 +105,36 @@ def select_top_n_masks(
     filtered_scores = [scores[i] for i in keep]
     logger.info("SAM3 detected %d rats, kept top %d by score", len(masks), n)
     return filtered_masks, filtered_scores
+
+
+def sam3_video_masks_for_frame(
+    sam3_model, sam3_processor,
+    frames_for_video: List[np.ndarray],
+    target_local_idx: int,
+    text_prompt: str,
+    device: str,
+    score_threshold: float,
+) -> Tuple[List[np.ndarray], List[float]]:
+    """Get masks for one frame using SAM3 VIDEO mode (better than image mode).
+
+    SAM3 video has temporal context and segments rats more reliably than the
+    single-frame image mode (which can mistake a tail for a separate rat).
+
+    Runs SAM3 video over a short clip and returns the masks at target_local_idx.
+
+    Returns: (list_of_masks, list_of_scores)
+    """
+    results = process_chunk_with_sam3(
+        sam3_model, sam3_processor, frames_for_video,
+        text_prompt=text_prompt, device=device,
+        score_threshold=score_threshold,
+        init_points=None,
+    )
+    if target_local_idx not in results:
+        return [], []
+    masks = results[target_local_idx]['masks']
+    scores = results[target_local_idx]['scores']
+    return list(masks), list(scores)
 
 
 # ============================================================================
@@ -286,12 +317,28 @@ def run_pipeline(
     # ==================================================================
     # Phase 6: Initialize Cutie with SAM3 on frame 0
     # ==================================================================
-    logger.info("Initializing tracker with SAM3 on frame 0...")
+    logger.info("Initializing tracker with SAM3 (video mode) on frame 0...")
     frame0_rgb = all_frames[0]
-    fresh_masks, fresh_scores = sam3_image_segment(
-        sam3_model, sam3_processor, frame0_rgb,
+    # Use SAM3 VIDEO mode for frame-0 detection — much more reliable than image
+    # mode (image mode can segment a tail as a separate rat). We run video over a
+    # short warm-up clip and take the masks from frame 0.
+    init_video_len = min(int(config.get("sam3", {}).get("init_video_frames", 10)), num_frames)
+    warmup_frames = all_frames[:init_video_len]
+    fresh_masks_list, fresh_scores_list = sam3_video_masks_for_frame(
+        sam3_model, sam3_processor, warmup_frames, target_local_idx=0,
         text_prompt=text_prompt, device=device, score_threshold=score_threshold,
     )
+    fresh_masks = np.array(fresh_masks_list) if fresh_masks_list else np.zeros((0, height, width), dtype=bool)
+    fresh_scores = fresh_scores_list
+
+    # Fallback to image mode if video mode found nothing
+    if len(fresh_masks) == 0:
+        logger.warning("SAM3 video found no masks on frame 0, falling back to image mode")
+        fresh_masks, fresh_scores = sam3_image_segment(
+            sam3_model, sam3_processor, frame0_rgb,
+            text_prompt=text_prompt, device=device, score_threshold=score_threshold,
+        )
+
     # Keep only the N best if SAM3 over-detected (phantoms/shadows)
     fresh_masks, fresh_scores = select_top_n_masks(fresh_masks, fresh_scores, num_slots)
     logger.info("SAM3 using %d rats on frame 0 (expected %d)", len(fresh_masks), num_slots)
