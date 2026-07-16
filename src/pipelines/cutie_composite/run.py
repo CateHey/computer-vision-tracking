@@ -90,20 +90,19 @@ def select_top_n_masks(
     scores: List[float],
     n: int,
 ) -> Tuple[np.ndarray, List[float]]:
-    """If SAM3 detected more than n rats, keep only the n with highest score.
+    """If SAM3 detected more than n rats, keep the first n by DETECTION ORDER.
 
-    Prevents phantom detections (shadows, reflections, rat parts) from polluting
-    the tracker. Returns (filtered_masks, filtered_scores).
+    This mirrors sam3_composite, which keeps the first N masks (not top-by-score).
+    Empirically SAM3 video returns real rats first and phantoms (shadows, tails)
+    later, so detection order works better than score for picking the real rats.
+
+    Returns (filtered_masks, filtered_scores).
     """
     if len(masks) <= n:
         return masks, scores
-    # Sort indices by score descending, keep top n
-    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    keep = order[:n]
-    keep.sort()   # preserve original order among the kept ones
-    filtered_masks = masks[keep]
-    filtered_scores = [scores[i] for i in keep]
-    logger.info("SAM3 detected %d rats, kept top %d by score", len(masks), n)
+    filtered_masks = masks[:n]
+    filtered_scores = scores[:n]
+    logger.info("SAM3 detected %d rats, kept first %d by detection order", len(masks), n)
     return filtered_masks, filtered_scores
 
 
