@@ -81,6 +81,32 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# HELPER: keep only the top-N masks by score
+# ============================================================================
+
+def select_top_n_masks(
+    masks: np.ndarray,
+    scores: List[float],
+    n: int,
+) -> Tuple[np.ndarray, List[float]]:
+    """If SAM3 detected more than n rats, keep only the n with highest score.
+
+    Prevents phantom detections (shadows, reflections, rat parts) from polluting
+    the tracker. Returns (filtered_masks, filtered_scores).
+    """
+    if len(masks) <= n:
+        return masks, scores
+    # Sort indices by score descending, keep top n
+    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    keep = order[:n]
+    keep.sort()   # preserve original order among the kept ones
+    filtered_masks = masks[keep]
+    filtered_scores = [scores[i] for i in keep]
+    logger.info("SAM3 detected %d rats, kept top %d by score", len(masks), n)
+    return filtered_masks, filtered_scores
+
+
+# ============================================================================
 # SAFETY EVENT LOGGER
 # ============================================================================
 
@@ -266,7 +292,9 @@ def run_pipeline(
         sam3_model, sam3_processor, frame0_rgb,
         text_prompt=text_prompt, device=device, score_threshold=score_threshold,
     )
-    logger.info("SAM3 detected %d rats on frame 0 (expected %d)", len(fresh_masks), num_slots)
+    # Keep only the N best if SAM3 over-detected (phantoms/shadows)
+    fresh_masks, fresh_scores = select_top_n_masks(fresh_masks, fresh_scores, num_slots)
+    logger.info("SAM3 using %d rats on frame 0 (expected %d)", len(fresh_masks), num_slots)
 
     # Assign initial identities by detection order
     slot_masks: List[Optional[np.ndarray]] = [None] * num_slots
@@ -344,10 +372,12 @@ def run_pipeline(
 
             if do_checkpoint and not need_sam3:
                 # Run SAM3 for periodic verification
-                sam3_masks_ck, _ = sam3_image_segment(
+                sam3_masks_ck, sam3_scores_ck = sam3_image_segment(
                     sam3_model, sam3_processor, frame_rgb,
                     text_prompt=text_prompt, device=device, score_threshold=score_threshold,
                 )
+                sam3_masks_ck, sam3_scores_ck = select_top_n_masks(
+                    sam3_masks_ck, sam3_scores_ck, num_slots)
                 sam3_calls += 1
                 sam3_ran = True
                 checkpoint_event = checkpoint_decision(
@@ -373,10 +403,12 @@ def run_pipeline(
             # --- Recovery for protection/fusion ---
             if (protection_event.triggered or fusion_event.triggered) and not recovered:
                 event = protection_event if protection_event.triggered else fusion_event
-                sam3_masks_rec, _ = sam3_image_segment(
+                sam3_masks_rec, sam3_scores_rec = sam3_image_segment(
                     sam3_model, sam3_processor, frame_rgb,
                     text_prompt=text_prompt, device=device, score_threshold=score_threshold,
                 )
+                sam3_masks_rec, sam3_scores_rec = select_top_n_masks(
+                    sam3_masks_rec, sam3_scores_rec, num_slots)
                 sam3_calls += 1
                 sam3_ran = True
 
