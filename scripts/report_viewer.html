@@ -1,0 +1,1053 @@
+<title>Rat Contact Session Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+/* ── Tokens ─────────────────────────────────────────────────────────────
+   Light is the bare :root. Dark is redefined twice: once for the OS setting
+   (guarded so an explicit light stamp wins) and once for the theme toggle. */
+:root {
+  color-scheme: light;
+
+  --ground:      #f4f6f5;
+  --surface:     #ffffff;
+  --surface-2:   #eef1f0;
+  --border:      #dbe1df;
+  --border-firm: #c3ccc9;
+
+  --ink:         #12181a;
+  --ink-2:       #444f4c;
+  --ink-3:       #6b7773;
+
+  --accent:      #0f6e63;
+  --accent-ink:  #ffffff;
+  --accent-soft: #e2f0ed;
+
+  --warn:        #8a5a00;
+  --warn-soft:   #fdf3e0;
+
+  --shadow: 0 1px 2px rgba(18,24,26,.06), 0 8px 24px -12px rgba(18,24,26,.18);
+
+  --step--1: .75rem;
+  --step-0:  .875rem;
+  --step-1:  1rem;
+  --step-2:  1.375rem;
+  --step-3:  1.875rem;
+  --step-4:  2.5rem;
+
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:      #0e1312;
+    --surface:     #161d1b;
+    --surface-2:   #1d2624;
+    --border:      #2a3431;
+    --border-firm: #3b4744;
+    --ink:         #e9efec;
+    --ink-2:       #b3bfbb;
+    --ink-3:       #879591;
+    --accent:      #4fd1bd;
+    --accent-ink:  #06211d;
+    --accent-soft: #16302c;
+    --warn:        #e0b062;
+    --warn-soft:   #2c2417;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:      #0e1312;
+  --surface:     #161d1b;
+  --surface-2:   #1d2624;
+  --border:      #2a3431;
+  --border-firm: #3b4744;
+  --ink:         #e9efec;
+  --ink-2:       #b3bfbb;
+  --ink-3:       #879591;
+  --accent:      #4fd1bd;
+  --accent-ink:  #06211d;
+  --accent-soft: #16302c;
+  --warn:        #e0b062;
+  --warn-soft:   #2c2417;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--step-0);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin: 0; text-wrap: balance; letter-spacing: -.015em; font-weight: 600; }
+h1 { font-size: var(--step-2); }
+h2 { font-size: var(--step-1); }
+p  { margin: 0; }
+
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.eyebrow {
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+:where(button, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px 72px; }
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .spacer { flex: 1 1 auto; }
+
+.mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.mark svg { display: block; }
+
+.filechip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 42ch;
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: var(--step--1);
+  color: var(--ink-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.btn {
+  font: inherit;
+  font-size: var(--step--1);
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border-firm);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.btn:hover { background: var(--surface-2); border-color: var(--ink-3); }
+.btn--primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn--primary:hover { background: var(--accent); filter: brightness(1.08); }
+
+/* ── Drop zone ─────────────────────────────────────────────────────────── */
+.intro { padding-top: 56px; display: grid; gap: 28px; justify-items: center; }
+
+.dropzone {
+  width: 100%;
+  max-width: 620px;
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  padding: 56px 32px;
+  text-align: center;
+  background: var(--surface);
+  border: 2px dashed var(--border-firm);
+  border-radius: 14px;
+  transition: border-color .15s ease, background .15s ease;
+}
+.dropzone.is-over { border-color: var(--accent); background: var(--accent-soft); }
+.dropzone p { color: var(--ink-2); max-width: 46ch; }
+
+.hint {
+  max-width: 620px;
+  padding: 14px 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: var(--step--1);
+  color: var(--ink-2);
+}
+.hint code {
+  font-family: var(--mono);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.err {
+  max-width: 620px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: var(--step--1);
+}
+
+/* ── Sections ──────────────────────────────────────────────────────────── */
+section { margin-top: 40px; }
+.sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.sec-head .note { font-size: var(--step--1); color: var(--ink-3); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.card-pad { padding: 18px 20px; }
+
+/* ── Stat tiles ────────────────────────────────────────────────────────── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 12px;
+}
+.stat { padding: 16px 18px; display: grid; gap: 4px; align-content: start; }
+.stat .v { font-family: var(--mono); font-size: var(--step-3); font-weight: 600; letter-spacing: -.02em; }
+.stat .k { font-size: var(--step--1); color: var(--ink-3); }
+.stat .sub { font-size: var(--step--1); color: var(--ink-2); font-family: var(--mono); }
+.stat--flag .v { color: var(--warn); }
+
+/* ── Ethogram ──────────────────────────────────────────────────────────── */
+.plot { width: 100%; display: block; overflow: visible; }
+.scroller { overflow-x: auto; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: var(--step--1);
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, opacity .12s ease;
+}
+.lg:hover { border-color: var(--ink-3); }
+.lg[aria-pressed="false"] { opacity: .42; }
+.lg .sw { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.lg .n { font-family: var(--mono); color: var(--ink-3); }
+
+/* ── Tooltip ───────────────────────────────────────────────────────────── */
+.tip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--ground);
+  font-size: var(--step--1);
+  line-height: 1.45;
+  box-shadow: 0 6px 22px -8px rgba(0,0,0,.5);
+  max-width: 280px;
+}
+.tip .t { font-weight: 600; display: block; }
+.tip .m { font-family: var(--mono); opacity: .82; }
+
+/* ── Two-column ────────────────────────────────────────────────────────── */
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th {
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 2;
+}
+tbody tr:last-child td { border-bottom: none; }
+td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.tbl-scroll { max-height: 520px; overflow: auto; }
+
+.typecell { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.typecell .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+tr.ev { cursor: pointer; }
+tr.ev:hover td { background: var(--surface-2); }
+tr.ev.is-hit td { background: var(--accent-soft); }
+
+/* ── Bars in table ─────────────────────────────────────────────────────── */
+.bar { height: 8px; border-radius: 4px; min-width: 2px; }
+.bartrack { background: var(--surface-2); border-radius: 4px; width: 100%; }
+
+/* ── Controls row ──────────────────────────────────────────────────────── */
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.search {
+  font: inherit;
+  font-size: var(--step--1);
+  padding: 7px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--border-firm);
+  background: var(--surface);
+  color: var(--ink);
+  min-width: 190px;
+}
+.search::placeholder { color: var(--ink-3); }
+
+.toggle { display: inline-flex; align-items: center; gap: 7px; font-size: var(--step--1); color: var(--ink-2); cursor: pointer; }
+
+details.params { border-radius: 12px; }
+details.params summary {
+  cursor: pointer;
+  padding: 14px 20px;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+details.params summary::-webkit-details-marker { display: none; }
+details.params summary::before {
+  content: "▸";
+  color: var(--ink-3);
+  transition: transform .15s ease;
+}
+details.params[open] summary::before { transform: rotate(90deg); }
+
+.empty-note { padding: 28px; text-align: center; color: var(--ink-3); font-size: var(--step--1); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="topbar">
+  <span class="mark">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="1" y="6" width="5" height="8" rx="2" fill="#1f77b4"/>
+      <rect x="7.5" y="3" width="5" height="14" rx="2" fill="#ff7f0e"/>
+      <rect x="14" y="8" width="5" height="4" rx="2" fill="#9467bd"/>
+    </svg>
+    Contact Session Viewer
+  </span>
+  <span id="filechip" class="filechip" hidden></span>
+  <span class="spacer"></span>
+  <button id="reload" class="btn" hidden type="button">Load another file</button>
+</div>
+
+<div class="wrap">
+
+  <!-- ── Empty state ── -->
+  <div id="intro" class="intro">
+    <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="Choose a results.xlsx file">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="color: var(--ink-3)" aria-hidden="true">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/>
+      </svg>
+      <h1>Open a session</h1>
+      <p>Drop <strong>results.xlsx</strong> here, or click to choose it. The file is read in your browser and never uploaded anywhere.</p>
+      <button class="btn btn--primary" type="button">Choose file</button>
+      <input id="file" type="file" accept=".xlsx,.xlsm" hidden>
+    </div>
+    <div id="error" class="err" hidden></div>
+    <div class="hint">
+      Every run writes one workbook at
+      <code>outputs/runs/&lt;run&gt;/contacts/results.xlsx</code>.
+      It needs the <code>Events</code> sheet; <code>Summary</code>, <code>PerFrame</code>,
+      <code>ByType</code> and <code>Parameters</code> are used when present.
+    </div>
+  </div>
+
+  <!-- ── Report ── -->
+  <div id="report" hidden>
+
+    <section id="sec-stats">
+      <div class="sec-head"><h2>Session</h2><span class="note" id="session-note"></span></div>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>Ethogram</h2>
+        <span class="note">Every classified event across the session. Hover for detail, click to find it in the table below.</span>
+      </div>
+      <div class="card card-pad">
+        <div class="scroller"><svg id="etho" class="plot" role="img" aria-label="Timeline of classified contact events"></svg></div>
+        <div class="legend" id="legend"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="cols">
+        <div>
+          <div class="sec-head"><h2>Time by type</h2></div>
+          <div class="card"><div class="card-pad"><div id="bytype"></div></div></div>
+        </div>
+        <div>
+          <div class="sec-head"><h2>Filtering impact</h2><span class="note">Raw labels vs cleaned events</span></div>
+          <div class="card"><div class="card-pad"><div id="impact"></div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <h2>Events</h2>
+        <span class="note" id="ev-count"></span>
+      </div>
+      <div class="controls">
+        <input id="search" class="search" type="search" placeholder="Search type or timecode…" aria-label="Search events">
+        <label class="toggle"><input id="show-nc" type="checkbox"> Show no-contact intervals</label>
+      </div>
+      <div class="card"><div class="tbl-scroll"><table id="events">
+        <thead><tr>
+          <th class="n">#</th><th>Type</th><th class="n">Start</th><th class="n">End</th>
+          <th class="n">Duration</th><th class="n">Frames</th><th class="n">Investigator</th><th class="n">Mean nose–nose (px)</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table></div></div>
+    </section>
+
+    <section>
+      <details class="params card">
+        <summary>Parameters used for this run</summary>
+        <div class="card-pad" style="padding-top:0">
+          <div class="tbl-scroll"><table id="params">
+            <thead><tr><th>Section</th><th>Parameter</th><th>Value</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </div>
+      </details>
+    </section>
+
+  </div>
+</div>
+
+<div id="tip" class="tip" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // Contact-type colours match src/common/contacts.py and the PDF report exactly,
+  // so a type reads the same here as in the figures. Every swatch is paired with
+  // its label — identity is never carried by colour alone.
+  var COLORS = {
+    N2N:  "#1f77b4", N2AG: "#ff7f0e", N2B: "#2ca02c",
+    T2T:  "#8c564b", FOL:  "#d62728", SBS: "#9467bd", NC: "#b6bdba"
+  };
+  var LABELS = {
+    N2N:  "Nose-to-nose",   N2AG: "Nose-to-anogenital", N2B: "Nose-to-body",
+    T2T:  "Tail-to-tail",   FOL:  "Following",          SBS: "Side-by-side",
+    NC:   "No contact"
+  };
+  // contacts_v2 dropped T2T; contacts.py (v1) still has it. The order shown is
+  // resolved per workbook so a v2 run does not display a type it cannot produce.
+  var ORDER_V1 = ["N2N", "N2AG", "N2B", "T2T", "FOL", "SBS"];
+  var ORDER_V2 = ["N2N", "N2AG", "N2B", "FOL", "SBS"];
+  var ORDER = ORDER_V1;
+
+  var SVGNS = "http://www.w3.org/2000/svg";
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  var state = { events: [], perFrame: [], byType: [], params: [], summary: [],
+                hidden: {}, showNC: false, query: "", duration: 0, fps: 30 };
+
+  // ── formatting ──────────────────────────────────────────────────────────
+  function fmtTime(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    var h = Math.floor(sec / 3600), r = sec - h * 3600;
+    var m = Math.floor(r / 60), s = r - m * 60;
+    var ss = (s < 10 ? "0" : "") + s.toFixed(1);
+    return h > 0 ? h + ":" + String(m).padStart(2, "0") + ":" + ss : m + ":" + ss;
+  }
+  function fmtDur(sec) { return (isFinite(sec) ? sec.toFixed(1) : "0.0") + "s"; }
+  function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function has(v) { return v !== null && v !== undefined && v !== ""; }
+
+  // ── workbook parsing ────────────────────────────────────────────────────
+  function sheet(wb, name) {
+    var ws = wb.Sheets[name];
+    return ws ? XLSX.utils.sheet_to_json(ws, { defval: null }) : [];
+  }
+
+  function parse(wb) {
+    var events = sheet(wb, "Events").map(function (r, i) {
+      var type = String(r.contact_type == null ? "" : r.contact_type).trim().toUpperCase();
+      // contacts_v2 labels the absence of contact "none"; v1 leaves it empty.
+      if (type === "NONE" || type === "") type = "NC";
+      return {
+        id:    has(r.event_id) ? r.event_id : i,
+        type:  type || "NC",
+        label: r.contact_label || LABELS[type] || type,
+        start: num(r.start_time_sec),
+        end:   num(r.end_time_sec),
+        dur:   has(r.duration_sec) ? num(r.duration_sec) : num(r.end_time_sec) - num(r.start_time_sec),
+        frames: has(r.duration_frames) ? num(r.duration_frames) : null,
+        startFrame: has(r.start_frame) ? num(r.start_frame) : null,
+        inv:   has(r.investigator_slot) ? r.investigator_slot : null,
+        nose:  has(r.mean_nose_nose_dist_px) ? num(r.mean_nose_nose_dist_px) : null
+      };
+    }).filter(function (e) { return isFinite(e.start) && e.end > e.start; });
+
+    events.sort(function (a, b) { return a.start - b.start; });
+
+    var params = sheet(wb, "Parameters").map(function (r) {
+      return { section: r.section, key: r.parameter, value: r.value };
+    }).filter(function (r) { return has(r.key); });
+
+    // Resolve the taxonomy: a `family` column means contacts_v2 (no T2T);
+    // a T2T label anywhere means contacts.py v1.
+    var perFrame = sheet(wb, "PerFrame");
+    var isV2 = perFrame.length > 0 && perFrame[0].hasOwnProperty("family");
+    var sawT2T = events.some(function (e) { return e.type === "T2T"; });
+    if (perFrame.length) {
+      ORDER = isV2 ? ORDER_V2 : ORDER_V1;
+    } else {
+      ORDER = sawT2T ? ORDER_V1 : ORDER_V2;
+    }
+
+    var duration = events.length ? events[events.length - 1].end : 0;
+    var fps = 30;
+    params.forEach(function (p) {
+      if (p.section === "video" && p.key === "fps") fps = num(p.value) || 30;
+      if (p.section === "video" && p.key === "video_duration_sec") {
+        duration = Math.max(duration, num(p.value));
+      }
+      if (p.section === "postprocessing_metadata" && p.key === "total_duration_sec") {
+        duration = Math.max(duration, num(p.value));
+      }
+    });
+
+    return {
+      events: events,
+      perFrame: perFrame,
+      isV2: isV2,
+      byType: sheet(wb, "ByType"),
+      dynamics: sheet(wb, "Dynamics"),
+      summary: sheet(wb, "Summary"),
+      global: sheet(wb, "Global"),
+      params: params,
+      duration: duration,
+      fps: fps
+    };
+  }
+
+  // ── stat tiles ──────────────────────────────────────────────────────────
+  function renderStats(d) {
+    var contact = d.events.filter(function (e) { return e.type !== "NC"; });
+    var contactSec = contact.reduce(function (a, e) { return a + e.dur; }, 0);
+    var pct = d.duration > 0 ? (contactSec / d.duration * 100) : 0;
+
+    var g = {};
+    (d.global || []).forEach(function (r) { if (has(r.metric)) g[r.metric] = r.value; });
+
+    var flicker = null;
+    if (has(g.raw_bouts_total) && has(g.real_events_total)) {
+      var raw = num(g.raw_bouts_total);
+      if (raw > 0) flicker = (raw - contact.length) / raw * 100;
+    }
+
+    var tiles = [
+      { k: "Session duration", v: fmtTime(d.duration), sub: d.fps.toFixed(0) + " fps" },
+      { k: "Contact time",     v: fmtDur(contactSec),  sub: pct.toFixed(1) + "% of session" },
+      { k: "Contact events",   v: String(contact.length), sub: ORDER.filter(function (t) {
+          return contact.some(function (e) { return e.type === t; }); }).length + " types present" },
+      { k: "Longest event",    v: contact.length ? fmtDur(Math.max.apply(null, contact.map(function (e) { return e.dur; }))) : "—",
+        sub: contact.length ? (function () {
+          var m = contact.reduce(function (a, b) { return b.dur > a.dur ? b : a; });
+          return m.type + " at " + fmtTime(m.start); })() : "no contact detected" }
+    ];
+    if (flicker !== null) {
+      tiles.push({ k: "Raw bouts removed", v: flicker.toFixed(0) + "%", sub: g.raw_bouts_total + " raw → " + contact.length + " clean", flag: flicker > 60 });
+    }
+    if (d.dynamics && d.dynamics.length) {
+      tiles.push({ k: "Approach / avoid", v: String(d.dynamics.length),
+                   sub: "episodes without contact" });
+    }
+
+    $("stats").innerHTML = "";
+    tiles.forEach(function (t) {
+      var el = document.createElement("div");
+      el.className = "card stat" + (t.flag ? " stat--flag" : "");
+      var v = document.createElement("div"); v.className = "v"; v.textContent = t.v;
+      var k = document.createElement("div"); k.className = "k"; k.textContent = t.k;
+      var s = document.createElement("div"); s.className = "sub"; s.textContent = t.sub;
+      el.appendChild(v); el.appendChild(k); el.appendChild(s);
+      $("stats").appendChild(el);
+    });
+
+    $("session-note").textContent = contact.length
+      ? "Showing cleaned behavioural events."
+      : "No contact events in this file.";
+  }
+
+  // ── ethogram ────────────────────────────────────────────────────────────
+  var TIP = $("tip");
+  function showTip(html, ev) {
+    TIP.innerHTML = html;
+    TIP.hidden = false;
+    var r = TIP.getBoundingClientRect();
+    var x = ev.clientX + 14, y = ev.clientY + 16;
+    if (x + r.width > window.innerWidth - 8) x = ev.clientX - r.width - 14;
+    if (y + r.height > window.innerHeight - 8) y = ev.clientY - r.height - 14;
+    TIP.style.left = Math.max(8, x) + "px";
+    TIP.style.top = Math.max(8, y) + "px";
+  }
+  function hideTip() { TIP.hidden = true; }
+
+  function el(tag, attrs) {
+    var n = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) if (attrs.hasOwnProperty(k)) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+
+  function renderEthogram(d) {
+    var svg = $("etho");
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var W = Math.max(680, svg.parentNode.clientWidth || 900);
+    var padL = 8, padR = 8, padT = 10;
+    var barY = padT, barH = 46;
+    var trackY = barY + barH + 16, trackH = 44;
+    var axisY = trackY + trackH + 6;
+    var H = axisY + 26;
+
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("height", H);
+    svg.style.minWidth = W + "px";
+
+    var plotW = W - padL - padR;
+    var dur = d.duration || 1;
+    var x = function (t) { return padL + (t / dur) * plotW; };
+
+    // Baseline track
+    svg.appendChild(el("rect", {
+      x: padL, y: barY, width: plotW, height: barH, rx: 6,
+      fill: "var(--surface-2)"
+    }));
+
+    // Event blocks. A 2px surface gap keeps adjacent blocks from merging.
+    d.events.forEach(function (e) {
+      if (e.type === "NC" && !state.showNC) return;
+      if (state.hidden[e.type]) return;
+      var x0 = x(e.start), x1 = x(e.end);
+      var w = Math.max(1.5, x1 - x0 - 2);
+      var rect = el("rect", {
+        x: x0, y: barY, width: w, height: barH, rx: 3,
+        fill: COLORS[e.type] || "#888",
+        "data-id": e.id
+      });
+      rect.style.cursor = "pointer";
+      rect.addEventListener("mousemove", function (evt) {
+        showTip('<span class="t">' + e.type + " · " + e.label + '</span>' +
+                '<span class="m">' + fmtTime(e.start) + " → " + fmtTime(e.end) +
+                "  (" + fmtDur(e.dur) + ")</span>", evt);
+      });
+      rect.addEventListener("mouseleave", hideTip);
+      rect.addEventListener("click", function () { jumpToEvent(e.id); });
+      svg.appendChild(rect);
+    });
+
+    // Inter-rat distance track, when PerFrame is present. It shows why an event
+    // fired: contacts sit in the troughs.
+    var pf = d.perFrame;
+    if (pf && pf.length) {
+      var col = ("centroid_dist_bl" in pf[0]) ? "centroid_dist_bl"
+              : ("centroid_dist_px" in pf[0]) ? "centroid_dist_px" : null;
+      if (col) {
+        var step = Math.max(1, Math.floor(pf.length / 1400));
+        var pts = [], maxV = 0;
+        for (var i = 0; i < pf.length; i += step) {
+          var t = num(pf[i].time_sec), v = pf[i][col];
+          if (!has(v)) continue;
+          v = num(v);
+          if (v > maxV) maxV = v;
+          pts.push([t, v]);
+        }
+        if (pts.length > 1 && maxV > 0) {
+          var yy = function (v) { return trackY + trackH - (Math.min(v, maxV) / maxV) * trackH; };
+          var dstr = pts.map(function (p, i) {
+            return (i ? "L" : "M") + x(p[0]).toFixed(1) + " " + yy(p[1]).toFixed(1);
+          }).join(" ");
+          svg.appendChild(el("path", {
+            d: dstr, fill: "none", stroke: "var(--ink-3)",
+            "stroke-width": 1.2, "stroke-linejoin": "round", opacity: ".75"
+          }));
+          var lab = el("text", { x: padL + 2, y: trackY + 11,
+            "font-size": "10", fill: "var(--ink-3)", "font-family": "var(--mono)" });
+          lab.textContent = "inter-rat distance (" + (col.endsWith("bl") ? "body lengths" : "px") + ")";
+          svg.appendChild(lab);
+        }
+      }
+    }
+
+    // Time axis
+    var target = Math.max(2, Math.min(10, Math.round(plotW / 110)));
+    var raw = dur / target;
+    var nice = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+    var stepT = nice[nice.length - 1];
+    for (var s = 0; s < nice.length; s++) { if (nice[s] >= raw) { stepT = nice[s]; break; } }
+    svg.appendChild(el("line", {
+      x1: padL, y1: axisY, x2: padL + plotW, y2: axisY,
+      stroke: "var(--border)", "stroke-width": 1
+    }));
+    for (var t = 0; t <= dur + 1e-6; t += stepT) {
+      var tx = x(t);
+      svg.appendChild(el("line", { x1: tx, y1: axisY, x2: tx, y2: axisY + 4,
+        stroke: "var(--border-firm)", "stroke-width": 1 }));
+      var tl = el("text", { x: tx, y: axisY + 17, "font-size": "10.5",
+        fill: "var(--ink-3)", "font-family": "var(--mono)",
+        "text-anchor": t === 0 ? "start" : "middle" });
+      tl.textContent = fmtTime(t);
+      svg.appendChild(tl);
+    }
+  }
+
+  // ── legend ──────────────────────────────────────────────────────────────
+  function renderLegend(d) {
+    var box = $("legend");
+    box.innerHTML = "";
+    var types = ORDER.slice();
+    if (state.showNC) types.push("NC");
+
+    types.forEach(function (t) {
+      var n = d.events.filter(function (e) { return e.type === t; }).length;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "lg";
+      b.setAttribute("aria-pressed", state.hidden[t] ? "false" : "true");
+      b.title = n ? "Hide or show " + LABELS[t] : LABELS[t] + " — none in this session";
+      var sw = document.createElement("span");
+      sw.className = "sw"; sw.style.background = COLORS[t];
+      var nm = document.createElement("span"); nm.textContent = t + " " + LABELS[t];
+      var ct = document.createElement("span"); ct.className = "n"; ct.textContent = n;
+      b.appendChild(sw); b.appendChild(nm); b.appendChild(ct);
+      b.addEventListener("click", function () {
+        state.hidden[t] = !state.hidden[t];
+        renderEthogram(d); renderLegend(d); renderEvents(d);
+      });
+      box.appendChild(b);
+    });
+  }
+
+  // ── time by type ────────────────────────────────────────────────────────
+  function renderByType(d) {
+    var host = $("bytype");
+    host.innerHTML = "";
+    var rows = ORDER.map(function (t) {
+      var evs = d.events.filter(function (e) { return e.type === t; });
+      return { t: t, n: evs.length, sec: evs.reduce(function (a, e) { return a + e.dur; }, 0) };
+    });
+    var max = Math.max.apply(null, rows.map(function (r) { return r.sec; }).concat([0.0001]));
+
+    if (!rows.some(function (r) { return r.n; })) {
+      host.innerHTML = '<div class="empty-note">No contact events detected in this session.</div>';
+      return;
+    }
+
+    var tbl = document.createElement("table");
+    tbl.innerHTML = "<thead><tr><th>Type</th><th></th><th class='n'>Total</th><th class='n'>Events</th></tr></thead>";
+    var tb = document.createElement("tbody");
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+
+      var c1 = document.createElement("td");
+      var sp = document.createElement("span"); sp.className = "typecell";
+      var sw = document.createElement("span"); sw.className = "sw"; sw.style.background = COLORS[r.t];
+      var nm = document.createElement("span"); nm.textContent = r.t;
+      sp.appendChild(sw); sp.appendChild(nm); c1.appendChild(sp);
+
+      var c2 = document.createElement("td"); c2.style.width = "45%";
+      var track = document.createElement("div"); track.className = "bartrack";
+      var bar = document.createElement("div");
+      bar.className = "bar";
+      bar.style.width = (r.sec / max * 100).toFixed(1) + "%";
+      bar.style.background = COLORS[r.t];
+      if (!r.sec) bar.style.background = "transparent";
+      track.appendChild(bar); c2.appendChild(track);
+
+      var c3 = document.createElement("td"); c3.className = "n"; c3.textContent = fmtDur(r.sec);
+      var c4 = document.createElement("td"); c4.className = "n"; c4.textContent = r.n;
+
+      tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4);
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    host.appendChild(tbl);
+  }
+
+  // ── filtering impact ────────────────────────────────────────────────────
+  function renderImpact(d) {
+    var host = $("impact");
+    host.innerHTML = "";
+    if (!d.byType || !d.byType.length) {
+      host.innerHTML = '<div class="empty-note">The ByType sheet is not in this workbook, so the raw-vs-cleaned comparison is unavailable.</div>';
+      return;
+    }
+    var tbl = document.createElement("table");
+    tbl.innerHTML = "<thead><tr><th>Type</th><th class='n'>Raw bouts</th><th class='n'>Clean events</th><th class='n'>Removed</th><th class='n'>Clean total</th></tr></thead>";
+    var tb = document.createElement("tbody");
+    d.byType.forEach(function (r) {
+      var t = String(r.contact_type || "").toUpperCase();
+      if (t === "NC" && !state.showNC) return;
+      var tr = document.createElement("tr");
+      var c1 = document.createElement("td");
+      var sp = document.createElement("span"); sp.className = "typecell";
+      var sw = document.createElement("span"); sw.className = "sw";
+      sw.style.background = COLORS[t] || "#888";
+      var nm = document.createElement("span"); nm.textContent = t;
+      sp.appendChild(sw); sp.appendChild(nm); c1.appendChild(sp);
+      tr.appendChild(c1);
+      [r.raw_bouts, r.real_events, r.removed, has(r.real_total_sec) ? fmtDur(num(r.real_total_sec)) : "—"]
+        .forEach(function (v) {
+          var td = document.createElement("td"); td.className = "n";
+          td.textContent = has(v) ? String(v) : "—";
+          tr.appendChild(td);
+        });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    host.appendChild(tbl);
+  }
+
+  // ── events table ────────────────────────────────────────────────────────
+  function visibleEvents(d) {
+    var q = state.query.trim().toLowerCase();
+    return d.events.filter(function (e) {
+      if (e.type === "NC" && !state.showNC) return false;
+      if (state.hidden[e.type]) return false;
+      if (!q) return true;
+      return (e.type + " " + e.label + " " + fmtTime(e.start) + " " + fmtTime(e.end))
+        .toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
+  function renderEvents(d) {
+    var tb = $("events").querySelector("tbody");
+    tb.innerHTML = "";
+    var rows = visibleEvents(d);
+
+    $("ev-count").textContent = rows.length + " shown of " + d.events.length + " total";
+
+    if (!rows.length) {
+      var tr = document.createElement("tr");
+      var td = document.createElement("td");
+      td.colSpan = 8; td.className = "empty-note";
+      td.textContent = "No events match the current filters.";
+      tr.appendChild(td); tb.appendChild(tr);
+      return;
+    }
+
+    rows.forEach(function (e) {
+      var tr = document.createElement("tr");
+      tr.className = "ev";
+      tr.dataset.id = e.id;
+
+      function cell(text, cls) {
+        var td = document.createElement("td");
+        if (cls) td.className = cls;
+        td.textContent = text;
+        return td;
+      }
+
+      tr.appendChild(cell(String(e.id), "n"));
+
+      var tdT = document.createElement("td");
+      var sp = document.createElement("span"); sp.className = "typecell";
+      var sw = document.createElement("span"); sw.className = "sw"; sw.style.background = COLORS[e.type] || "#888";
+      var nm = document.createElement("span"); nm.textContent = e.type + " · " + e.label;
+      sp.appendChild(sw); sp.appendChild(nm); tdT.appendChild(sp);
+      tr.appendChild(tdT);
+
+      tr.appendChild(cell(fmtTime(e.start), "n"));
+      tr.appendChild(cell(fmtTime(e.end), "n"));
+      tr.appendChild(cell(fmtDur(e.dur), "n"));
+      tr.appendChild(cell(e.frames === null ? "—" : String(e.frames), "n"));
+      tr.appendChild(cell(e.inv === null ? "—" : "Rat " + e.inv, "n"));
+      tr.appendChild(cell(e.nose === null ? "—" : e.nose.toFixed(1), "n"));
+
+      tb.appendChild(tr);
+    });
+  }
+
+  function jumpToEvent(id) {
+    var row = document.querySelector('tr.ev[data-id="' + id + '"]');
+    if (!row) return;
+    document.querySelectorAll("tr.ev.is-hit").forEach(function (r) { r.classList.remove("is-hit"); });
+    row.classList.add("is-hit");
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  // ── parameters ──────────────────────────────────────────────────────────
+  function renderParams(d) {
+    var tb = $("params").querySelector("tbody");
+    tb.innerHTML = "";
+    if (!d.params.length) {
+      var tr = document.createElement("tr");
+      var td = document.createElement("td");
+      td.colSpan = 3; td.className = "empty-note";
+      td.textContent = "The Parameters sheet is not in this workbook.";
+      tr.appendChild(td); tb.appendChild(tr);
+      return;
+    }
+    d.params.forEach(function (p) {
+      var tr = document.createElement("tr");
+      [["section", p.section], ["key", p.key], ["value", p.value]].forEach(function (pair, i) {
+        var td = document.createElement("td");
+        if (i === 2) td.className = "n";
+        if (i !== 0) td.style.fontFamily = "var(--mono)";
+        td.textContent = has(pair[1]) ? String(pair[1]) : "—";
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+  }
+
+  // ── render all ──────────────────────────────────────────────────────────
+  var current = null;
+  function renderAll(d) {
+    current = d;
+    renderStats(d);
+    renderEthogram(d);
+    renderLegend(d);
+    renderByType(d);
+    renderImpact(d);
+    renderEvents(d);
+    renderParams(d);
+  }
+
+  // ── file loading ────────────────────────────────────────────────────────
+  function fail(msg) {
+    var e = $("error");
+    e.textContent = msg;
+    e.hidden = false;
+  }
+
+  function loadFile(file) {
+    $("error").hidden = true;
+    if (!file) return;
+    if (!/\.xlsx?$|\.xlsm$/i.test(file.name)) {
+      fail("That is not an Excel workbook. Choose the results.xlsx written into the run's contacts/ folder.");
+      return;
+    }
+    var reader = new FileReader();
+    reader.onerror = function () { fail("The file could not be read. Try choosing it again."); };
+    reader.onload = function (ev) {
+      var wb;
+      try {
+        wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+      } catch (err) {
+        fail("This file could not be opened as a workbook: " + err.message);
+        return;
+      }
+      if (wb.SheetNames.indexOf("Events") === -1) {
+        fail("This workbook has no Events sheet, so it is not a contact session. Sheets found: " +
+             wb.SheetNames.join(", ") + ".");
+        return;
+      }
+      var d;
+      try { d = parse(wb); }
+      catch (err) { fail("The workbook could not be read: " + err.message); return; }
+
+      if (!d.events.length) {
+        fail("The Events sheet is empty — this run produced no events.");
+        return;
+      }
+
+      state.duration = d.duration;
+      $("intro").hidden = true;
+      $("report").hidden = false;
+      $("reload").hidden = false;
+      var chip = $("filechip");
+      chip.hidden = false;
+      chip.textContent = file.name;
+      chip.title = file.name;
+      renderAll(d);
+      window.scrollTo({ top: 0 });
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // ── wiring ──────────────────────────────────────────────────────────────
+  var drop = $("drop"), input = $("file");
+
+  drop.addEventListener("click", function () { input.click(); });
+  drop.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+  });
+  input.addEventListener("change", function () { loadFile(input.files[0]); });
+
+  ["dragenter", "dragover"].forEach(function (n) {
+    drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.add("is-over"); });
+  });
+  ["dragleave", "drop"].forEach(function (n) {
+    drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.remove("is-over"); });
+  });
+  drop.addEventListener("drop", function (e) {
+    if (e.dataTransfer && e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+  });
+  // Dropping anywhere on the page works once a session is open.
+  window.addEventListener("dragover", function (e) { e.preventDefault(); });
+  window.addEventListener("drop", function (e) {
+    e.preventDefault();
+    if (e.dataTransfer && e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+  });
+
+  $("reload").addEventListener("click", function () { input.value = ""; input.click(); });
+
+  $("search").addEventListener("input", function (e) {
+    state.query = e.target.value;
+    if (current) renderEvents(current);
+  });
+  $("show-nc").addEventListener("change", function (e) {
+    state.showNC = e.target.checked;
+    if (current) { renderEthogram(current); renderLegend(current); renderImpact(current); renderEvents(current); }
+  });
+
+  var resizeTimer;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { if (current) renderEthogram(current); }, 140);
+  });
+})();
+</script>

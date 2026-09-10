@@ -626,7 +626,7 @@ def main():
         if _merged_summary.exists():
             with _merged_summary.open() as _f:
                 _merge_fps = json.load(_f).get("metadata", {}).get("fps", 30.0)
-        run_postprocess(contacts_dir, fps=_merge_fps)
+        run_postprocess(contacts_dir, fps=_merge_fps, consolidate=True)
     except Exception as e:
         logger.warning("Contact post-processing failed: %s", e)
 

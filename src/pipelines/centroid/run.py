@@ -445,7 +445,13 @@ def run_pipeline(
 
         try:
             from scripts.postprocess_contacts_simple import run_postprocess
-            run_postprocess(run_dir / "contacts", fps=props["fps"])
+            # A chunk keeps its CSVs so merge_chunks.py can concatenate them;
+            # the merged run is what gets consolidated into results.xlsx.
+            run_postprocess(
+                run_dir / "contacts",
+                fps=props["fps"],
+                consolidate=(chunk_id is None),
+            )
         except Exception as e:
             logger.warning("Contact post-processing failed: %s", e)
 

@@ -173,6 +173,21 @@ def resolve_fps(
         except Exception as e:
             logger.warning("Could not read FPS from session_summary.json: %s", e)
 
+    # Priority 2b: results.xlsx (the summary JSON is gone once consolidated)
+    xlsx_path = input_dir / "results.xlsx"
+    if xlsx_path.exists():
+        try:
+            params = pd.read_excel(xlsx_path, sheet_name="Parameters")
+            match = params[
+                (params["section"] == "video") & (params["parameter"] == "fps")
+            ]
+            if not match.empty:
+                fps = float(match.iloc[0]["value"])
+                if fps > 0:
+                    return fps, "results.xlsx"
+        except Exception as e:
+            logger.warning("Could not read FPS from results.xlsx: %s", e)
+
     # Priority 3: --video_path → OpenCV
     if args.video_path is not None:
         try:
@@ -197,12 +212,47 @@ def resolve_fps(
 
 # ── CSV loading & validation ───────────────────────────────────────────────
 
-def load_and_validate(csv_path: Path) -> pd.DataFrame:
-    """Read contacts_per_frame.csv and validate required columns."""
-    df = pd.read_csv(csv_path)
+def load_per_frame(input_dir: Path) -> pd.DataFrame:
+    """Load the per-frame table for a contacts directory.
+
+    Prefers contacts_per_frame.csv. Once a run has been consolidated the CSV is
+    gone, so fall back to the PerFrame sheet of results.xlsx. The cleaned label
+    columns from the previous pass are dropped so they are re-derived from the
+    raw labels rather than fed back in.
+    """
+    csv_path = input_dir / "contacts_per_frame.csv"
+    if csv_path.exists():
+        return load_and_validate(csv_path)
+
+    xlsx_path = input_dir / "results.xlsx"
+    if xlsx_path.exists():
+        logger.info("Reading per-frame table from %s (PerFrame sheet)", xlsx_path.name)
+        df = pd.read_excel(xlsx_path, sheet_name="PerFrame")
+        df = df.drop(
+            columns=[c for c in ("real_type", "real_zone", "real_event_id")
+                     if c in df.columns],
+        )
+        return load_and_validate(df, source=xlsx_path)
+
+    raise FileNotFoundError(
+        f"Neither contacts_per_frame.csv nor results.xlsx found in {input_dir}"
+    )
+
+
+def load_and_validate(csv_path: Path, source: Optional[Path] = None) -> pd.DataFrame:
+    """Read contacts_per_frame.csv and validate required columns.
+
+    Accepts either a path to read or an already-loaded DataFrame (in which case
+    *source* names it for error messages).
+    """
+    if isinstance(csv_path, pd.DataFrame):
+        df = csv_path
+        csv_path = source if source is not None else Path("<dataframe>")
+    else:
+        df = pd.read_csv(csv_path)
 
     if df.empty:
-        logger.warning("CSV is empty: %s", csv_path)
+        logger.warning("Per-frame table is empty: %s", csv_path)
         return df
 
     missing = REQUIRED_COLUMNS - set(df.columns)
@@ -970,6 +1020,7 @@ def run_postprocess(
     fps: float,
     make_reports: bool = True,
     config_overrides: Optional[Dict[str, Any]] = None,
+    consolidate: bool = True,
 ) -> Path:
     """Run bout post-processing on a contacts directory.
 
@@ -981,6 +1032,10 @@ def run_postprocess(
         fps: Video FPS.
         make_reports: Whether to generate PNG charts and CSV tables.
         config_overrides: Override default config values (e.g. {"smoothing": {"window": 7}}).
+        consolidate: Collapse every output table into a single results.xlsx and
+            remove the source CSV/JSON files. Must be False for a chunk of a
+            parallel run — merge_chunks.py needs the per-chunk CSVs to
+            concatenate before the merged workbook can be built.
 
     Returns:
         Path to the output directory (same as contacts_dir).
@@ -994,12 +1049,14 @@ def run_postprocess(
             else:
                 config[key] = val
 
-    csv_path = contacts_dir / "contacts_per_frame.csv"
-    if not csv_path.exists():
-        logger.warning("Skipping post-processing: contacts_per_frame.csv not found in %s", contacts_dir)
+    try:
+        df = load_per_frame(contacts_dir)
+    except FileNotFoundError:
+        logger.warning(
+            "Skipping post-processing: no per-frame table found in %s", contacts_dir,
+        )
         return contacts_dir
 
-    df = load_and_validate(csv_path)
     if df.empty:
         logger.warning("Skipping post-processing: CSV is empty")
         return contacts_dir
@@ -1038,6 +1095,13 @@ def run_postprocess(
     if make_reports:
         reports_dir = contacts_dir / "reports"
         generate_reports(df, raw_types, real_types, events_df, fps, reports_dir)
+
+    if consolidate:
+        try:
+            from src.common.excel_report import build_excel_report
+            build_excel_report(contacts_dir, replace_sources=True)
+        except Exception as e:
+            logger.warning("Excel consolidation failed: %s", e)
 
     return contacts_dir
 
@@ -1081,6 +1145,11 @@ def main():
         help="Generate PNG charts and CSV tables in reports/ subdirectory",
     )
     parser.add_argument(
+        "--no_consolidate", action="store_true",
+        help="Keep the individual CSV/JSON files instead of collapsing them "
+             "into a single results.xlsx",
+    )
+    parser.add_argument(
         "overrides", nargs="*",
         help="Config overrides as key.subkey=value",
     )
@@ -1095,10 +1164,6 @@ def main():
     )
 
     input_dir = Path(args.input_dir)
-    csv_path = input_dir / "contacts_per_frame.csv"
-    if not csv_path.exists():
-        logger.error("contacts_per_frame.csv not found in %s", input_dir)
-        sys.exit(1)
 
     # Load config
     config = load_config(args.config, args.overrides)
@@ -1107,13 +1172,18 @@ def main():
     fps, fps_source = resolve_fps(args, input_dir, config)
     logger.info("FPS: %.2f (source: %s)", fps, fps_source)
 
-    # Load and validate
-    df = load_and_validate(csv_path)
+    # Load and validate (from the CSV, or from results.xlsx if consolidated)
+    try:
+        df = load_per_frame(input_dir)
+    except FileNotFoundError as e:
+        logger.error("%s", e)
+        sys.exit(1)
+
     if df.empty:
-        logger.warning("No data in CSV. Nothing to process.")
+        logger.warning("No data in the per-frame table. Nothing to process.")
         return
 
-    logger.info("Loaded %d rows from %s", len(df), csv_path)
+    logger.info("Loaded %d rows from %s", len(df), input_dir)
 
     # Extract config parameters
     smooth_window = config.get("smoothing", {}).get("window", 5)
@@ -1167,6 +1237,14 @@ def main():
     if args.make_reports:
         reports_dir = output_dir / "reports"
         generate_reports(df, raw_types, real_types, events_df, fps, reports_dir)
+
+    # Collapse every table into a single workbook
+    if not args.no_consolidate:
+        try:
+            from src.common.excel_report import build_excel_report
+            build_excel_report(output_dir, replace_sources=True)
+        except Exception as e:
+            logger.warning("Excel consolidation failed: %s", e)
 
     logger.info("Done. Outputs in %s", output_dir)
 

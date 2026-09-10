@@ -18,6 +18,9 @@ ultralytics
 -e ./models/sam2/segment-anything-2
 hydra-core
 
+# --- Excel report output ---
+openpyxl
+
 # --- Config loading ---
 pyyaml
 
