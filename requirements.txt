@@ -24,6 +24,9 @@ accelerate
 huggingface_hub
 av
 
+# --- Excel report output ---
+openpyxl
+
 # --- Config loading ---
 pyyaml
 python-dotenv
