@@ -53,6 +53,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+import cv2
 import numpy as np
 from scipy.signal import savgol_filter
 
@@ -265,6 +266,7 @@ class ContactEvent:
     nose_tailbase_ji_bl: float = float("inf")   # nariz_j -> trasero_i (tail_start_i)
     tail_tail_dist_bl: float = float("inf")     # se conserva como métrica (T2T ya no es tipo)
     mask_iou: float = 0.0
+    mask_contact_bl: float = 0.0   # longitud del borde compartido entre máscaras / bl_ref
 
     # Cinemática
     velocity_i_bls: float = 0.0
@@ -335,6 +337,7 @@ class ContactEvent:
             "nose_tailbase_ji_bl": _fmt(self.nose_tailbase_ji_bl),
             "tail_tail_dist_bl": _fmt(self.tail_tail_dist_bl),
             "mask_iou": round(self.mask_iou, 4),
+            "mask_contact_bl": round(self.mask_contact_bl, 4),
             # 6
             "velocity_i_bls": round(self.velocity_i_bls, 4),
             "velocity_j_bls": round(self.velocity_j_bls, 4),
@@ -377,6 +380,7 @@ class Bout:
     mean_nose_nose_dist_bl: float = 0.0
     mean_centroid_dist_bl: float = 0.0
     mean_mask_iou: float = 0.0
+    mean_mask_contact_bl: float = 0.0
     mean_velocity_i_bls: float = 0.0
     mean_velocity_j_bls: float = 0.0
     peak_score: float = 0.0
@@ -385,6 +389,7 @@ class Bout:
     _sum_nose_nose: float = 0.0
     _sum_centroid: float = 0.0
     _sum_mask_iou: float = 0.0
+    _sum_mask_contact_bl: float = 0.0
     _sum_velocity_i: float = 0.0
     _sum_velocity_j: float = 0.0
     _count_valid_nose_nose: int = 0
@@ -420,6 +425,7 @@ class Bout:
             self._count_valid_centroid += 1
 
         self._sum_mask_iou += event.mask_iou
+        self._sum_mask_contact_bl += event.mask_contact_bl
         self._sum_velocity_i += event.velocity_i_bls
         self._sum_velocity_j += event.velocity_j_bls
 
@@ -435,6 +441,7 @@ class Bout:
             self.mean_centroid_dist_bl = self._sum_centroid / self._count_valid_centroid
         if self.n_frames > 0:
             self.mean_mask_iou = self._sum_mask_iou / self.n_frames
+            self.mean_mask_contact_bl = self._sum_mask_contact_bl / self.n_frames
             self.mean_velocity_i_bls = self._sum_velocity_i / self.n_frames
             self.mean_velocity_j_bls = self._sum_velocity_j / self.n_frames
 
@@ -463,6 +470,7 @@ class Bout:
             "mean_nose_nose_dist_bl": _fmt(self.mean_nose_nose_dist_bl),
             "mean_centroid_dist_bl": _fmt(self.mean_centroid_dist_bl),
             "mean_mask_iou": round(self.mean_mask_iou, 4),
+            "mean_mask_contact_bl": round(self.mean_mask_contact_bl, 4),
             "mean_velocity_i_bls": round(self.mean_velocity_i_bls, 4),
             "mean_velocity_j_bls": round(self.mean_velocity_j_bls, 4),
             "peak_score": round(self.peak_score, 4),
@@ -909,6 +917,35 @@ def logistic_score(x: float, midpoint: float, steepness: float = 10.0) -> float:
         return 0.0 if steepness * (x - midpoint) > 0 else 1.0
 
 
+def mask_contact_px(mask_i, mask_j, dilate_px: int) -> float:
+    """Longitud aproximada (px) del borde compartido entre dos máscaras.
+
+    Cuenta los píxeles de borde de cada máscara que caen dentro de la otra
+    dilatada dilate_px, y promedia ambas direcciones. Recorta al bbox de la
+    unión (+dilate_px+2) por velocidad. Devuelve 0.0 si alguna máscara es
+    None o está vacía."""
+    if mask_i is None or mask_j is None:
+        return 0.0
+    mi = np.asarray(mask_i) > 0
+    mj = np.asarray(mask_j) > 0
+    if not mi.any() or not mj.any():
+        return 0.0
+    ys, xs = np.nonzero(mi | mj)
+    pad = int(dilate_px) + 2
+    y0, y1 = max(int(ys.min()) - pad, 0), int(ys.max()) + pad + 1
+    x0, x1 = max(int(xs.min()) - pad, 0), int(xs.max()) + pad + 1
+    a = mi[y0:y1, x0:x1].astype(np.uint8)
+    b = mj[y0:y1, x0:x1].astype(np.uint8)
+    k3 = np.ones((3, 3), np.uint8)
+    kd = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2 * int(dilate_px) + 1, 2 * int(dilate_px) + 1))
+    bnd_a = a & (1 - cv2.erode(a, k3))
+    bnd_b = b & (1 - cv2.erode(b, k3))
+    c_ij = int(np.count_nonzero(bnd_a & cv2.dilate(b, kd)))
+    c_ji = int(np.count_nonzero(bnd_b & cv2.dilate(a, kd)))
+    return (c_ij + c_ji) / 2.0
+
+
 def ramp_up_score(x: float, low: float, high: float) -> float:
     if not math.isfinite(x):
         return 0.0
@@ -949,8 +986,12 @@ class ContactClassifier:
         self.min_kp_conf = float(config.get("min_keypoint_conf", 0.3))
 
         # SBS
-        self.sbs_iou_enter = float(config.get("sbs_mask_iou_enter", 0.05))
-        self.sbs_iou_exit = float(config.get("sbs_mask_iou_exit", 0.02))
+        # Contacto de máscaras = longitud del borde compartido (en BL). El IoU es
+        # estructuralmente 0 con máscaras disjuntas (CUTIE), por eso no se usa aquí.
+        self.mask_contact_dilate_px = int(config.get("mask_contact_dilate_px", 4))
+        self.sbs_contact_enter = float(config.get("sbs_contact_bl_enter", 0.35))
+        self.sbs_contact_exit = float(config.get("sbs_contact_bl_exit", 0.20))
+        self.sbs_latch_min_dist_score = float(config.get("sbs_latch_min_dist_score", 0.5))
         self.sbs_max_speed_bls = float(config.get("sbs_max_velocity_bls", 0.5))
         self.sbs_parallel_cos_min = float(config.get("sbs_parallel_cos_min", 0.7))
 
@@ -985,8 +1026,8 @@ class ContactClassifier:
         self.trig_fol_ij = SchmittTrigger(self.follow_near_bl, self.follow_far_bl)
         self.trig_fol_ji = SchmittTrigger(self.follow_near_bl, self.follow_far_bl)
         self.trig_sbs = SchmittTrigger(
-            tau_high=self.sbs_iou_enter,
-            tau_low=self.sbs_iou_exit,
+            tau_high=self.sbs_contact_enter,
+            tau_low=self.sbs_contact_exit,
             inverted=True,
         )
 
@@ -1080,6 +1121,13 @@ class ContactClassifier:
             if event.mask_iou > self.mask_overlap_warning:
                 event.high_mask_overlap = True
 
+        # --- Contacto de máscaras (borde compartido en BL); solo si están cerca ---
+        if (mask_i is not None and mask_j is not None
+                and math.isfinite(event.centroid_dist_bl)
+                and event.centroid_dist_bl < 1.5 * self.proximity_bl):
+            event.mask_contact_bl = mask_contact_px(
+                mask_i, mask_j, self.mask_contact_dilate_px) / bl_ref
+
         # --- Cinemática ---
         speed_i_px = math.sqrt(velocity_i[0] ** 2 + velocity_i[1] ** 2)
         speed_j_px = math.sqrt(velocity_j[0] ** 2 + velocity_j[1] ** 2)
@@ -1126,7 +1174,7 @@ class ContactClassifier:
             min_body_dist_bl=min(event.nose_nose_dist_bl,
                                  event.nose_tailbase_ij_bl,
                                  event.nose_tailbase_ji_bl),
-            mask_iou=event.mask_iou,
+            mask_contact_bl=event.mask_contact_bl,
         )
         event.scores.fol = fol_score
         # Cambio F: propagar bandera de uso de centroide en el path del followed
@@ -1137,7 +1185,7 @@ class ContactClassifier:
 
         # 4. SBS — side-by-side
         event.scores.sbs = self._score_sbs(
-            event.mask_iou,
+            event.mask_contact_bl,
             event.centroid_dist_bl,
             event.velocity_i_bls,
             event.velocity_j_bls,
@@ -1349,18 +1397,18 @@ class ContactClassifier:
         speed_i_bls, speed_j_bls,
         bl_ref,
         min_body_dist_bl: float,
-        mask_iou: float,
+        mask_contact_bl: float,
     ) -> Tuple[float, Optional[str]]:
         """following — ESTRICTAMENTE no-contacto (cambio B).
 
         Si los cuerpos están en contacto (distancia mínima nariz-cuerpo por debajo
-        de follow_no_contact_bl, o IoU de máscaras apreciable), el score de FOL se
+        de follow_no_contact_bl, o borde compartido de máscaras apreciable), el score de FOL se
         anula: en ese caso es un olfateo, no un following.
         """
         # Guardia no-contacto: si hay contacto cercano, no es following.
         if math.isfinite(min_body_dist_bl) and min_body_dist_bl < self.follow_no_contact_bl:
             return 0.0, None
-        if mask_iou > self.sbs_iou_enter:
+        if mask_contact_bl > self.sbs_contact_enter:
             return 0.0, None
 
         score_ij, _ = self._score_fol_direction(
@@ -1418,13 +1466,14 @@ class ContactClassifier:
         return combined, speed_ok
 
     def _score_sbs(
-        self, mask_iou, centroid_dist_bl, speed_i_bls, speed_j_bls, orientation_cos,
+        self, mask_contact_bl, centroid_dist_bl, speed_i_bls, speed_j_bls, orientation_cos,
     ) -> float:
-        """side-by-side. Producto suavizado para que no colapse a 0 (fix BUG-3):
-        usa media geométrica de los factores en vez de producto crudo."""
-        active = self.trig_sbs.update(mask_iou)
+        """side-by-side. Media geométrica de factores (suavizada, no colapsa a 0).
 
-        iou_score = ramp_up_score(mask_iou, self.sbs_iou_exit, self.sbs_iou_enter * 3)
+        Fix BUG-3 (causa raíz): antes se usaba mask_iou, pero las máscaras de CUTIE
+        son disjuntas por construcción (una por rata, sin solape), así que el IoU
+        era siempre 0 y SBS nunca disparaba. Ahora se usa mask_contact_bl: longitud
+        del borde compartido entre máscaras (dilatación) normalizada por BL."""
         dist_score = reversed_trapezoidal_score(centroid_dist_bl, self.contact_near, self.proximity_bl)
         max_speed = max(speed_i_bls, speed_j_bls)
         speed_score = reversed_trapezoidal_score(max_speed, self.sbs_max_speed_bls * 0.5, self.sbs_max_speed_bls * 1.5)
@@ -1432,12 +1481,22 @@ class ContactClassifier:
                                     self.sbs_parallel_cos_min - 0.15,
                                     self.sbs_parallel_cos_min + 0.15)
 
+        # El Schmitt trigger solo se alimenta si pasan los factores "duros" (distancia y
+        # alineación); si no, el latch (piso 0.5) haría SBS de cualquier borde en
+        # contacto (p. ej. cola-con-cola o perpendicular).
+        hard_ok = dist_score > 0.0 and align_score > 0.0
+        # El trigger además exige cercanía real (dist_score >= sbs_latch_min_dist_score):
+        # bordes en contacto a ~1 BL de centroide (cola con cola) no son lado a lado.
+        latch_ok = hard_ok and dist_score >= self.sbs_latch_min_dist_score
+        active = self.trig_sbs.update(mask_contact_bl if latch_ok else 0.0)
+        iou_score = ramp_up_score(mask_contact_bl, self.sbs_contact_exit, self.sbs_contact_enter * 2)
+
         # Fix BUG-3: media geométrica (más robusta que producto crudo a un factor bajo)
         factors = [max(iou_score, 1e-6), max(dist_score, 1e-6),
                    max(speed_score, 1e-6), max(align_score, 1e-6)]
         combined = math.exp(sum(math.log(f) for f in factors) / len(factors))
         # pero si algún factor "duro" (dist o align) es 0 real, no hay SBS
-        if dist_score <= 0.0 or align_score <= 0.0:
+        if not hard_ok:
             combined = 0.0
 
         if active:
@@ -2034,7 +2093,7 @@ class ContactTrackerV2:
             "start_time", "end_time", "duration_sec",
             "start_time_sec", "end_time_sec", "n_frames",
             "mean_nose_nose_dist_bl", "mean_centroid_dist_bl",
-            "mean_mask_iou", "mean_velocity_i_bls", "mean_velocity_j_bls",
+            "mean_mask_iou", "mean_mask_contact_bl", "mean_velocity_i_bls", "mean_velocity_j_bls",
             "peak_score", "initiator",
         ]
         with path.open("w", newline="", encoding="utf-8") as f:

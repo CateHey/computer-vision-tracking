@@ -439,7 +439,7 @@ details.params[open] summary::before { transform: rotate(90deg); }
       <div class="card"><div class="tbl-scroll"><table id="events">
         <thead><tr>
           <th class="n">#</th><th>Type</th><th class="n">Start</th><th class="n">End</th>
-          <th class="n">Duration</th><th class="n">Frames</th><th class="n">Investigator</th><th class="n">Mean nose–nose (px)</th>
+          <th class="n">Duration</th><th class="n">Frames</th><th class="n">Investigator</th><th class="n">Mean nose–nose (BL)</th>
         </tr></thead>
         <tbody></tbody>
       </table></div></div>
@@ -525,7 +525,9 @@ details.params[open] summary::before { transform: rotate(90deg); }
         frames: has(r.duration_frames) ? num(r.duration_frames) : null,
         startFrame: has(r.start_frame) ? num(r.start_frame) : null,
         inv:   has(r.investigator_slot) ? r.investigator_slot : null,
-        nose:  has(r.mean_nose_nose_dist_px) ? num(r.mean_nose_nose_dist_px) : null
+        pair:  has(r.pair_label) ? String(r.pair_label) : null,
+        nose:  has(r.mean_nose_nose_dist_bl) ? num(r.mean_nose_nose_dist_bl)
+             : (has(r.mean_nose_nose_dist_px) ? num(r.mean_nose_nose_dist_px) : null)
       };
     }).filter(function (e) { return isFinite(e.start) && e.end > e.start; });
 
@@ -903,8 +905,8 @@ details.params[open] summary::before { transform: rotate(90deg); }
       tr.appendChild(cell(fmtTime(e.end), "n"));
       tr.appendChild(cell(fmtDur(e.dur), "n"));
       tr.appendChild(cell(e.frames === null ? "—" : String(e.frames), "n"));
-      tr.appendChild(cell(e.inv === null ? "—" : "Rat " + e.inv, "n"));
-      tr.appendChild(cell(e.nose === null ? "—" : e.nose.toFixed(1), "n"));
+      tr.appendChild(cell(e.inv === null ? "—" : (e.pair ? "R" + (+e.inv + 1) + " (" + e.pair + ")" : "Rat " + e.inv), "n"));
+      tr.appendChild(cell(e.nose === null ? "—" : e.nose.toFixed(2), "n"));
 
       tb.appendChild(tr);
     });

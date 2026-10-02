@@ -35,7 +35,8 @@ scan:
 detection:
   max_animals: 6
   keypoint_min_conf: 0.3
-  keypoint_names: [nose, left_ear, right_ear, mid_body, tail_base]
+  # orden verificado 2026-09-30 ejecutando yolo26_v11.pt sobre frames unitarios; debe coincidir con el orden de indices del modelo
+  keypoint_names: [tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear]
   confidence: 0.25
   max_assignment_dist: 200         # px, for identity reassignment during recovery
 
@@ -88,8 +89,11 @@ contacts:
   contact_zone_bl_enter: 0.30
   contact_zone_bl_exit: 0.45
   proximity_zone_bl: 1.0
-  sbs_mask_iou_enter: 0.05
-  sbs_mask_iou_exit: 0.02
+  # SBS por borde compartido de mascaras (BL); el IoU es 0 con mascaras disjuntas
+  mask_contact_dilate_px: 4
+  sbs_contact_bl_enter: 0.35
+  sbs_contact_bl_exit: 0.20
+  sbs_latch_min_dist_score: 0.5     # el latch SBS exige cercania (evita cola-con-cola)
   follow_radius_bl: 0.4
   follow_radius_bl_exit: 0.6
   follow_min_speed_bls: 0.15

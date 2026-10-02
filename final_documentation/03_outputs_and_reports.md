@@ -59,7 +59,7 @@ Everything lives in `results.xlsx`, one table per sheet.
 | `PerFrame` | one per frame | Complete geometry with both raw and cleaned labels |
 | `Bouts` | one per bout | Bouts from `contacts_v2` (diagnostic) |
 | `Dynamics` | one per episode | Approach / avoid episodes **without** contact ("Hoja B") |
-| `Individual` | one per animal | Per-animal metrics — **currently never written, see 02 §2.6 C** |
+| `Individual` | one per animal | Per-animal metrics — fixed, see 02 §2.6 C |
 | `ByType` | 7 | Raw versus cleaned, per contact type |
 | `Global` | 11 | Raw versus cleaned, session totals |
 | `Parameters` | varies | Every parameter actually applied, plus video provenance |
@@ -74,17 +74,20 @@ The complete measurement record, grouped as `contacts_v2` writes it:
 | Classification | `family`, `contact_type`, `name_contact`, `secondary_type`, `secondary_name`, `secondary_score` |
 | Dynamics | `dynamics`, `mover`, `dist_delta_bls`, `reciprocity` |
 | Zone | `zone` |
-| Geometry (body lengths) | `nose_nose_dist_bl`, `centroid_dist_bl`, `nose_tailbase_ij_bl`, `nose_tailbase_ji_bl`, `tail_tail_dist_bl`, `mask_iou` |
+| Geometry (body lengths) | `nose_nose_dist_bl`, `centroid_dist_bl`, `nose_tailbase_ij_bl`, `nose_tailbase_ji_bl`, `tail_tail_dist_bl`, `mask_iou`, `mask_contact_bl` |
 | Kinematics | `velocity_i_bls`, `velocity_j_bls`, `velocity_alignment_cos`, `orientation_alignment_cos` |
 | Body length | `body_length_i_px`, `body_length_j_px` |
 | Roles | `investigator_role`, `initiator`, `bout_id` |
 | Soft scores | one column per contact type, the continuous score before thresholding |
 | Quality flags | `stale_keypoints`, `high_mask_overlap`, `missing_keypoints`, `single_detection`, `merged_state`, `fol_used_centroid` |
 
-This is the sheet for any custom analysis. Two columns are worth checking first:
-`mask_iou` (identically 0 — see [02 §2.6 B](02_contact_detection.md)) and
-`nose_tailbase_ij_bl` (its missing sentinel throughout — see 02 §2.6 A). The soft
-score columns show how close a frame was to a different label.
+This is the sheet for any custom analysis. Two columns need care: `mask_iou` is
+identically 0 with CUTIE's disjoint masks (kept only for the `high_mask_overlap`
+flag) — use `mask_contact_bl`, the shared mask border length in body lengths, which
+drives SBS. `nose_tailbase_ij_bl` is meaningful only when `tail_start` was detected.
+The soft score columns show how close a frame was to a different label.
+Multi-rat tables hold one row per (frame, `pair_key`); count session time from
+unique `frame_idx`, never from row count.
 
 ### `Events` — the behavioural event table
 
@@ -259,22 +262,16 @@ and the real Excel consolidation. It is both a sample file for the viewer and an
 end-to-end test of the contact chain, with a known ground truth: the six
 behaviours are scripted at known times.
 
-Two workbooks ship with this documentation, under `outputs/runs/`:
-
-| File | What it is |
-|------|-----------|
-| `demo_as_shipped/contacts/results.xlsx` | 5 keypoints and disjoint masks, exactly as the pipeline runs today. N2AG and SBS are absent. |
-| `demo_fixed/contacts/results.xlsx` | 7 keypoints including `tail_start`, masks allowed to overlap. All types recoverable. |
-
-Opening both in the viewer is the quickest way to see the defects in §2.6: the
-same choreography, the same code, and two of the five behaviours appear only in
-the second file.
+Regenerate the demo with the fixed pipeline (masks disjoint, as in production;
+the full 7-keypoint set is used):
 
 ```bash
-# regenerate (needs origin/develop for contacts_v2)
-python scripts/make_demo_session.py --out outputs/runs/demo_as_shipped     --taxonomy v2 --shipped-keypoints
-python scripts/make_demo_session.py --out outputs/runs/demo_fixed     --taxonomy v2 --keep-mask-overlap
+python scripts/make_demo_session.py --out outputs/runs/demo_fixed --taxonomy v2
 ```
+
+`--shipped-keypoints` and `--keep-mask-overlap` remain only to reproduce the old
+defective (pre-2026-09-30) behaviour for comparison. Old `demo_as_shipped` /
+`demo_fixed` workbooks predate the fix and are obsolete.
 
 `--taxonomy v1` drives the older `contacts.py` instead, which is what runs on
 `main`.
@@ -302,5 +299,7 @@ python scripts/make_demo_session.py --out outputs/runs/demo_fixed     --taxonomy
 8. **Watch a unitary video.** If a second animal appears in
    `cutie_unitary_ratN_*.avi`, the composite failed and that animal's keypoints
    are unreliable.
-9. **Do not report N2AG or SBS counts** from the current pipeline — see
-   [02 §2.6](02_contact_detection.md#26-three-defects-that-suppress-contact-types).
+9. **Confirm the run post-dates the 2026-09-30 fixes.** Anything produced earlier
+   (e.g. `outputs/2026-07-28_*`) used wrong keypoint names, could not fire SBS, and
+   mixed pairs in post-processing — re-run it
+   ([02 §2.6](02_contact_detection.md#26-defects-found-and-fixed-2026-09-30)).

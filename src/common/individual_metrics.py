@@ -119,7 +119,7 @@ class DirectedPairMetrics:
 ASYMMETRIC_TYPES = {ContactType.N2AG, ContactType.FOL, ContactType.N2B}
 
 # Tipos bilaterales: hay que calcular el iniciador con velocidad/aproximación
-BILATERAL_TYPES = {ContactType.N2N, ContactType.T2T, ContactType.SBS}
+BILATERAL_TYPES = {ContactType.N2N, ContactType.SBS}
 
 
 def determine_initiator_for_bilateral(
@@ -128,7 +128,7 @@ def determine_initiator_for_bilateral(
     pair_key: str,
     lookback_frames: int = 10,
 ) -> Optional[int]:
-    """Decide quién inició un bout BILATERAL (N2N, T2T, SBS).
+    """Decide quién inició un bout BILATERAL (N2N, SBS).
 
     Opción A: la rata que se acercó MÁS a la otra en los frames previos
     al inicio del bout es la iniciadora.
@@ -486,7 +486,7 @@ def _add_initiation_bar_chart(pdf, summary: Dict, plt) -> None:
         return
 
     # Tipos de contacto en orden fijo
-    types = ["N2N", "N2AG", "T2T", "FOL", "SBS", "N2B"]
+    types = ["N2N", "N2AG", "FOL", "SBS", "N2B"]
     labels = list(individual_metrics.keys())
 
     # Matriz: filas = ratas, columnas = tipos

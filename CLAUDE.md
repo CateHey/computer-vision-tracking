@@ -2,84 +2,92 @@
 
 ## Project
 
-YOLO + SAM2 pipeline for laboratory rat tracking and social contact classification.
-Runs locally (short clips) and on UQ Bunya HPC (full videos, multi-GPU parallel).
+SAM3 + CUTIE + YOLO pose pipeline for laboratory rat tracking (6 animals) and social
+contact classification. Runs locally (short clips) and on UQ Bunya HPC (full videos, 1 GPU).
 
 ## Production Pipeline
 
-**Centroid pipeline** (`src/pipelines/centroid/`) — production default.
-- SAM2 centroid propagation drives masks and identity (YOLO only on init frame)
-- SAM2 uses centroid prompts ALWAYS (positive + negative points, no YOLO box prompts)
-- YOLO demoted to keypoint-only provider on full image
-- Keypoints assigned to masks by spatial overlap (not YOLO box ordering)
-- Temporal carry-over fills missing keypoints using centroid delta
-- No IdentityMatcher — identity inherent from SAM2 propagation
+**`cutie_composite`** (`src/pipelines/cutie_composite/`) — production default.
+1. SAM3 text-prompt bootstrap on the first 125 frames (needs `HF_TOKEN`)
+2. CUTIE propagates one labelled index mask (identity comes from CUTIE)
+3. Per-animal composite: other animals are erased using a background plate
+4. YOLO pose (`models/yolo/yolo26_v11.pt`) on each composite
+5. `ContactTrackerV2` (`src/common/contacts_v2.py`): 5 types N2N / N2AG / N2B / SBS / FOL + dynamics
+6. `scripts/postprocess_contacts_simple.py`: per-pair temporal cleaning
+7. `results.xlsx` (`src/common/excel_report.py`) + `scripts/report_viewer.html`
 
-**CRITICAL: Do NOT reintroduce YOLO box prompts for SAM2.**
-YOLO detection order is arbitrary and causes identity swaps when used as SAM2 prompts.
-SAM2 centroid-only prompting was validated swap-free. See `docs/centroid_pipeline.md`
-"Lessons Learned" section for full analysis.
+No chunk mode: `scripts/run_parallel.sh` and `scripts/merge_chunks.py` belong to the old centroid pipeline.
 
-All other pipelines (reference, sam3, sam2_yolo, sam2_video) are in `src/pipelines/deprecated/`.
+### Keypoints (CRITICAL)
 
-7 keypoints: tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear
+7 keypoints, model index order: `tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear`
+(verified 2026-09-30 by running the model). Configs must list names in this order.
+The 5-name lists used before were wrong and **invalidated all contact outputs produced before 2026-09-30**.
+Rear/anogenital point = `tail_start` (not `tail_base`).
+
+### Contacts
+
+- SBS uses `mask_contact_bl` (shared-border length in body lengths): CUTIE masks are disjoint, so mask IoU is always 0.
+- Contact types: N2N nose-to-nose, N2AG nose-to-anogenital, N2B nose-to-body, SBS side-by-side, FOL following; NC = none.
+
+## Other Pipelines
+
+`centroid` (older SAM2 centroid pipeline), `sam3_composite`, `sam3_reset`, `isolated_composite`, `samurai*`
+in `src/pipelines/`. Older ones (reference, sam3, sam2_yolo, sam2_video) are in `src/pipelines/deprecated/`.
+
+**Never use YOLO box prompts for SAM2** (arbitrary detection order causes identity swaps; centroid-only prompting
+was swap-free). See `docs/centroid_pipeline.md` "Lessons Learned".
 
 ## Key Paths
 
 | What | Path |
 |------|------|
-| Centroid pipeline | `src/pipelines/centroid/` |
-| Contact tracker | `src/common/contacts.py` |
-| Shared geometry | `src/common/geometry.py` |
-| Shared metrics | `src/common/metrics.py` |
-| YOLO inference | `src/common/yolo_inference.py` |
-| Model loaders | `src/common/model_loaders.py` |
-| YOLO weights | `models/yolo/best.pt` |
-| Centroid configs | `configs/local_centroid.yaml`, `configs/hpc_centroid.yaml` |
-| Parallel runner | `scripts/run_parallel.sh` |
-| Chunk merger | `scripts/merge_chunks.py` |
-| Deprecated pipelines | `src/pipelines/deprecated/` |
-| Deprecated configs | `configs/deprecated/` |
+| Production pipeline | `src/pipelines/cutie_composite/` |
+| Contact tracker (current) | `src/common/contacts_v2.py` |
+| Post-processing | `scripts/postprocess_contacts_simple.py` |
+| Excel report / viewer | `src/common/excel_report.py`, `scripts/report_viewer.html` |
+| Validation | `scripts/validate_contacts.py`, `configs/validation.yaml` |
+| YOLO inference / weights | `src/common/yolo_inference.py`, `models/yolo/yolo26_v11.pt` |
+| Configs | `configs/local_cutie_composite.yaml`, `configs/hpc_cutie_composite.yaml` |
+| Old centroid pipeline / parallel runner | `src/pipelines/centroid/`, `scripts/run_parallel.sh`, `scripts/merge_chunks.py` |
+| Deprecated pipelines / configs | `src/pipelines/deprecated/`, `configs/deprecated/` |
 
 ## Running
 
 ```bash
-# Local (10s clip)
-python -m src.pipelines.centroid.run --config configs/local_centroid.yaml
+export HF_TOKEN="hf_..."   # SAM3 download
 
-# Local with contacts
-python -m src.pipelines.centroid.run --config configs/local_centroid.yaml contacts.enabled=true
+# Local
+python -m src.pipelines.cutie_composite.run --config configs/local_cutie_composite.yaml
+python -m src.pipelines.cutie_composite.run --config configs/local_cutie_composite.yaml \
+    video_path=data/raw/multirat.avi detection.max_animals=6 scan.max_frames=900
 
-# HPC (multi-GPU parallel)
-bash scripts/run_parallel.sh data/raw/original_120s.avi 4 configs/hpc_centroid.yaml "" centroid
+# HPC (Bunya, one GPU, one process; see final_documentation/03 section 3.4)
+python -m src.pipelines.cutie_composite.run --config configs/hpc_cutie_composite.yaml video_path=data/raw/<video>
+
+# Re-run post-processing only
+python scripts/postprocess_contacts_simple.py outputs/runs/<run>/contacts/ --make_reports
 ```
+
+## Validation workflow
+
+```bash
+python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 15   # clips + review.xlsx + index.html
+# reviewer fills verdict / correct_type in <run>/validation/review.xlsx
+python scripts/validate_contacts.py score outputs/runs/<run>/validation/review.xlsx
+```
+
+Verdicts: real, flicker, wrong_type, tracking_error, unsure. `score` writes precision with Wilson CIs per type,
+flicker rate by duration, and min-duration / min-score threshold tables. Tests: `pytest tests/`.
 
 ## Documentation
 
-See `docs/README.md` for the full index. Key docs:
-
-| Folder | Content |
-|--------|---------|
-| `docs/setup/` | Local and HPC setup |
-| `docs/architecture/` | System design, pipeline comparison |
-| `docs/guides/` | Parameter tuning, labeling, evaluation |
-| `docs/models/` | YOLO migration plan |
-| `docs/contacts/` | Social contact design and output format |
-| `docs/data/` | Data notes and output structure |
-| `docs/changes/` | Observation log — pipeline improvements tracked by date |
-| `docs/archive/` | Historical documents |
-
-## Current Status
-
-- Centroid pipeline is production default (2026-03-06)
-- YOLO weights: `models/yolo/best.pt` (Roboflow-trained)
-- ContactTracker with 6 contact types + NC operational
-- 25 bugs/improvements fixed in contact system audit
-- Parallel execution on Bunya via `scripts/run_parallel.sh`
-- Reference, SAM3, sam2_yolo, sam2_video pipelines deprecated
+`final_documentation/` is the current reference (01 pipeline, 02 contact detection, 03 outputs and reports,
+04 model comparison). `docs/` is older design history (see `docs/README.md`).
 
 ## Conventions
 
+- Branches: work on `develop`
 - All configs in `configs/` — no hardcoded thresholds in code
 - CLI overrides: `key.subkey=value` (e.g., `detection.confidence=0.4`)
 - Output to `outputs/runs/<timestamp>_<tag>/`

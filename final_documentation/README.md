@@ -46,18 +46,6 @@ already in frame coordinates.
 
 ```
 video
-  → SAM2 centroid propagation          → 2 masks + 2 centroids per frame  (identity)
-  → YOLO pose on full frame            → 7 keypoints per rat              (geometry)
-  → keypoint-to-mask assignment        → per-rat keypoint sets
-  → pairwise geometric classification  → one contact label per frame
-  → bout grouping + temporal filtering → discrete behavioural events
-  → results.xlsx, PDF report, HTML viewer
-```
-
-Processing chain:
-
-```
-video
   → SAM3 (bootstrap)  → CUTIE (propagate)   → one labelled mask per animal
   → erase other animals → YOLO pose          → keypoints per animal
   → continuous scoring + Schmitt triggers    → one contact label per frame
@@ -70,12 +58,13 @@ video
 grouped into families — investigative, affiliative, non-contact — and each frame
 also carries a **dynamics** label (closing / stable / separating).
 
-> ⚠️ **Two of the five cannot currently fire.** N2AG depends on a keypoint the
-> shipped model does not have, and SBS depends on mask overlap that CUTIE's
-> output makes structurally impossible. Their frames are absorbed by other types
-> rather than left unlabelled. See
-> [02 §2.6](02_contact_detection.md#26-three-defects-that-suppress-contact-types)
-> — this must be resolved before any behavioural result is reported.
+> **Fixed 2026-09-30.** The v2 configs declared the wrong keypoint names (every
+> index was mislabelled), SBS was gated on a mask IoU that is always 0 with CUTIE,
+> `individual_summary.json` was never written, and post-processing mixed pairs in
+> multi-rat sessions. All are fixed
+> ([02 §2.6](02_contact_detection.md#26-defects-found-and-fixed-2026-09-30)).
+> **Every output produced before this date (e.g. `outputs/2026-07-28_*`) is invalid
+> and must be re-run.**
 
 **Scale.** `cutie_composite` loads the whole video into memory and runs as a single
 process — it has no chunk mode, so the parallel runner and chunk merger do not

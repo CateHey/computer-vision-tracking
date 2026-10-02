@@ -1,0 +1,11 @@
+# Defaults for scripts/validate_contacts.py (override with key=value on the CLI)
+per_type: 15            # events sampled per contact type (stratified by duration tertile)
+pad_sec: 1.0            # context before/after each event in the clip
+speed: 0.5              # playback speed (0.5 = slow motion)
+seed: 42
+crf: 23                 # H.264 quality
+source: null            # events | bouts | null (auto: events if it has pair_key, else bouts)
+types: null             # e.g. "N2N,SBS"; null = all types present
+duration_bins: [0.3, 0.5, 1.0, 2.0]        # seconds; edges for flicker-rate bins
+score_grid: [0.0, 0.5, 0.6, 0.7, 0.8, 0.9]  # peak_score thresholds for precision table
+duration_grid: [0.0, 0.2, 0.3, 0.5, 1.0, 2.0]  # minimum-duration thresholds (s)

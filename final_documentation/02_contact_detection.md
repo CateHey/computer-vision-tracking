@@ -147,6 +147,30 @@ incidental. v2's 200 ms per-type floor sits at that floor, with FOL held to
 
 ## 2.6 Three defects that suppress contact types
 
+> **Status (2026-09-30): all fixed on `develop`.** The root cause of A turned out
+> larger than described below. `yolo26_v11.pt` outputs **7** keypoints in the
+> order `tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear`
+> (verified by running the model on unitary frames), but every v2 config mapped
+> them as `[nose, left_ear, right_ear, mid_body, tail_base]`. So "nose" was the
+> tail tip and the "ears" were tail points: N2N, N2B, FOL and head orientation
+> were computed on the wrong body parts, not only N2AG. Body length was stuck at
+> the 120 px fallback. The configs now list all 7 names and `yolo_inference`
+> raises if the count mismatches.
+>
+> - **A** fixed by the corrected mapping (`tail_start` now exists).
+> - **B** fixed: SBS uses `mask_contact_bl`, the shared-border length between the
+>   two disjoint masks in body lengths (`sbs_contact_bl_enter/exit`), not IoU.
+> - **C** fixed: T2T removed from `individual_metrics.py`.
+> - **D (new)** fixed: the post-processor smoothed the interleaved per-frame rows
+>   of all pairs as one sequence, so with more than two animals the windows mixed
+>   pairs and real contacts were erased. It now cleans each `pair_key` separately,
+>   and events carry `pair_key` / `pair_label`.
+>
+> With disjoint masks and the 7-point mapping, the demo now detects all five types.
+> **Every contact output produced before this fix (e.g. `outputs/2026-07-28_*`) is
+> invalid and must be re-run.** The thresholds still need validation against
+> manual review (`scripts/validate_contacts.py`).
+
 These were found by running the choreographed demo
 ([03 §3.5](03_outputs_and_reports.md)) through the real `ContactTrackerV2`. All
 six behaviours were scripted; only three were ever detected.
@@ -230,8 +254,7 @@ following segments were reported as N2B and FOL as shipped, and were reclaimed b
 SBS and N2AG once the defects were addressed. A behavioural result computed from
 the current output would be not merely incomplete but **mis-attributed**.
 
-**Nothing here should be reported from the current pipeline output until A and B
-are resolved.**
+**Historical:** this table predates the fix above.
 
 ---
 

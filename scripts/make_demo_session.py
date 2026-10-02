@@ -150,15 +150,16 @@ def _n2ag(t: float):
 
 
 def _fol(t: float):
-    """Rat 0 trails rat 1 at 1.40 BL — outside N2AG range, inside follow range,
-    with both animals moving fast enough and in the same direction."""
+    """Rat 0 trails rat 1 with a 0.70 BL nose-to-rear gap: outside the 0.5 BL
+    no-contact guard (else it reads as sniffing) and inside follow range of the
+    followed rat's recent path; both move fast enough in the same direction."""
     # A wide arc keeps the pair in frame at ~4.5 px/frame (135 px/s).
     speed, radius = 135.0, 380.0
     w = speed / radius
     cx = 960.0 + radius * math.cos(w * t)
     cy = 540.0 + radius * math.sin(w * t)
     th = math.atan2(math.cos(w * t), -math.sin(w * t))  # tangent to the arc
-    d = (0.50 + REAR_FRAC + 0.38) * BL
+    d = (0.50 + REAR_FRAC + 0.70) * BL
     off = _rot((d / 2.0, 0.0), th)
     return (cx - off[0], cy - off[1]), th, (cx + off[0], cy + off[1]), th
 
@@ -317,10 +318,11 @@ def generate(out_dir: Path, duration: float, seed: int, faithful: bool,
         seed: Seed for the detector-like noise.
         faithful: Make the two masks disjoint, as both production pipelines do
             (CUTIE emits an index mask; the centroid pipeline calls
-            resolve_overlaps). Mask IoU is then always zero.
+            resolve_overlaps). Mask IoU is then always zero; SBS relies on
+            mask_contact_bl (shared border length) instead.
         taxonomy: "v2" for contacts_v2, "v1" for contacts.py.
-        shipped_keypoints: Use the five keypoints every v2 config actually
-            declares, which omit `tail_start`.
+        shipped_keypoints: Legacy five-keypoint set (no `tail_start`) of the old
+            configs; kept only to reproduce the old defective outputs.
     """
     global REAR_FRAC
 
@@ -353,7 +355,9 @@ def generate(out_dir: Path, duration: float, seed: int, faithful: bool,
             "enabled": True,
             "contact_zone_bl_enter": 0.30, "contact_zone_bl_exit": 0.45,
             "proximity_zone_bl": 1.0,
-            "sbs_mask_iou_enter": 0.05, "sbs_mask_iou_exit": 0.02,
+            "mask_contact_dilate_px": 4,
+            "sbs_contact_bl_enter": 0.35, "sbs_contact_bl_exit": 0.20,
+            "sbs_latch_min_dist_score": 0.5,
             "follow_radius_bl": 0.4, "follow_radius_bl_exit": 0.6,
             "follow_min_speed_bls": 0.15, "follow_alignment_cos": 0.6,
             "activation_threshold": 0.5, "activation_threshold_rare": 0.35,
@@ -436,15 +440,16 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=11, help="Random seed for detector noise")
     ap.add_argument("--keep-mask-overlap", action="store_true",
                     help="Keep the mask overlap instead of making the masks disjoint. "
-                         "Production makes them disjoint, so SBS cannot fire there; use "
-                         "this to see what SBS would produce once that is fixed.")
+                         "Production makes them disjoint; SBS now uses the shared "
+                         "border length (mask_contact_bl), so it fires either way. Only "
+                         "useful to compare against the old IoU-based behaviour.")
     ap.add_argument("--taxonomy", choices=["v1", "v2"], default="v2",
                     help="Contact module to drive: v2 = contacts_v2 (cutie_composite), "
                          "v1 = contacts.py (centroid). Default v2.")
     ap.add_argument("--shipped-keypoints", action="store_true",
-                    help="Use the five keypoints the v2 configs actually declare, which "
-                         "omit tail_start. Reproduces the shipped behaviour, where N2AG "
-                         "cannot be computed.")
+                    help="Legacy: use only the five keypoints (no tail_start) of the "
+                         "pre-2026-09-30 configs, whose names were also wrong. Kept only "
+                         "to reproduce the old defective outputs; N2AG cannot fire.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")

@@ -105,10 +105,16 @@ def _parse_results(
             # Keypoints
             kps = None
             if kpts_data is not None:
+                if kpts_data.shape[1] != len(keypoint_names):
+                    raise ValueError(
+                        f"El modelo devuelve {kpts_data.shape[1]} keypoints pero la config declara "
+                        f"{len(keypoint_names)} nombres: {list(keypoint_names)}. "
+                        "keypoint_names debe coincidir con el orden de indices del modelo."
+                    )
                 kps = []
                 for kp_idx in range(kpts_data.shape[1]):
                     kx, ky, kc = kpts_data[i][kp_idx]
-                    name = keypoint_names[kp_idx] if kp_idx < len(keypoint_names) else f"kp{kp_idx}"
+                    name = keypoint_names[kp_idx]
                     kps.append(Keypoint(x=float(kx), y=float(ky), conf=float(kc), name=name))
 
             detections.append(Detection(

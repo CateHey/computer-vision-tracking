@@ -122,16 +122,18 @@ the config is therefore inert for this entry point.
 | Bootstrap segmentation | SAM3, text prompt `"mouse"`, score threshold 0.5, first 125 frames |
 | Propagation | CUTIE — `mem_every=5`, `max_mem_frames=5`, long-term memory on, `max_internal_size` 480 local / 720 HPC |
 | Pose | YOLO `models/yolo/yolo26_v11.pt`, confidence 0.25 |
-| Keypoints | **5**: `nose, left_ear, right_ear, mid_body, tail_base` |
+| Keypoints | **7**, in model index order: `tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear` |
 | Animals | 6 |
 | Composite | erase dilate 15 px, feather 5 px, mask dilate for pick 7 px, mask carry ≤ 5 frames |
 | Background | temporal median over 30 sampled frames, cached |
 | Configs | `configs/local_cutie_composite.yaml`, `configs/hpc_cutie_composite.yaml` |
 
-Note the keypoint count: earlier pipelines used a **7**-point model
-(`tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear`). The
-current model has 5 and drops `tail_tip` and `tail_start`. **This has a direct
-consequence for contact classification — see §2.6.**
+Note the keypoints: `yolo26_v11.pt` has `kpt_shape [7,3]`, and the names in the
+config **must match the model's index order** (verified 2026-09-30 by running the
+model on unitary frames; `_parse_results` now raises `ValueError` if the model's
+keypoint count differs from the declared names). Before this fix the configs
+declared five names (`nose, left_ear, right_ear, mid_body, tail_base`), so every
+keypoint was mislabelled — "nose" was really the tail tip. See §2.6.
 
 ---
 

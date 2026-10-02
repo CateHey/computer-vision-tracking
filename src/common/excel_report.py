@@ -252,6 +252,12 @@ def _summary_sheet(
     if total_sec is None:
         total_sec = summary.get("metadata", {}).get("video_duration_sec", 0.0)
 
+    # Una fila por (frame, par): el tiempo de contacto se suma sobre pares, asi que
+    # el porcentaje se normaliza por sesion x n_pares (la duracion NO se multiplica).
+    n_pairs = int(summary_real.get("metadata", {}).get("n_pairs", 1) or 1)
+    if events is not None and "pair_key" in events.columns and "n_pairs" not in summary_real.get("metadata", {}):
+        n_pairs = max(int(events["pair_key"].nunique()), 1)
+
     rows: List[Dict[str, Any]] = []
     for ct in types:
         entry = events_by_type.get(ct)
@@ -265,7 +271,7 @@ def _summary_sheet(
                 "count": count,
                 "total_sec": round(total, 2),
                 "mean_sec": round(total / count, 2) if count else 0.0,
-                "pct_of_session": round(total / total_sec * 100, 2) if total_sec else 0.0,
+                "pct_of_session": round(total / (total_sec * n_pairs) * 100, 2) if total_sec else 0.0,
             }
         entry = entry or {}
 

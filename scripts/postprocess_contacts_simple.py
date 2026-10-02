@@ -239,6 +239,82 @@ def load_per_frame(input_dir: Path) -> pd.DataFrame:
     )
 
 
+_NO_CONTACT_LABELS = {"", "none", "nan", "nc", "null"}
+
+
+def normalize_labels(series) -> np.ndarray:
+    """contact_type -> array de str donde "none"/NaN/"NC" pasan a "" (sin contacto).
+
+    contacts_v2 escribe "none" para frames sin contacto; el post-proceso trabaja
+    con "" y luego rellena "NC" en real_type.
+    """
+    vals = pd.Series(series).fillna("").astype(str).str.strip()
+    out = vals.values.astype(object).copy()
+    out[vals.str.lower().isin(_NO_CONTACT_LABELS).values] = ""
+    return out
+
+
+def _pair_sort_key(pair_key: str):
+    """Orden numerico de "0_1" < "0_2" < "1_2" (cae a texto si no parsea)."""
+    try:
+        return tuple(int(x) for x in str(pair_key).split("_"))
+    except ValueError:
+        return (10**9, str(pair_key))
+
+
+def pair_label(pair_key: str) -> str:
+    """"0_1" (slots base 0) -> "R1-R2"."""
+    try:
+        return "-".join(f"R{int(x) + 1}" for x in str(pair_key).split("_"))
+    except ValueError:
+        return str(pair_key)
+
+
+def pair_groups(df: pd.DataFrame) -> Dict[str, np.ndarray]:
+    """Indices posicionales de cada par, ordenados por frame_idx dentro del par.
+
+    La tabla per-frame de contacts_v2 trae una fila por (frame, par) intercaladas,
+    asi que las ventanas temporales deben aplicarse por par. Sin columna pair_key
+    (salidas v1 de 2 ratas) hay un unico grupo en el orden original.
+    """
+    n = len(df)
+    if "pair_key" not in df.columns:
+        return {"": np.arange(n)}
+    keys = df["pair_key"].fillna("").astype(str).values
+    frames = pd.to_numeric(df["frame_idx"], errors="coerce").values
+    groups: Dict[str, np.ndarray] = {}
+    for k in sorted(set(keys), key=_pair_sort_key):
+        idx = np.flatnonzero(keys == k)
+        order = np.argsort(frames[idx], kind="stable")
+        groups[k] = idx[order]
+    return groups
+
+
+def session_frames(df: pd.DataFrame) -> int:
+    """Frames unicos de la sesion (NO filas: hay una fila por par y frame)."""
+    return int(pd.to_numeric(df["frame_idx"], errors="coerce").nunique())
+
+
+def compute_labels(df: pd.DataFrame, config: dict, fps: float):
+    """Aplica las 3 reglas por par y devuelve (raw_types, real_types) alineados
+    al orden ORIGINAL de filas. Punto unico usado por run_postprocess y main()."""
+    smooth_window = config.get("smoothing", {}).get("window", 5)
+    gap_max = config.get("gap_bridging", {}).get("max_gap", 3)
+    min_bout_sec = config.get("min_bout", {}).get("duration_sec", 0.3)
+    min_bout_frames = max(1, round(min_bout_sec * fps))
+
+    raw_types = normalize_labels(df["contact_type"])
+    types = raw_types.copy()
+    for idx in pair_groups(df).values():
+        t = raw_types[idx].copy()
+        t = apply_majority_vote(t, smooth_window)
+        t = apply_gap_bridging(t, gap_max)
+        t = apply_min_bout_filter(t, min_bout_frames)
+        types[idx] = t
+    real_types = np.where(types == "", "NC", types).astype(object)
+    return raw_types, real_types
+
+
 def load_and_validate(csv_path: Path, source: Optional[Path] = None) -> pd.DataFrame:
     """Read contacts_per_frame.csv and validate required columns.
 
@@ -268,7 +344,7 @@ def load_and_validate(csv_path: Path, source: Optional[Path] = None) -> pd.DataF
     df["zone"] = df["zone"].fillna("independent").astype(str)
 
     # Warn about unexpected contact_type values
-    raw_types = set(df["contact_type"].unique()) - {""}
+    raw_types = set(normalize_labels(df["contact_type"])) - {""}
     unexpected = raw_types - set(CONTACT_TYPES)
     if unexpected:
         logger.warning("Unexpected contact_type values: %s", unexpected)
@@ -402,88 +478,160 @@ def _safe_mean(series: pd.Series) -> Optional[float]:
     return None
 
 
+def _clean_num(series: Optional[pd.Series]) -> pd.Series:
+    """Numerico sin NaN ni centinelas (inf, valores negativos como -1)."""
+    if series is None:
+        return pd.Series(dtype=float)
+    num = pd.to_numeric(series, errors="coerce")
+    num = num[np.isfinite(num)]
+    return num[num >= 0]
+
+
+def _event_runs(df: pd.DataFrame, real_types: np.ndarray):
+    """Segmenta real_types en runs por par. Devuelve lista ordenada por
+    (start_frame, par) de tuplas (pair_key, ct, posiciones). Fuente unica de
+    verdad del event_id (la usan extract_events y assign_event_ids)."""
+    frames = pd.to_numeric(df["frame_idx"], errors="coerce").values
+    runs = []
+    for key, idx in pair_groups(df).items():
+        t = real_types[idx]
+        n = len(t)
+        i = 0
+        while i < n:
+            if t[i] != "":
+                ct = t[i]
+                j = i
+                while j < n and t[j] == ct:
+                    j += 1
+                runs.append((key, ct, idx[i:j]))
+                i = j
+            else:
+                i += 1
+    runs.sort(key=lambda r: (frames[r[2][0]], _pair_sort_key(r[0])))
+    return runs
+
+
+def assign_event_ids(df: pd.DataFrame, real_types: np.ndarray) -> np.ndarray:
+    """event_id por fila (-1 = sin evento), consistente con extract_events."""
+    ids = np.full(len(real_types), -1, dtype=int)
+    for eid, (_, _, pos) in enumerate(_event_runs(df, real_types)):
+        ids[pos] = eid
+    return ids
+
+
 def extract_events(
     df: pd.DataFrame, real_types: np.ndarray, fps: float
 ) -> pd.DataFrame:
-    """Convert cleaned per-frame labels into an event table."""
+    """Convierte las etiquetas limpias en tabla de eventos (por par).
+
+    event_id es unico en toda la sesion; ordenado por start_frame y luego par.
+    """
     events = []
-    event_id = 0
-    n = len(real_types)
-    i = 0
+    has_pair = "pair_key" in df.columns
+    for eid, (key, ct, pos) in enumerate(_event_runs(df, real_types)):
+        event_slice = df.iloc[pos]
+        start_frame = int(event_slice.iloc[0]["frame_idx"])
+        end_frame = int(event_slice.iloc[-1]["frame_idx"])
+        start_sec = start_frame / fps
+        end_sec = (end_frame + 1) / fps
+        dur_sec = end_sec - start_sec
 
-    while i < n:
-        if real_types[i] != "":
-            ct = real_types[i]
-            start_idx = i
-            while i < n and real_types[i] == ct:
-                i += 1
-            end_idx = i - 1  # inclusive
+        # Investigador: voto mayoritario
+        inv_slot = None
+        if "investigator_slot" in df.columns and ct != "NC":
+            inv_vals = pd.to_numeric(
+                event_slice["investigator_slot"], errors="coerce"
+            ).dropna()
+            if len(inv_vals) > 0:
+                inv_slot = int(Counter(inv_vals.astype(int)).most_common(1)[0][0])
+        elif "investigator_role" in df.columns and has_pair and ct != "NC":
+            roles = [r for r in event_slice["investigator_role"].fillna("").astype(str)
+                     if r in ("i", "j")]
+            slots = str(key).split("_")
+            if roles and len(slots) == 2:
+                role = Counter(roles).most_common(1)[0][0]
+                try:
+                    inv_slot = int(slots[0] if role == "i" else slots[1])
+                except ValueError:
+                    inv_slot = None
 
-            event_slice = df.iloc[start_idx:i]
+        def _mean_bl(col):
+            v = _clean_num(event_slice[col]) if col in event_slice.columns else pd.Series(dtype=float)
+            return round(float(v.mean()), 3) if len(v) else None
 
-            start_frame = int(event_slice.iloc[0]["frame_idx"])
-            end_frame = int(event_slice.iloc[-1]["frame_idx"])
-            start_sec = start_frame / fps
-            end_sec = (end_frame + 1) / fps
-            dur_sec = end_sec - start_sec
+        peak = None
+        score_col = f"score_{str(ct).lower()}"
+        if score_col in event_slice.columns:
+            sc = pd.to_numeric(event_slice[score_col], errors="coerce").dropna()
+            if len(sc):
+                peak = round(float(sc.max()), 4)
 
-            # Investigator: majority vote
-            inv_slot = None
-            if "investigator_slot" in df.columns:
-                inv_vals = pd.to_numeric(
-                    event_slice["investigator_slot"], errors="coerce"
-                ).dropna()
-                if len(inv_vals) > 0:
-                    inv_slot = int(Counter(inv_vals.astype(int)).most_common(1)[0][0])
+        row = {
+            "event_id": eid,
+            "pair_key": key,
+            "pair_label": pair_label(key) if key != "" else "",
+            "start_time_sec": round(start_sec, 4),
+            "end_time_sec": round(end_sec, 4),
+            "duration_sec": round(dur_sec, 4),
+            "start_time": format_time(start_sec),
+            "end_time": format_time(end_sec),
+            "duration": format_duration(dur_sec),
+            "contact_type": ct,
+            "contact_label": TYPE_LABELS.get(ct, ct),
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "duration_frames": len(pos),
+            "investigator_slot": inv_slot if inv_slot is not None else "",
+            "mean_nose_nose_dist_bl": _mean_bl("nose_nose_dist_bl"),
+            "mean_centroid_dist_bl": _mean_bl("centroid_dist_bl"),
+            "mean_mask_iou": _safe_mean(event_slice.get("mask_iou", pd.Series(dtype=float))),
+            "peak_score": peak,
+        }
+        if "mask_contact_bl" in event_slice.columns:
+            row["mean_mask_contact_bl"] = _mean_bl("mask_contact_bl")
+        events.append(row)
 
-            events.append({
-                "event_id": event_id,
-                "start_time_sec": round(start_sec, 4),
-                "end_time_sec": round(end_sec, 4),
-                "duration_sec": round(dur_sec, 4),
-                "start_time": format_time(start_sec),
-                "end_time": format_time(end_sec),
-                "duration": format_duration(dur_sec),
-                "contact_type": ct,
-                "contact_label": TYPE_LABELS.get(ct, ct),
-                "start_frame": start_frame,
-                "end_frame": end_frame,
-                "duration_frames": i - start_idx,
-                "investigator_slot": inv_slot if inv_slot is not None else "",
-                "mean_nose_nose_dist_px": _safe_mean(event_slice.get("nose_nose_dist_px", pd.Series())),
-                "mean_centroid_dist_px": _safe_mean(event_slice.get("centroid_dist_px", pd.Series())),
-                "mean_mask_iou": _safe_mean(event_slice.get("mask_iou", pd.Series())),
-            })
-            event_id += 1
-        else:
-            i += 1
-
-    return pd.DataFrame(events)
+    ev = pd.DataFrame(events)
+    if not has_pair and len(ev):
+        ev = ev.drop(columns=["pair_key", "pair_label"])
+    return ev
 
 
-def _count_raw_bouts(types: np.ndarray) -> Dict[str, int]:
-    """Count contiguous runs per contact type in a label array."""
+def _count_raw_bouts(types: np.ndarray, groups=None) -> Dict[str, int]:
+    """Cuenta runs contiguos por tipo (por par si se pasan groups)."""
     counts = {ct: 0 for ct in CONTACT_TYPES}
-    n = len(types)
-    i = 0
-    while i < n:
-        if types[i] != "" and types[i] in counts:
-            ct = types[i]
-            counts[ct] += 1
-            while i < n and types[i] == ct:
+    parts = [types[g] for g in groups.values()] if groups else [types]
+    for arr in parts:
+        n = len(arr)
+        i = 0
+        while i < n:
+            if arr[i] != "" and arr[i] in counts:
+                ct = arr[i]
+                counts[ct] += 1
+                while i < n and arr[i] == ct:
+                    i += 1
+            else:
                 i += 1
-        else:
-            i += 1
     return counts
 
 
 def _count_raw_duration_frames(types: np.ndarray) -> Dict[str, int]:
-    """Count total frames per contact type."""
+    """Total de pares-frame por tipo de contacto."""
     counts = {ct: 0 for ct in CONTACT_TYPES}
     for t in types:
         if t in counts:
             counts[t] += 1
     return counts
+
+
+def _flicker_rate(arr: np.ndarray, groups=None) -> float:
+    """Transiciones de etiqueta por 1000 pares-frame (transiciones dentro de cada par)."""
+    parts = [arr[g] for g in groups.values()] if groups else [arr]
+    total = sum(len(a) for a in parts)
+    if total < 2:
+        return 0.0
+    trans = sum(int(np.sum(a[1:] != a[:-1])) for a in parts if len(a) > 1)
+    return round(trans / total * 1000, 1)
 
 
 # ── Output writers ─────────────────────────────────────────────────────────
@@ -505,21 +653,9 @@ def write_real_per_frame(
         axis=1,
     )
 
-    # real_event_id: assign from contiguous runs (-1 = no event)
-    # Includes NC events so IDs match contacts_real_events.csv
-    event_ids = np.full(len(real_types), -1, dtype=int)
-    eid = 0
-    i = 0
-    n = len(real_types)
-    while i < n:
-        if real_types[i] != "":
-            ct = real_types[i]
-            while i < n and real_types[i] == ct:
-                event_ids[i] = eid
-                i += 1
-            eid += 1
-        else:
-            i += 1
+    # real_event_id: unico por evento en toda la sesion (-1 = sin evento).
+    # Incluye eventos NC para coincidir con contacts_real_events.csv
+    event_ids = assign_event_ids(df, real_types)
     out["real_event_id"] = event_ids
 
     path = output_dir / "contacts_real_per_frame.csv"
@@ -543,10 +679,18 @@ def write_event_log(
     fps: float,
     total_frames: int,
     output_dir: Path,
+    groups: Optional[Dict[str, np.ndarray]] = None,
 ) -> Path:
-    """Write event_log.txt — human-readable event log for validation."""
+    """Write event_log.txt — human-readable event log for validation.
+
+    total_frames = frames unicos de la sesion; los tiempos de contacto se suman
+    sobre pares, asi que los porcentajes se normalizan por sesion x n_pares.
+    """
     total_sec = total_frames / fps
-    raw_bouts = _count_raw_bouts(raw_types)
+    n_pairs = max(len(groups), 1) if groups else 1
+    pair_sec = total_sec * n_pairs
+    has_pair = "pair_label" in events_df.columns
+    raw_bouts = _count_raw_bouts(raw_types, groups)
     raw_bouts_total = sum(raw_bouts.values())
     # Exclude NC events from comparison (raw data has no NC)
     real_contact_events = len(events_df[events_df["contact_type"] != "NC"]) if len(events_df) > 0 else 0
@@ -564,11 +708,13 @@ def write_event_log(
         f"Video duration: {format_time(total_sec)} "
         f"({total_frames} frames @ {fps:.0f}fps)"
     )
-    contact_pct = real_contact_sec / total_sec * 100 if total_sec > 0 else 0.0
+    contact_pct = real_contact_sec / pair_sec * 100 if pair_sec > 0 else 0.0
+    if n_pairs > 1:
+        lines.append(f"Pairs: {n_pairs} (contact time is summed over pairs; % is of session x pairs)")
     lines.append(
         f"Total events: {real_events_total} | "
         f"Total contact time: {format_duration(real_contact_sec)} "
-        f"({contact_pct:.1f}% of session)"
+        f"({contact_pct:.1f}% of {'pair-time' if n_pairs > 1 else 'session'})"
     )
     lines.append("")
 
@@ -582,7 +728,7 @@ def write_event_log(
     if len(events_df) > 0:
         # Header
         lines.append(
-            f"{'#':>3}  {'Start(s)':>9}  {'End(s)':>9}  {'Dur':>6}  "
+            f"{'#':>3}  {'Pair':<6}  {'Start(s)':>9}  {'End(s)':>9}  {'Dur':>6}  "
             f"{'Type':<5}  {'Contact':<22}  {'Investigator'}"
         )
         lines.append("-" * 80)
@@ -598,15 +744,14 @@ def write_event_log(
 
             if inv != "" and pd.notna(inv):
                 inv_int = int(inv)
-                if ct == "FOL":
-                    inv_str = f"Rat {inv_int} follows"
-                else:
-                    inv_str = f"Rat {inv_int}"
+                rat = f"R{inv_int + 1}" if has_pair else f"Rat {inv_int}"
+                inv_str = f"{rat} follows" if ct == "FOL" else rat
             else:
                 inv_str = "--"
+            plabel = row.get("pair_label", "") if has_pair else ""
 
             lines.append(
-                f"{eid:>3}  {start_sec:>9.2f}  {end_sec:>9.2f}  {dur:>6}  "
+                f"{eid:>3}  {str(plabel):<6}  {start_sec:>9.2f}  {end_sec:>9.2f}  {dur:>6}  "
                 f"{ct:<5}  {label:<22}  {inv_str}"
             )
     else:
@@ -625,7 +770,7 @@ def write_event_log(
 
         total_dur = ct_events["duration_sec"].sum()
         mean_dur = total_dur / n_events
-        pct = total_dur / total_sec * 100 if total_sec > 0 else 0
+        pct = total_dur / pair_sec * 100 if pair_sec > 0 else 0
 
         line = (
             f"  {ct:<4} ({label}): {n_events:>2} events, "
@@ -640,7 +785,8 @@ def write_event_log(
             ).dropna()
             if len(inv_vals) > 0:
                 inv_counts = Counter(inv_vals.astype(int))
-                parts = [f"Rat {k}: {v}" for k, v in sorted(inv_counts.items())]
+                parts = [(f"R{k + 1}" if has_pair else f"Rat {k}") + f": {v}"
+                         for k, v in sorted(inv_counts.items())]
                 line += ", " + " | ".join(parts)
 
         lines.append(line)
@@ -667,9 +813,8 @@ def write_event_log(
     lines.append("  N2N  (Nose-to-nose):       Both noses within contact zone (<0.3 body lengths)")
     lines.append("  N2AG (Nose-to-anogenital):  Nose near tail base of the other rat")
     lines.append("  N2B  (Nose-to-body):        Nose near body — most common, check for false positives")
-    lines.append("  T2T  (Tail-to-tail):        Both tail bases close together (rear-to-rear)")
     lines.append("  FOL  (Following):           Sustained following (speed + alignment + min frames)")
-    lines.append("  SBS  (Side-by-side):        Parallel movement with mask overlap")
+    lines.append("  SBS  (Side-by-side):        Parallel movement with shared mask border")
     lines.append("")
     lines.append("  False positive indicators:")
     lines.append("    - Events near the minimum duration (0.3s) may be noise")
@@ -694,13 +839,21 @@ def write_real_summary(
     input_dir: Path,
     output_dir: Path,
 ) -> Path:
-    """Write session_summary_real.json."""
-    total_frames = len(df)
+    """Write session_summary_real.json.
+
+    Una fila por (frame, par): total_frames son frames unicos de sesion; los
+    conteos y tiempos de contacto se suman sobre pares.
+    """
+    groups = pair_groups(df)
+    n_pairs = max(len(groups), 1)
+    total_frames = session_frames(df)
     total_sec = total_frames / fps
+    pair_frames = total_frames * n_pairs
+    pair_sec = total_sec * n_pairs
     min_bout_sec = config.get("min_bout", {}).get("duration_sec", 0.3)
     min_bout_frames = max(1, round(min_bout_sec * fps))
 
-    raw_bouts = _count_raw_bouts(raw_types)
+    raw_bouts = _count_raw_bouts(raw_types, groups)
     raw_dur_frames = _count_raw_duration_frames(raw_types)
     raw_contact_frames = int(np.sum(raw_types != ""))
     real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC")))
@@ -715,7 +868,7 @@ def write_real_summary(
             "count": n,
             "total_sec": round(total_dur, 2),
             "mean_sec": round(total_dur / n, 2) if n > 0 else 0.0,
-            "pct_of_session": round(total_dur / total_sec * 100, 2) if total_sec > 0 else 0.0,
+            "pct_of_session": round(total_dur / pair_sec * 100, 2) if pair_sec > 0 else 0.0,
         }
 
     summary = {
@@ -725,6 +878,7 @@ def write_real_summary(
             "fps": fps,
             "fps_source": fps_source,
             "total_frames": total_frames,
+            "n_pairs": n_pairs,
             "total_duration_sec": round(total_sec, 2),
             "total_duration_human": format_time(total_sec),
         },
@@ -736,13 +890,13 @@ def write_real_summary(
         },
         "raw_summary": {
             "contact_frames": raw_contact_frames,
-            "contact_pct": round(raw_contact_frames / total_frames * 100, 2) if total_frames > 0 else 0.0,
+            "contact_pct": round(raw_contact_frames / pair_frames * 100, 2) if pair_frames > 0 else 0.0,
             "bouts_by_type": raw_bouts,
             "duration_frames_by_type": raw_dur_frames,
         },
         "real_summary": {
             "contact_frames": real_contact_frames,
-            "contact_pct": round(real_contact_frames / total_frames * 100, 2) if total_frames > 0 else 0.0,
+            "contact_pct": round(real_contact_frames / pair_frames * 100, 2) if pair_frames > 0 else 0.0,
             "events_by_type": events_by_type,
             "total_contact_sec": round(real_contact_frames / fps, 2),
             "total_events": len(events_df),
@@ -805,42 +959,51 @@ def generate_reports(
         return
 
     reports_dir.mkdir(parents=True, exist_ok=True)
-    total_frames = len(df)
+    groups = pair_groups(df)
+    n_pairs = max(len(groups), 1)
+    total_frames = session_frames(df)
     total_sec = total_frames / fps
+    pair_frames = total_frames * n_pairs
+    frame_arr = pd.to_numeric(df["frame_idx"], errors="coerce").values
 
-    raw_bouts = _count_raw_bouts(raw_types)
+    raw_bouts = _count_raw_bouts(raw_types, groups)
     raw_dur_frames = _count_raw_duration_frames(raw_types)
 
-    # ── Chart 1: Timeline comparison ──
-    fig, axes = plt.subplots(2, 1, figsize=(14, 4), sharex=True)
+    # ── Chart 1: Timeline comparison (una fila por par) ──
+    fig, axes = plt.subplots(2, 1, figsize=(14, 3 + 0.5 * n_pairs), sharex=True)
     fig.suptitle("Contact Timeline: Raw vs Cleaned", fontsize=13)
 
-    for ax, types_arr, label, type_list in [
+    keys = list(groups.keys())
+    for ax, types_arr, title, type_list in [
         (axes[0], raw_types, "Raw contacts", CONTACT_TYPES),
         (axes[1], real_types, "Real contacts (cleaned)", ALL_EVENT_TYPES),
     ]:
-        for ct in type_list:
-            # Find runs of this type
-            in_run = False
-            run_start = 0
-            for j in range(len(types_arr)):
-                if types_arr[j] == ct and not in_run:
-                    in_run = True
-                    run_start = j
-                elif types_arr[j] != ct and in_run:
-                    in_run = False
-                    start_sec = df.iloc[run_start]["frame_idx"] / fps
-                    end_sec = df.iloc[j - 1]["frame_idx"] / fps
-                    ax.barh(0, end_sec - start_sec, left=start_sec, height=0.6,
+        for row_i, key in enumerate(keys):
+            idx = groups[key]
+            arr = types_arr[idx]
+            frs = frame_arr[idx]
+            for ct in type_list:
+                in_run = False
+                run_start = 0
+                for j in range(len(arr)):
+                    if arr[j] == ct and not in_run:
+                        in_run = True
+                        run_start = j
+                    elif arr[j] != ct and in_run:
+                        in_run = False
+                        start_sec = frs[run_start] / fps
+                        end_sec = frs[j - 1] / fps
+                        ax.barh(row_i, end_sec - start_sec, left=start_sec, height=0.6,
+                                color=CT_COLORS[ct], linewidth=0)
+                if in_run:
+                    start_sec = frs[run_start] / fps
+                    end_sec = frs[-1] / fps
+                    ax.barh(row_i, end_sec - start_sec, left=start_sec, height=0.6,
                             color=CT_COLORS[ct], linewidth=0)
-            if in_run:
-                start_sec = df.iloc[run_start]["frame_idx"] / fps
-                end_sec = df.iloc[-1]["frame_idx"] / fps
-                ax.barh(0, end_sec - start_sec, left=start_sec, height=0.6,
-                        color=CT_COLORS[ct], linewidth=0)
 
-        ax.set_yticks([0])
-        ax.set_yticklabels([label], fontsize=10)
+        ax.set_yticks(range(len(keys)))
+        ax.set_yticklabels([pair_label(k) if k else title for k in keys], fontsize=8)
+        ax.set_title(title, fontsize=9)
         ax.set_xlim(0, total_sec)
         _format_time_ticks(ax, "x")
 
@@ -983,28 +1146,22 @@ def generate_reports(
     raw_contact_frames = int(np.sum(raw_types != ""))
     real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC")))
 
-    # Flicker rate: type transitions per 1000 frames
-    def _flicker_rate(arr):
-        if len(arr) < 2:
-            return 0.0
-        transitions = sum(1 for k in range(1, len(arr)) if arr[k] != arr[k - 1])
-        return round(transitions / len(arr) * 1000, 1)
-
+    # Flicker rate: transiciones por 1000 pares-frame, calculadas dentro de cada par
     global_data = {
         "metric": [
-            "total_frames", "total_duration_sec", "fps",
+            "total_frames", "n_pairs", "total_duration_sec", "fps",
             "raw_contact_frames", "real_contact_frames",
             "raw_contact_pct", "real_contact_pct",
             "raw_bouts_total", "real_events_total",
             "flicker_rate_raw_per_1000", "flicker_rate_real_per_1000",
         ],
         "value": [
-            total_frames, round(total_sec, 2), fps,
+            total_frames, n_pairs, round(total_sec, 2), fps,
             raw_contact_frames, real_contact_frames,
-            round(raw_contact_frames / total_frames * 100, 2) if total_frames > 0 else 0,
-            round(real_contact_frames / total_frames * 100, 2) if total_frames > 0 else 0,
+            round(raw_contact_frames / pair_frames * 100, 2) if pair_frames > 0 else 0,
+            round(real_contact_frames / pair_frames * 100, 2) if pair_frames > 0 else 0,
             sum(raw_bouts.values()), len(events_df),
-            _flicker_rate(raw_types), _flicker_rate(real_types),
+            _flicker_rate(raw_types, groups), _flicker_rate(real_types, groups),
         ],
     }
 
@@ -1071,22 +1228,18 @@ def run_postprocess(
         smooth_window, gap_max, min_bout_sec, min_bout_frames,
     )
 
-    raw_types = df["contact_type"].fillna("").astype(str).values.copy()
-
-    types = raw_types.copy()
-    types = apply_majority_vote(types, smooth_window)
-    types = apply_gap_bridging(types, gap_max)
-    types = apply_min_bout_filter(types, min_bout_frames)
-    real_types = np.where(types == "", "NC", types)
+    raw_types, real_types = compute_labels(df, config, fps)
+    groups = pair_groups(df)
 
     events_df = extract_events(df, real_types, fps)
 
-    raw_bout_count = sum(_count_raw_bouts(raw_types).values())
+    raw_bout_count = sum(_count_raw_bouts(raw_types, groups).values())
     logger.info("Post-processing: %d raw bouts -> %d real events", raw_bout_count, len(events_df))
 
     write_real_per_frame(df, real_types, contacts_dir)
     write_real_events(events_df, contacts_dir)
-    write_event_log(events_df, raw_types, real_types, fps, len(df), contacts_dir)
+    write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
+                    contacts_dir, groups=groups)
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, "pipeline", config, contacts_dir, contacts_dir,
@@ -1196,30 +1349,18 @@ def main():
         smooth_window, gap_max, min_bout_sec, min_bout_frames,
     )
 
-    # Get raw types before processing
-    raw_types = df["contact_type"].fillna("").astype(str).values.copy()
-
-    # Apply 3 rules in order
-    types = raw_types.copy()
-
-    logger.info("Rule 1: Majority-vote smoothing (window=%d)...", smooth_window)
-    types = apply_majority_vote(types, smooth_window)
-
-    logger.info("Rule 2: Gap bridging (max_gap=%d frames)...", gap_max)
-    types = apply_gap_bridging(types, gap_max)
-
+    # Etiquetas crudas y limpias (3 reglas, por par) — misma funcion que run_postprocess
     logger.info(
-        "Rule 3: Minimum bout filter (min=%d frames / %.3fs)...",
-        min_bout_frames, min_bout_sec,
+        "Rules: majority-vote(%d) -> gap bridging(%d) -> min bout(%d frames), per pair",
+        smooth_window, gap_max, min_bout_frames,
     )
-    types = apply_min_bout_filter(types, min_bout_frames)
-
-    real_types = np.where(types == "", "NC", types)
+    raw_types, real_types = compute_labels(df, config, fps)
+    groups = pair_groups(df)
 
     # Extract events
     events_df = extract_events(df, real_types, fps)
     logger.info("Extracted %d clean events from %d raw bouts",
-                len(events_df), sum(_count_raw_bouts(raw_types).values()))
+                len(events_df), sum(_count_raw_bouts(raw_types, groups).values()))
 
     # Write outputs
     output_dir = Path(args.output_dir) if args.output_dir else input_dir
@@ -1227,7 +1368,8 @@ def main():
 
     write_real_per_frame(df, real_types, output_dir)
     write_real_events(events_df, output_dir)
-    write_event_log(events_df, raw_types, real_types, fps, len(df), output_dir)
+    write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
+                    output_dir, groups=groups)
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, fps_source, config, input_dir, output_dir,
