@@ -115,7 +115,29 @@ A `torch.jit.script is deprecated` FutureWarning is harmless.
 
 ## 7. Hugging Face token and SAM3 weights
 
-(next)
+`cutie_composite` uses SAM3 on the first 125 frames, so this step is required.
+`facebook/sam3` is gated: Meta has to approve each Hugging Face account.
+
+1. Open https://huggingface.co/facebook/sam3, log in, and submit the access form.
+   The page then says "awaiting a review from the repository authors" (submitted 2026-10-21,
+   pending). Status: https://huggingface.co/settings/gated-repos
+2. Create a token at https://huggingface.co/settings/tokens ("Create new token", type Read).
+   It starts with `hf_` and is shown only once. The model page itself never shows a token.
+3. Store it on Bunya:
+
+```bash
+echo hf_YOUR_REAL_TOKEN > ~/.hf_token && chmod 600 ~/.hf_token
+```
+
+4. After Meta approves, download SAM3 (about 3 GB, to `~/.cache/huggingface`):
+
+```bash
+rat
+export TMPDIR=/scratch/user/uqcvaras/tmp
+python -c "import os; from huggingface_hub import snapshot_download; print(snapshot_download('facebook/sam3', token=open(os.path.expanduser('~/.hf_token')).read().strip()))"
+```
+
+(pending Meta approval)
 
 ## Every new login
 
