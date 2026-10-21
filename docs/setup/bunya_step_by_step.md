@@ -65,7 +65,29 @@ eval "$(conda shell.bash hook)"     # enables "conda activate" in this shell
 
 ## 5. Create the environment
 
+Runs on the login node (no Slurm account needed). Downloads about 200 MB, takes a few minutes.
+The env lands in `~/.conda/envs/rattrack`. A "newer version of conda exists" warning is harmless.
+
+```bash
+conda create -y -n rattrack -c conda-forge python=3.11 ffmpeg
+conda activate rattrack
+python --version     # -> Python 3.11.x
+```
+
+## 6. Install PyTorch
+
 (in progress)
+
+## Every new login
+
+The module and the hook do not persist between sessions:
+
+```bash
+cd ~/computer-vision-tracking
+module load miniforge/26.3.2-1
+eval "$(conda shell.bash hook)"
+conda activate rattrack
+```
 
 ## Pending: Slurm account
 
