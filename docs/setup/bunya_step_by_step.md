@@ -74,9 +74,41 @@ conda activate rattrack
 python --version     # -> Python 3.11.x
 ```
 
-## 6. Install PyTorch
+## 6. Install the Python packages
 
-(in progress)
+**Lesson:** a plain `pip install torch ...` on the login node failed half way with
+`OSError: [Errno 122] Disk quota exceeded`, although `rquota` showed home at 1 of 50 GB.
+pip unpacks wheels in the node's temporary folder, which is small. Fix: point `TMPDIR`
+at scratch (300 GB) and use `--no-cache-dir` so nothing piles up in `~/.cache/pip`.
+
+Check space with one line:
+
+```bash
+rquota; du -sh ~/.[!.]* ~/* 2>/dev/null | sort -h | tail
+```
+
+Everything in one block (about 10-15 min). It stops at the first failure:
+
+```bash
+rat
+mkdir -p /scratch/user/uqcvaras/tmp && export TMPDIR=/scratch/user/uqcvaras/tmp
+pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 && \
+grep -v segment-anything requirements.txt > $TMPDIR/req.txt && \
+pip install --no-cache-dir -r $TMPDIR/req.txt && \
+pip install --no-cache-dir "transformers>=5.0" accelerate && \
+{ [ -d models/cutie ] || git clone https://github.com/hkchengrex/Cutie.git models/cutie; } && \
+{ pip install --no-cache-dir -e models/cutie || { pip install --no-cache-dir --no-deps -e models/cutie && pip install --no-cache-dir hydra-core omegaconf einops easydict gitpython; }; } && \
+python -c "from cutie.utils.download_models import download_models_if_needed; download_models_if_needed()" && \
+python -c "import torch, transformers, ultralytics, cutie; from transformers import Sam3VideoModel; print('ALL OK', torch.__version__, transformers.__version__)"
+```
+
+What it does: temp files to scratch; PyTorch with CUDA 12.6; the project requirements
+(without SAM2, which `cutie_composite` does not use); `transformers` 5 (SAM3 lives there);
+CUTIE cloned into `models/cutie` and installed (falls back to inference-only dependencies
+if the full install fails); CUTIE weights into `models/cutie/weights/`; an import check
+that prints `ALL OK`.
+
+(running, result pending)
 
 ## Every new login
 
