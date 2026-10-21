@@ -191,3 +191,22 @@ Without a Slurm account, `sbatch`, `salloc` and `srun` fail with
 has no association. A group admin (listed in the RCC approval email) has to add `uqcvaras`
 to the group's Slurm account. The previous student account (`s4948012`) had a default one,
 which is why jobs used to run without `--account`.
+
+Attempts so far:
+
+| Date | Command | Result |
+|------|---------|--------|
+| 2026-10-21 | `sacctmgr -n show assoc user=uqcvaras format=account%30` | empty (no association) |
+| 2026-10-21 | `sbatch --test-only slurm/run_cutie.sbatch ...` | `Invalid account or account/partition combination specified` |
+| 2026-10-21 | `sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2` | same error |
+| 2026-10-21 | old interactive way: `salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=02:00:00` | (pending) |
+
+If the interactive way gets a node (the prompt changes from `bunyaN` to a compute node),
+the pipeline runs by hand:
+
+```bash
+rat
+nvidia-smi -L
+export HF_TOKEN=$(cat ~/.hf_token)
+python -m src.pipelines.cutie_composite.run --config configs/hpc_cutie_composite.yaml video_path=data/raw/original.mp4 detection.max_animals=2
+```
