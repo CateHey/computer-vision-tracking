@@ -352,7 +352,7 @@ The `sam3_processor.py` converts all YOLO-space pixel prompts:
 - Python 3.12, PyTorch 2.7+, CUDA 12.6
 - SAM3 package: `pip install -e ./models/sam3/sam3`
 - Checkpoint: `models/sam3/sam3.pt` (~3.2GB from HuggingFace)
-- See [Local Setup](../setup/local.md) and [HPC Setup](../setup/bunya_paso_a_paso.md) for installation
+- See [Local Setup](../setup/local.md) and [HPC Setup](../setup/bunya_step_by_step.md) for installation
 
 ### Weaknesses
 

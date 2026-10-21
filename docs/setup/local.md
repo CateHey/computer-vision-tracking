@@ -1,6 +1,6 @@
 # Running Locally
 
-Local runs are for short clips and config checks. Full sessions run on Bunya ([bunya_paso_a_paso.md](bunya_paso_a_paso.md)).
+Local runs are for short clips and config checks. Full sessions run on Bunya ([bunya_step_by_step.md](bunya_step_by_step.md)).
 
 ## Prerequisites
 

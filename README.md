@@ -47,7 +47,7 @@ sbatch scripts/run_pipeline.sbatch data/raw/session.avi                 # centro
 ```
 
 First-time setup from zero, one verified command at a time:
-[docs/setup/bunya_paso_a_paso.md](docs/setup/bunya_paso_a_paso.md).
+[docs/setup/bunya_step_by_step.md](docs/setup/bunya_step_by_step.md).
 
 ## Project structure
 
@@ -99,7 +99,7 @@ Open `scripts/report_viewer.html` in a browser and drop in `results.xlsx`.
 
 - [final_documentation/README.md](final_documentation/README.md): the paper's methods reference
 - [docs/README.md](docs/README.md): index of the older design documentation. Key pages:
-  [HPC Guide](docs/setup/bunya_paso_a_paso.md),
+  [HPC Guide](docs/setup/bunya_step_by_step.md),
   [Local Setup](docs/setup/local.md),
   [Parameter Tuning](docs/guides/parameter_tuning.md),
   [Centroid Pipeline](docs/centroid_pipeline.md),

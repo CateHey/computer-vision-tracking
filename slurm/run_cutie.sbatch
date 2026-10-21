@@ -12,7 +12,7 @@
 #SBATCH --error=outputs/slurm/cutie_%j.err
 
 # cutie_composite + validation sample + zip, on one GPU.
-# Requires the conda env "rattrack" (docs/setup/bunya_paso_a_paso.md) and ~/.hf_token.
+# Requires the conda env "rattrack" (docs/setup/bunya_step_by_step.md) and ~/.hf_token.
 #
 # Submit from ~/computer-vision-tracking:
 #   mkdir -p outputs/slurm

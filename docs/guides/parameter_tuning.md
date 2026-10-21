@@ -320,7 +320,7 @@ See [pipeline_improvements.md](pipeline_improvements.md) for BoT-SORT config det
 | **Config key** | `models.device` |
 | **Options** | `"auto"`, `"cuda"`, `"cpu"` |
 
-See [hpc.md](../setup/bunya_paso_a_paso.md) for detailed GPU setup.
+See [bunya_step_by_step.md](../setup/bunya_step_by_step.md) for detailed GPU setup.
 
 ### 4.2 `scan.max_frames`
 
