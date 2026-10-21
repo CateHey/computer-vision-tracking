@@ -204,6 +204,22 @@ Attempts so far:
 
 Conclusion: no Slurm request of any kind is accepted. Only a group admin can fix it.
 
+How RCC says it works (UQ-RCC hpc-docs: `guides/Accounting-group-admin.md`,
+`policy/Bunya-Accounting-Group-Operational-Procedure.md`, read 2026-10-21):
+
+- Every Bunya user must be in exactly one accounting group; every job needs its
+  `--account=a_...` string. There is no default or school-level group.
+- Users are added by the group's owner or administrator (usually the supervisor, group
+  leader or group admin). Owners/admins see the AccountString in the QRIScloud portal
+  (https://www.qriscloud.org.au/ -> Account -> Services Dashboard -> Groups).
+- RCC only adds a member after written request or confirmation from the group owner.
+- After being added: log in again and run `groups`; Slurm syncs new members hourly, so
+  allow about 1 hour before the first job.
+- RCC Service Desk: rcc-support@uq.edu.au.
+
+Who to ask, in order: the supervisor (which accounting group does the lab use, and who
+owns it), then the group owner/admin to add `uqcvaras`; if nobody knows, RCC support.
+
 If the interactive way gets a node (the prompt changes from `bunyaN` to a compute node),
 the pipeline runs by hand:
 
