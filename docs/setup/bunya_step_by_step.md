@@ -108,7 +108,14 @@ CUTIE cloned into `models/cutie` and installed (falls back to inference-only dep
 if the full install fails); CUTIE weights into `models/cutie/weights/`; an import check
 that prints `ALL OK`.
 
-(running, result pending)
+Verified 2026-10-21: ends with `ALL OK 2.14.1+cu126 5.20.2` (torch, transformers).
+The full CUTIE install worked (no fallback needed). CUTIE weights downloaded to
+`models/cutie/weights/` (`coco_lvis_h18_itermask.pth`, `cutie-base-mega.pth`).
+A `torch.jit.script is deprecated` FutureWarning is harmless.
+
+## 7. Hugging Face token and SAM3 weights
+
+(next)
 
 ## Every new login
 
