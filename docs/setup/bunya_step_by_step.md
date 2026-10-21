@@ -137,7 +137,30 @@ export TMPDIR=/scratch/user/uqcvaras/tmp
 python -c "import os; from huggingface_hub import snapshot_download; print(snapshot_download('facebook/sam3', token=open(os.path.expanduser('~/.hf_token')).read().strip()))"
 ```
 
-(pending Meta approval)
+Meta approved access on 2026-10-21 (same day, a few hours after the request).
+
+(download not yet run)
+
+## 8. Run cutie_composite + evidence (needs the Slurm account)
+
+```bash
+rat && git pull
+sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2      # video, number of animals
+squeue -u $USER
+tail -f outputs/slurm/cutie_<JOBID>.out
+```
+
+The job writes `outputs/runs/<timestamp>_cutie_composite/` with `overlays/` (tracking
+videos), `contacts/` (`results.xlsx`, `report.pdf`, `event_log.txt`), `validation/`
+(evidence clips, thumbnails, `review.xlsx`, `index.html`) and a zip of the whole run,
+then prints the scp line to download it.
+
+Checked off-cluster on 2026-10-21: the contact chain after tracking (contacts_v2,
+post-processing, Excel/PDF report, validation sample, scoring, zip) ran end to end on
+synthetic sessions from `scripts/make_demo_session.py`: 11 evidence clips for 120 s,
+2 for 10 s. SAM3 + CUTIE themselves can only run on a GPU node.
+
+(pending Slurm account)
 
 ## Every new login
 

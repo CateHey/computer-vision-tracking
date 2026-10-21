@@ -38,6 +38,9 @@ external/
 # --- Run outputs (nothing under outputs/ is committed; .gitkeep keeps the dir) ---
 outputs/*
 !outputs/.gitkeep
+!outputs/slurm/
+outputs/slurm/*
+!outputs/slurm/.gitkeep
 
 # --- Legacy directories (migrated) ---
 bunya/
