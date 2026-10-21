@@ -60,8 +60,8 @@ models:
 
 background:
   cache_dir: outputs/backgrounds
-  num_samples: 30
-  seed: 42
+  n_samples: 30
+  sampling_seed: 42
 
 contacts:
   enabled: true

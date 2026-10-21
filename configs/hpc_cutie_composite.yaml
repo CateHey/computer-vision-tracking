@@ -80,8 +80,8 @@ models:
 # Background
 background:
   cache_dir: outputs/backgrounds
-  num_samples: 50
-  seed: 42
+  n_samples: 50
+  sampling_seed: 42
 
 # Contacts
 contacts:

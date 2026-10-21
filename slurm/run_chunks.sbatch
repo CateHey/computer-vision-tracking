@@ -1,57 +1,81 @@
-#!/bin/bash
-#SBATCH --job-name=sam2-chunk
+#!/bin/bash --login
+#SBATCH --job-name=centroid-chunk
 #SBATCH --partition=gpu_cuda
 #SBATCH --qos=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=03:00:00
+#SBATCH --time=06:00:00
 #SBATCH --output=outputs/slurm/chunk_%a_%j.out
 #SBATCH --error=outputs/slurm/chunk_%a_%j.err
 
 # ============================================================================
-# Parallel chunk processing via Slurm array jobs
+# Parallel chunk processing via Slurm array jobs (one GPU per array task)
 # ============================================================================
 #
-# Splits a video into N chunks and processes each on a separate GPU.
-# Each array task computes its frame range from SLURM_ARRAY_TASK_ID.
+# Alternative to scripts/run_pipeline.sbatch for when 3-4 GPUs on a single
+# node are hard to get: Slurm schedules each chunk independently. Each array
+# task computes its own frame range from SLURM_ARRAY_TASK_ID.
 #
-# Usage (3 GPUs):
-#   sbatch --array=0-2 slurm/run_chunks.sbatch
+# Usage (4 chunks; --qos=gpu runs at most 4 at once):
+#   cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+#   VIDEO=data/raw/original.mp4 sbatch --array=0-3 slurm/run_chunks.sbatch
 #
-# With overrides:
-#   OVERRIDES="video_path=data/raw/original_120s.avi contacts.enabled=true" \
-#     sbatch --array=0-2 slurm/run_chunks.sbatch
+# Extra overrides:
+#   VIDEO=data/raw/original.mp4 OVERRIDES="detection.confidence=0.3" \
+#     sbatch --array=0-3 slurm/run_chunks.sbatch
 #
-# Limit concurrent GPU jobs (e.g., max 2 at a time):
-#   sbatch --array=0-2%2 slurm/run_chunks.sbatch
+# Skip the frame-count probe by giving it directly:
+#   VIDEO=data/raw/original.mp4 TOTAL_FRAMES=30000 sbatch --array=0-3 slurm/run_chunks.sbatch
 #
-# After all chunks finish, merge results:
-#   python scripts/merge_chunks.py outputs/runs/*_chunk*/
-#
+# After every task finishes, merge the chunk run dirs (check names with ls -lt):
+#   python scripts/merge_chunks.py outputs/runs/<date>_*_chunk*/ -o outputs/runs/<date>_merged
 # ============================================================================
 
 set -euo pipefail
 
-# --- Configuration ---
+: "${SLURM_ARRAY_TASK_ID:?submit with: sbatch --array=0-<N-1> slurm/run_chunks.sbatch}"
+
 CONFIG="${CONFIG:-configs/hpc_centroid.yaml}"
 PIPELINE="${PIPELINE:-src.pipelines.centroid.run}"
-TOTAL_FRAMES="${TOTAL_FRAMES:-30000}"    # Total frames in the video
-                                          # 20 min @ 25fps = 30000
-                                          # Override: --export=...,TOTAL_FRAMES=15000
-OVERRIDES="${OVERRIDES:-}"               # Config overrides (space-separated key=value)
-                                          # Override: --export=...,OVERRIDES="video_path=... contacts.enabled=true"
+VIDEO="${VIDEO:-}"
+TOTAL_FRAMES="${TOTAL_FRAMES:-}"
+OVERRIDES="${OVERRIDES:-}"
 
-# --- Compute frame range for this chunk ---
-NUM_CHUNKS=$SLURM_ARRAY_TASK_COUNT       # Total tasks in the array
-CHUNK_ID=$SLURM_ARRAY_TASK_ID            # This task's index (0-based)
+# Same default as scripts/run_parallel.sh: contacts on for the centroid pipeline.
+CONTACTS_FLAG=""
+case "$PIPELINE" in *centroid*) CONTACTS_FLAG="contacts.enabled=true" ;; esac
 
+cd "${BUNYA_PROJECT_DIR:-$HOME/computer-vision-tracking}"
+# shellcheck disable=SC1091
+source scripts/bunya_env.sh
+bunya_activate
+
+if [ -n "$VIDEO" ]; then
+    OVERRIDES="video_path=$VIDEO $OVERRIDES"
+fi
+if [ -z "$TOTAL_FRAMES" ]; then
+    if [ -z "$VIDEO" ]; then
+        echo "ERROR: set VIDEO=<path> (frame count is read from it) or TOTAL_FRAMES=<n>" >&2
+        exit 1
+    fi
+    TOTAL_FRAMES=$(python -c "
+import cv2, sys
+cap = cv2.VideoCapture('$VIDEO')
+if not cap.isOpened():
+    sys.exit('ERROR: cannot open $VIDEO')
+print(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+")
+fi
+
+NUM_CHUNKS=$SLURM_ARRAY_TASK_COUNT
+CHUNK_ID=$SLURM_ARRAY_TASK_ID
 FRAMES_PER_CHUNK=$(( (TOTAL_FRAMES + NUM_CHUNKS - 1) / NUM_CHUNKS ))
 START_FRAME=$(( CHUNK_ID * FRAMES_PER_CHUNK ))
 END_FRAME=$(( START_FRAME + FRAMES_PER_CHUNK ))
-
-# Clamp end_frame to total
-if [ $END_FRAME -gt $TOTAL_FRAMES ]; then
+if [ "$END_FRAME" -gt "$TOTAL_FRAMES" ]; then
     END_FRAME=$TOTAL_FRAMES
 fi
 
@@ -59,28 +83,20 @@ echo "=== Chunk Processing ==="
 echo "Job ID:       $SLURM_JOB_ID"
 echo "Array task:   $CHUNK_ID / $NUM_CHUNKS"
 echo "Node:         $SLURM_NODELIST"
-echo "GPU:          $CUDA_VISIBLE_DEVICES"
+echo "Account:      ${SLURM_JOB_ACCOUNT:-?}"
+echo "GPU:          ${CUDA_VISIBLE_DEVICES:-none}"
 echo "Pipeline:     $PIPELINE"
 echo "Config:       $CONFIG"
-echo "Overrides:    ${OVERRIDES:-<none>}"
-echo "Frame range:  $START_FRAME → $END_FRAME ($FRAMES_PER_CHUNK frames)"
+echo "Overrides:    ${CONTACTS_FLAG} ${OVERRIDES:-<none>}"
+echo "Frame range:  $START_FRAME -> $END_FRAME  (of $TOTAL_FRAMES)"
 echo "========================="
 
-# --- Setup environment ---
-cd ~/Balbi/yolo-sam2-lab-tracking
-
-module load python/3.10.4-gcccore-11.3.0 2>/dev/null || true
-source .venv/bin/activate
-
-mkdir -p outputs/slurm
-
-# --- Run pipeline for this chunk ---
 # shellcheck disable=SC2086
-python -m $PIPELINE \
+python -m "$PIPELINE" \
     --config "$CONFIG" \
-    --start-frame $START_FRAME \
-    --end-frame $END_FRAME \
-    --chunk-id $CHUNK_ID \
-    $OVERRIDES
+    --start-frame "$START_FRAME" \
+    --end-frame "$END_FRAME" \
+    --chunk-id "$CHUNK_ID" \
+    $CONTACTS_FLAG $OVERRIDES
 
 echo "=== Chunk $CHUNK_ID complete ==="

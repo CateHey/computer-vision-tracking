@@ -2,6 +2,8 @@
 #SBATCH --job-name=centroid-infer
 #SBATCH --partition=gpu_cuda
 #SBATCH --qos=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
@@ -10,52 +12,50 @@
 #SBATCH --error=outputs/slurm/centroid_%j.err
 
 # ============================================================================
-# Centroid Pipeline on Bunya HPC (single GPU)
+# Centroid Pipeline on Bunya HPC (single GPU, one process)
 # ============================================================================
 #
-# IMPORTANT: You must pass your account with --account or -A:
-#   sbatch --account=a_YOUR_GROUP slurm/run_centroid.sbatch
+# Submit from the project dir after sourcing scripts/bunya_env.sh (it exports
+# SBATCH_ACCOUNT, so --account is not needed on the command line):
 #
-# With overrides:
+#   cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+#   sbatch slurm/run_centroid.sbatch
+#
+# With overrides (any key=value the pipeline accepts):
 #   OVERRIDES="video_path=data/raw/original_120s.avi contacts.enabled=true" \
-#     sbatch --account=a_YOUR_GROUP slurm/run_centroid.sbatch
+#     sbatch slurm/run_centroid.sbatch
 #
-# For parallel (3 GPUs), use run_chunks.sbatch instead:
-#   sbatch --array=0-2 slurm/run_chunks.sbatch
+# Different config:
+#   CONFIG=configs/hpc_centroid.yaml sbatch slurm/run_centroid.sbatch
 #
+# No bunya_env.sh sourced?  sbatch --account=a_<group> slurm/run_centroid.sbatch
+#
+# For a full video use the multi-GPU runner instead:
+#   sbatch scripts/run_pipeline.sbatch data/raw/original.mp4
 # ============================================================================
 
 set -euo pipefail
 
-# Default config (can be overridden via --export=CONFIG=...)
 CONFIG="${CONFIG:-configs/hpc_centroid.yaml}"
-
-# Optional config overrides (space-separated key=value pairs)
 OVERRIDES="${OVERRIDES:-}"
+
+cd "${BUNYA_PROJECT_DIR:-$HOME/computer-vision-tracking}"
+# shellcheck disable=SC1091
+source scripts/bunya_env.sh
+bunya_activate
 
 echo "=== Centroid Pipeline ==="
 echo "Job ID:    $SLURM_JOB_ID"
 echo "Node:      $SLURM_NODELIST"
-echo "GPU:       $CUDA_VISIBLE_DEVICES"
+echo "Account:   ${SLURM_JOB_ACCOUNT:-?}"
+echo "GPU:       ${CUDA_VISIBLE_DEVICES:-none}"
 echo "Config:    $CONFIG"
-echo "Overrides: $OVERRIDES"
+echo "Overrides: ${OVERRIDES:-<none>}"
+echo "Python:    $(python --version 2>&1)"
+echo "CUDA:      $(python -c 'import torch; print(torch.cuda.is_available())')"
 echo "=========================="
 
-# Navigate to project root
-cd ~/Balbi/yolo-sam2-lab-tracking
-
-# Load modules and activate virtual environment
-module load python/3.10.4-gcccore-11.3.0 2>/dev/null || true
-source .venv/bin/activate
-
-# Create slurm output directory
-mkdir -p outputs/slurm
-
-# Run pipeline
-if [ -n "$OVERRIDES" ]; then
-    python -m src.pipelines.centroid.run --config "$CONFIG" $OVERRIDES
-else
-    python -m src.pipelines.centroid.run --config "$CONFIG"
-fi
+# shellcheck disable=SC2086
+python -m src.pipelines.centroid.run --config "$CONFIG" $OVERRIDES
 
 echo "=== Job complete ==="

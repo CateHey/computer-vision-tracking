@@ -19,31 +19,29 @@ Complete guide to configure, train, and retrieve a YOLO pose model on Bunya.
 
 ```powershell
 # 1. SSH into Bunya FIRST (nothing works without this)
-ssh s4948012@bunya.rcc.uq.edu.au
+ssh uqcvaras@bunya.rcc.uq.edu.au
 ```
 
 ### On Bunya (after SSH)
 
 ```bash
 # 2. Pull latest code (includes roboflow/train_yolo_pose.py)
-cd ~/Balbi/yolo-sam2-lab-tracking
+cd ~/computer-vision-tracking
 git pull
 
 # 3. Request a GPU with salloc (interactive session)
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=8 --mem=64G --time=12:00:00
-srun --pty bash
+source scripts/bunya_env.sh     # account string + helpers
+bunya_gpu_shell 1 12           # 1 GPU, 12 h
 
 # 4. Setup environment
-cd ~/Balbi/yolo-sam2-lab-tracking
-module load python/3.10.4-gcccore-11.3.0
-source .venv/bin/activate
-export TMPDIR=$HOME/tmp && mkdir -p $TMPDIR
+cd ~/computer-vision-tracking
+source scripts/bunya_env.sh && bunya_activate
 
 # 5. Run training (script is inside roboflow/ folder)
 python roboflow/train_yolo_pose.py --epochs 100 --batch 16 --imgsz 640
 
 # 6. When done, the trained model will be at:
-#    ~/Balbi/yolo-sam2-lab-tracking/runs/pose/train_ratslabs/weights/best.pt
+#    ~/computer-vision-tracking/runs/pose/train_ratslabs/weights/best.pt
 ```
 
 ### Alternative: sbatch (non-interactive, runs in background)
@@ -52,7 +50,7 @@ If you want to disconnect and let it run:
 
 ```bash
 # On Bunya (after SSH, no salloc needed)
-cd ~/Balbi/yolo-sam2-lab-tracking
+cd ~/computer-vision-tracking
 mkdir -p outputs/slurm
 sbatch roboflow/train_yolo_pose.sbatch
 
@@ -159,13 +157,13 @@ python roboflow/train_yolo_pose.py --resume
 Training saves everything under the project directory on Bunya:
 
 ```
-~/Balbi/yolo-sam2-lab-tracking/runs/pose/train_ratslabs/
+~/computer-vision-tracking/runs/pose/train_ratslabs/
 ```
 
 You can check it after training:
 
 ```bash
-ls ~/Balbi/yolo-sam2-lab-tracking/runs/pose/train_ratslabs/weights/
+ls ~/computer-vision-tracking/runs/pose/train_ratslabs/weights/
 # best.pt   last.pt
 ```
 
@@ -177,16 +175,16 @@ Run these from your **local machine** (PowerShell), NOT from Bunya:
 
 ```powershell
 # Best weights only (this is the model you use for inference)
-scp s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/runs/pose/train_ratslabs/weights/best.pt `
-  "C:\Users\CatherineVaras\Downloads\roboflow\"
+scp uqcvaras@bunya.rcc.uq.edu.au:~/computer-vision-tracking/runs/pose/train_ratslabs/weights/best.pt `
+  "C:\Users\uqcvaras\Downloads\computer-vision-tracking\roboflow\"
 
 # Last checkpoint (to resume training later)
-scp s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/runs/pose/train_ratslabs/weights/last.pt `
-  "C:\Users\CatherineVaras\Downloads\roboflow\"
+scp uqcvaras@bunya.rcc.uq.edu.au:~/computer-vision-tracking/runs/pose/train_ratslabs/weights/last.pt `
+  "C:\Users\uqcvaras\Downloads\computer-vision-tracking\roboflow\"
 
 # Full results folder (plots, metrics, everything)
-scp -r s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/runs/pose/train_ratslabs/ `
-  "C:\Users\CatherineVaras\Downloads\roboflow\"
+scp -r uqcvaras@bunya.rcc.uq.edu.au:~/computer-vision-tracking/runs/pose/train_ratslabs/ `
+  "C:\Users\uqcvaras\Downloads\computer-vision-tracking\roboflow\"
 ```
 
 ---
@@ -242,18 +240,17 @@ ROBOFLOW_VERSION = 7   # new version number from Roboflow
 On Bunya, delete the old dataset before re-downloading:
 
 ```bash
-cd ~/Balbi/yolo-sam2-lab-tracking
+cd ~/computer-vision-tracking
 rm -rf Pruebasratslabs-6
 ```
 
 Then retrain (salloc method):
 
 ```bash
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=8 --mem=64G --time=12:00:00
-srun --pty bash
-cd ~/Balbi/yolo-sam2-lab-tracking
-module load python/3.10.4-gcccore-11.3.0
-source .venv/bin/activate
+source scripts/bunya_env.sh     # account string + helpers
+bunya_gpu_shell 1 12           # 1 GPU, 12 h
+cd ~/computer-vision-tracking
+source scripts/bunya_env.sh && bunya_activate
 python roboflow/train_yolo_pose.py --epochs 100 --batch 16
 ```
 

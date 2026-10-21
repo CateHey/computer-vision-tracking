@@ -9,7 +9,7 @@ SAMURAI (SAM2 video predictor) for mask tracking + SLEAP for keypoint detection.
 Make sure these files exist on Bunya before running:
 
 ```
-~/Balbi/yolo-sam2-lab-tracking/
+~/computer-vision-tracking/
   models/
     sam2/segment-anything-2/checkpoints/sam2.1_hiera_large.pt
     sleap/sleap.ckpt
@@ -18,8 +18,8 @@ Make sure these files exist on Bunya before running:
 Upload SLEAP checkpoint from local (PowerShell):
 
 ```bash
-ssh s4948012@bunya.rcc.uq.edu.au "mkdir -p ~/Balbi/yolo-sam2-lab-tracking/models/sleap"
-scp C:\Users\lucer\Downloads\mouse\yolo-sam2-lab-tracking\models\sleap\sleap.ckpt s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/models/sleap/
+ssh uqcvaras@bunya.rcc.uq.edu.au "mkdir -p ~/computer-vision-tracking/models/sleap"
+scp C:\Users\uqcvaras\Downloads\computer-vision-tracking\models\sleap\sleap.ckpt uqcvaras@bunya.rcc.uq.edu.au:~/computer-vision-tracking/models/sleap/
 ```
 
 ### Python dependencies
@@ -55,7 +55,7 @@ These boxes are already set in `configs/hpc_samurai_sleap.yaml`. Since all video
 SSH into Bunya and run:
 
 ```bash
-cd ~/Balbi/yolo-sam2-lab-tracking
+cd ~/computer-vision-tracking
 
 python -m src.pipelines.samurai_sleap.run \
     --config configs/hpc_samurai_sleap.yaml \

@@ -1,727 +1,446 @@
 # Bunya HPC Guide
 
-Complete guide for running pipelines on UQ's Bunya HPC cluster.
+Running the production `cutie_composite` pipeline (SAM3 + CUTIE + YOLO pose + `contacts_v2`), its validation sample, and the older centroid pipeline on UQ's Bunya cluster with the staff account.
+
+| | |
+|---|---|
+| Host | `bunya.rcc.uq.edu.au` (login nodes `bunya1` to `bunya5`) |
+| Username | `uqcvaras` (UQ staff account, approved 2026-10-14) |
+| Login | UQ password, then approve the Okta Verify push (SSH keys are not used) |
+| Slurm account | `a_<group>` string from a group admin, required on every job |
+| Hugging Face token | `~/.hf_token` (SAM3 is a gated model, see section 3) |
+| Code, conda env, weights | `~/computer-vision-tracking` (home: 50 GB, never purged) |
+| Videos, run outputs | `/scratch/user/uqcvaras/computer-vision-tracking` (300 GB, purged after 90 idle days) |
+| GPU jobs | `--partition=gpu_cuda --qos=gpu --gres=gpu:N`, N up to 4, walltime up to 7 days |
+
+Every value above lives in [`scripts/bunya_env.sh`](../../scripts/bunya_env.sh). Source it once per login; the sbatch scripts, the salloc helper and the printed download commands all read it.
 
 ## Table of Contents
 
-- [Quick Start (automated)](#quick-start-automated)
-- [Quick Start (manual)](#quick-start-manual)
-- [Single Run (1 GPU)](#single-run-1-gpu)
-- [Parallel Batch (sbatch)](#parallel-batch-sbatch)
-- [run_parallel.sh Reference](#run_parallelsh-reference)
-- [Output Structure](#output-structure)
-- [First-Time Setup](#first-time-setup)
-- [Transfer Files](#transfer-files)
+- [1. Account string (do this first)](#1-account-string-do-this-first)
+- [2. Logging in from Windows](#2-logging-in-from-windows)
+- [3. First-time setup on Bunya](#3-first-time-setup-on-bunya)
+- [4. Upload a video (or a 10 s clip)](#4-upload-a-video-or-a-10-s-clip)
+- [5. Production pipeline + validation on a clip (recommended)](#5-production-pipeline--validation-on-a-clip-recommended)
+- [6. Centroid pipeline as a batch job (multi-GPU)](#6-centroid-pipeline-as-a-batch-job-multi-gpu)
+- [7. Run interactively (salloc)](#7-run-interactively-salloc)
+- [8. Centroid pipeline as a Slurm array](#8-centroid-pipeline-as-a-slurm-array)
+- [9. Download results](#9-download-results)
+- [run_parallel.sh reference](#run_parallelsh-reference)
+- [Output structure](#output-structure)
 - [Monitoring](#monitoring)
-- [Other Run Options](#other-run-options)
-- [Slurm Admin Commands](#slurm-admin-commands)
-- [Recovery (Finding Last Batch)](#recovery-finding-last-batch)
-- [Disk Quota](#disk-quota)
-- [Roboflow Extraction](#roboflow-extraction)
+- [Slurm commands](#slurm-commands)
+- [Recovery (finding the last batch)](#recovery-finding-the-last-batch)
+- [Disk quota](#disk-quota)
+- [Roboflow tooling on Bunya](#roboflow-tooling-on-bunya)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
-## Quick Start (automated)
+## 1. Account string (do this first)
 
-The fastest way to process a full video. One script does everything.
+Bunya rejects every job that has no `--account=a_<group>`. RCC does not hand the string out. One of the group's Bunya admins (the list is in the RCC approval email of 14 Oct 2026) has to add `uqcvaras` to the group's Slurm accounting group. Email the admin closest to the lab and ask for exactly that.
 
-### Pre-flight: sync code from local machine
+Once added, the string shows up on Bunya:
 
 ```bash
-# On your local machine (PowerShell or bash)
-git add .
-git commit -m "documentation updated"
-git push origin
+groups          # look for a_<something>
 ```
 
-### On Bunya
+`scripts/bunya_env.sh` picks it up automatically when exactly one `a_*` group is listed and exports it as `SBATCH_ACCOUNT` and `SALLOC_ACCOUNT`, so no script needs editing. To set it by hand:
 
 ```bash
-# 1. Connect to Bunya
-ssh s4948012@bunya.rcc.uq.edu.au
-
-# 2. Request 4 GPUs
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:4 --cpus-per-task=16 --mem=64G --time=06:00:00
-srun --pty bash
-
-# 3. Setup environment
-cd ~/Balbi/yolo-sam2-lab-tracking
-git pull
-module load python/3.10.4-gcccore-11.3.0
-source .venv/bin/activate
-
-# 4. Run (one command does everything: split, process, merge, print download)
-bash scripts/run_parallel.sh data/raw/original_120s.avi
+export BUNYA_ACCOUNT=a_<group>
+source scripts/bunya_env.sh
 ```
 
----
+Until the string exists, `salloc` and `sbatch` fail with `Invalid account or account/partition combination specified`. Cloning the repo and uploading videos work without it.
 
-## Quick Start (manual)
+## 2. Logging in from Windows
 
-If you want to control each chunk manually within a salloc session.
-
-```bash
-# 1. Connect and get 4 GPUs
-ssh s4948012@bunya.rcc.uq.edu.au
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:4 --cpus-per-task=16 --mem=64G --time=06:00:00
-srun --pty bash
-
-# 2. Setup
-cd ~/Balbi/yolo-sam2-lab-tracking
-git pull
-module load python/3.10.4-gcccore-11.3.0
-source .venv/bin/activate
-mkdir -p outputs/slurm
-
-# 3. Launch 4 chunks in parallel, each on its own GPU
-CUDA_VISIBLE_DEVICES=0 python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  --start-frame 0 --end-frame 7500 --chunk-id 0 \
-  video_path=data/raw/original_120s.avi contacts.enabled=true > outputs/slurm/chunk_0.log 2>&1 &
-
-CUDA_VISIBLE_DEVICES=1 python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  --start-frame 7500 --end-frame 15000 --chunk-id 1 \
-  video_path=data/raw/original_120s.avi contacts.enabled=true > outputs/slurm/chunk_1.log 2>&1 &
-
-CUDA_VISIBLE_DEVICES=2 python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  --start-frame 15000 --end-frame 22500 --chunk-id 2 \
-  video_path=data/raw/original_120s.avi contacts.enabled=true > outputs/slurm/chunk_2.log 2>&1 &
-
-CUDA_VISIBLE_DEVICES=3 python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  --start-frame 22500 --end-frame 30000 --chunk-id 3 \
-  video_path=data/raw/original_120s.avi contacts.enabled=true > outputs/slurm/chunk_3.log 2>&1 &
-
-# 4. Wait for all to finish
-wait
-echo "All chunks done!"
-
-# 5. Check which run directories were created
-ls -d outputs/runs/*reference_chunk*
-
-# 6. Merge (replace paths with actual directories from step 5)
-python scripts/merge_chunks.py outputs/runs/*_reference_chunk*/
+```powershell
+ssh uqcvaras@bunya.rcc.uq.edu.au
+# UQ password, then approve the Okta Verify push on your phone (it waits up to 5 min)
 ```
 
-**Key**: `CUDA_VISIBLE_DEVICES=N` assigns each process to a different GPU. The `&` runs them in background. `wait` blocks until all finish.
+Optional alias so that `ssh bunya` and `scp file bunya:/path` work. Put this in `C:/Users/uqcvaras/.ssh/config` (create the file if it does not exist):
 
----
-
-## Single Run (1 GPU)
-
-For quick tests or short videos. No chunking needed.
-
-```bash
-# 1. Connect and get 1 GPU
-ssh s4948012@bunya.rcc.uq.edu.au
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --time=06:00:00 --mem=64G
-srun --pty bash
-
-# 2. Setup
-cd ~/Balbi/yolo-sam2-lab-tracking
-git pull
-module load python/3.10.4-gcccore-11.3.0
-source .venv/bin/activate
-
-# 3a. Quick test (2 min clip)
-python scripts/trim_video.py data/raw/original.mp4 --duration 120
-python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  video_path=data/raw/original_120s.avi contacts.enabled=true
-
-# 3b. Or run sam2_yolo pipeline instead
-python -m src.pipelines.sam2_yolo.run --config configs/hpc_full.yaml \
-  video_path=data/raw/original_120s.avi \
-  models.sam2_checkpoint=models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_tiny.pt \
-  models.sam2_config=configs/sam2.1/sam2.1_hiera_t.yaml \
-  contacts.enabled=true
+```
+Host bunya
+    HostName bunya.rcc.uq.edu.au
+    User uqcvaras
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
 ```
 
----
+Rules from RCC:
 
-## Parallel Batch (sbatch)
+- Every new `ssh` or `scp` asks for password + push again. Windows OpenSSH cannot share connections, so for many files use WinSCP (one login per session) or a single `scp -r` of a folder.
+- VS Code Remote-SSH, tunnels and similar IDE connections are not permitted on Bunya. Edit locally, push to GitHub, `git pull` on Bunya.
+- Nothing heavy runs on the login nodes (`bunya1` to `bunya5`): no pip or conda installs, no inference. RCC kills those processes.
 
-Non-interactive mode. Submit from the login node and let Slurm schedule it.
-No need to stay connected.
+## 3. First-time setup on Bunya
 
 ```bash
-# 1. Connect (login node only, no salloc needed)
-ssh s4948012@bunya.rcc.uq.edu.au
+# --- on a login node ---
+git clone -b develop https://github.com/CateHey/computer-vision-tracking.git ~/computer-vision-tracking   # develop = current pipeline
+cd ~/computer-vision-tracking
+source scripts/bunya_env.sh        # warns if the account string is still missing
 
-# 2. Setup
-cd ~/Balbi/yolo-sam2-lab-tracking
-git pull
-module load python/3.10.4-gcccore-11.3.0
-source .venv/bin/activate
+# --- Hugging Face token for SAM3 (facebook/sam3 is gated). Once: accept the terms at
+# https://huggingface.co/facebook/sam3, create a read token at https://huggingface.co/settings/tokens
+echo hf_xxxxxxxx > ~/.hf_token && chmod 600 ~/.hf_token
+source scripts/bunya_env.sh        # now also exports HF_TOKEN
 
-# 3. Trim video if needed (runs on login node, no GPU)
-python scripts/trim_video.py data/raw/original.mp4 --duration 120
+# --- builds must run on a compute node ---
+bunya_gpu_shell 1 2                 # 1 GPU for 2 hours
+cd ~/computer-vision-tracking && bash scripts/bunya_setup.sh
+exit                                # release the node
+```
 
-# 4. Submit 4 parallel chunks (Slurm assigns GPUs automatically)
-PIPELINE=src.pipelines.reference.run \
-CONFIG=configs/hpc_reference.yaml \
-TOTAL_FRAMES=30000 \
-OVERRIDES="video_path=data/raw/original_120s.avi contacts.enabled=true" \
-  sbatch --array=0-3 slurm/run_chunks.sbatch
+`scripts/bunya_setup.sh` is idempotent and does, in order:
 
-# 5. Monitor (can disconnect and check later)
+1. Creates `/scratch/user/uqcvaras/computer-vision-tracking/{data/raw,outputs/runs}` and turns `data/raw` and `outputs/runs` in the repo into symlinks pointing there (anything already uploaded to `data/raw` is moved across). Everything else keeps using relative paths; `outputs/slurm` (job logs) stays in home.
+2. Loads the `miniforge` module and creates the conda env `rattrack` (Python 3.11 + ffmpeg) under `~/.conda`.
+3. Installs PyTorch (CUDA 12.6 wheels, driver >= 525; `TORCH_INDEX=https://download.pytorch.org/whl/cu130` for a newer driver), clones SAM2 into `models/sam2/segment-anything-2` (required by `requirements.txt`), installs `requirements.txt`, `transformers>=5` (SAM3 lives there) and CUTIE into `models/cutie` (falling back to an inference-only dependency set when the full install fails to build).
+4. Downloads the weights: SAM2.1 checkpoints, CUTIE (`models/cutie/weights/`) and SAM3 from Hugging Face into `~/.cache/huggingface`. Without `~/.hf_token` the SAM3 step is skipped with a warning and the first job downloads it instead.
+5. Imports everything the pipeline, the Excel report and the validation script need, and prints torch, CUDA, transformers and ultralytics versions. `cuda=True` is the line to look for.
+
+The YOLO weights (`models/yolo/yolo26_v11.pt`) come with the git clone.
+
+Re-run the script any time; pieces that exist are skipped. If the miniforge module version changed (`module avail miniforge`), export `BUNYA_CONDA_MODULE=miniforge/<version>` before running.
+
+The interactive run above is optional: the first `sbatch slurm/run_cutie.sbatch` (section 5) runs this setup by itself when the conda env is missing, so from zero the only interactive steps are the clone, the token and the upload.
+
+## 4. Upload a video (or a 10 s clip)
+
+From PowerShell (forward slashes work):
+
+```powershell
+scp C:/Users/uqcvaras/Downloads/computer-vision-tracking/data/raw/original.mp4 uqcvaras@bunya.rcc.uq.edu.au:computer-vision-tracking/data/raw/
+```
+
+The target is `data/raw` inside the clone (relative to home), which works before setup (plain folder) and after it (symlink into scratch; setup moves anything already there). Scratch files untouched for 90 days are deleted, so keep the master copy on your laptop or RDM. To test on the first seconds of a long video there is no need to cut it: the third argument of `run_cutie.sbatch` limits the run (section 5).
+
+A 10 s test clip (seconds 5 to 15 of the original) is cut on the laptop with ffmpeg and uploaded the same way. Re-encoding makes the cut frame-accurate; a 10 s clip takes seconds:
+
+```powershell
+cd C:/Users/uqcvaras/Downloads/computer-vision-tracking
+ffmpeg -ss 5 -i <path to the original video> -t 10 -c:v libx264 -crf 18 -pix_fmt yuv420p -an data/clips/clip_5-15s.mp4
+ffprobe -v error -show_entries format=duration -of default=nw=1 data/clips/clip_5-15s.mp4   # duration=10.000000
+scp data/clips/clip_5-15s.mp4 uqcvaras@bunya.rcc.uq.edu.au:computer-vision-tracking/data/raw/
+```
+
+(`-c copy` instead of `-c:v libx264 ...` is faster but starts on the previous keyframe, so the clip may begin before second 5.)
+
+The same cut on Bunya, from a video already on scratch (OpenCV, fine on a login node for a short clip):
+
+```bash
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh && bunya_activate
+python scripts/trim_video.py data/raw/original.mp4 --start 5 --duration 10 --output data/raw/clip_5-15s.mp4
+```
+
+## 5. Production pipeline + validation on a clip (recommended)
+
+`cutie_composite` (SAM3 bootstrap on the first 125 frames, CUTIE propagation, YOLO pose on per-animal composites, `contacts_v2`) is the production pipeline. It runs as one process on one GPU and has no chunk mode. `slurm/run_cutie.sbatch` does the whole thing in one job: installs the environment if it is missing (first run, 20-30 min), runs the pipeline, draws the validation sample (`scripts/validate_contacts.py sample`) from the same run directory, zips the run and prints the download line.
+
+Prerequisites: the token in `~/.hf_token` (section 3) and the video in `data/raw` (section 4).
+
+```bash
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh     # account string + ~/.hf_token
+sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2 10         # video, number of animals, first N seconds
+squeue -u $USER                                                  # PD = waiting for a GPU, R = running
+tail -f outputs/slurm/cutie_<JOBID>.out
+```
+
+The second argument becomes `detection.max_animals`: the shipped config says 6, the two-rat videos need 2. The third limits the run to the first N seconds (`scan.max_frames`, computed from the video's fps); omit it for the whole video. Knobs: `CONFIG=...`, `OVERRIDES="sam3.sam3_phase_frames=50"`, `VALIDATE=0` (skip the sample), `PER_TYPE=15` (events per contact type), `ZIP=0` (no archive), `SETUP=1` (re-run the setup). A full session needs more memory and time because every frame stays in RAM: `sbatch --mem=128G --time=24:00:00 slurm/run_cutie.sbatch data/raw/original.mp4 2`.
+
+Ten seconds take a few minutes once the models are cached; the first job adds the installation and the model downloads (SAM3 is about 3 GB). The job ends with the archive `outputs/runs/<run>.zip` and the PowerShell lines to copy it into the laptop's `outputs/` folder and unpack it there.
+
+Lines to check in the log:
+
+- `Phase 1 complete. Handoff: n/N rats`: if `n < N`, SAM3 never found every animal and the run must be repeated (see Troubleshooting).
+- `Frames with keypoint carry-over`: a high percentage means YOLO often missed an animal and the geometry is interpolated.
+- `ContactTracker finalized. Total bouts`: 0 means there is nothing to validate.
+
+The run lands in `outputs/runs/<timestamp>_cutie_composite/`:
+
+| Path | Content |
+|------|---------|
+| `overlays/cutie_composite_<date>.avi` | overlay video, one colour and label per animal |
+| `overlays/cutie_unitary_ratN_<date>.avi` | per-animal composite videos (a second animal visible here means the erase step failed) |
+| `contacts/` | `results.xlsx` (every table), CSVs, `event_log.txt`, PDF report |
+| `validation/` | `review.xlsx`, `index.html`, `clips/`, `thumbs/`, `manifest.json` |
+| `config_used.yaml`, `logs/run.log` | provenance |
+
+Validation round trip, the one manual step:
+
+1. Download and unpack the zip with the lines printed at the end of the job log, open `validation/index.html`, watch each clip, and fill `verdict` (`real`, `flicker`, `wrong_type`, `tracking_error`, `unsure`) and, for `wrong_type`, `correct_type` in `validation/review.xlsx`.
+2. Upload the filled workbook back and score it (CPU only, seconds, fine on a login node):
+
+```powershell
+scp C:/Users/uqcvaras/Downloads/computer-vision-tracking/outputs/<run>/validation/review.xlsx uqcvaras@bunya.rcc.uq.edu.au:computer-vision-tracking/outputs/runs/<run>/validation/
+```
+
+```bash
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh && bunya_activate
+python scripts/validate_contacts.py score outputs/runs/<run>/validation/review.xlsx
+```
+
+`score` writes `validation_summary.md`, `validation_summary.json` and `validation_precision.png` next to the workbook: precision per contact type with Wilson intervals, flicker rate by duration bin, and the minimum-score / minimum-duration threshold tables. To redraw the sample with other settings: `python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 20 --types N2N,N2B` (defaults in `configs/validation.yaml`).
+
+## 6. Centroid pipeline as a batch job (multi-GPU)
+
+The older centroid pipeline (SAM2) through `scripts/run_parallel.sh`. Submit from a login node and log out. Slurm runs the job when GPUs are free.
+
+```bash
+ssh uqcvaras@bunya.rcc.uq.edu.au
+cd ~/computer-vision-tracking && git pull && source scripts/bunya_env.sh
+
+sbatch scripts/run_pipeline.sbatch data/raw/original.mp4                          # 3 GPUs, 3 chunks
+sbatch --gres=gpu:4 --cpus-per-task=16 scripts/run_pipeline.sbatch data/raw/original.mp4 4
+sbatch --time=02:00:00 scripts/run_pipeline.sbatch data/raw/original_120s.avi     # short test
+
+squeue -u $USER                                   # PD = waiting for GPUs, R = running
+tail -f outputs/slurm/pipeline_<JOBID>.out        # live progress bars
+```
+
+Knobs: `CONFIG=... OVERRIDES="detection.confidence=0.3" sbatch scripts/run_pipeline.sbatch ...`. The job calls `scripts/run_parallel.sh`, so the result layout and the printed download commands are the same as in interactive mode. Default walltime is 24 h; `--qos=gpu` allows up to 4 GPUs and 7 days.
+
+Single GPU, single process, no chunking:
+
+```bash
+OVERRIDES="video_path=data/raw/original_120s.avi contacts.enabled=true" sbatch slurm/run_centroid.sbatch
+```
+
+## 7. Run interactively (salloc)
+
+For watching progress live or debugging.
+
+```bash
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+bunya_gpu_shell 1 2                 # 1 GPU, 2 h (cutie_composite); `bunya_gpu_shell 4 6` for the centroid runner
+
+# now on a GPU node (hostname is not bunyaN). srun starts a clean shell, so:
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh && bunya_activate
+nvidia-smi -L
+python -m src.pipelines.cutie_composite.run --config configs/hpc_cutie_composite.yaml video_path=data/raw/clip_5-15s.mp4 detection.max_animals=2
+python scripts/validate_contacts.py sample outputs/runs/<timestamp>_cutie_composite --per-type 15
+bash scripts/run_parallel.sh data/raw/original.mp4 4              # centroid pipeline, 4 chunks
+exit                                # releases the GPUs
+```
+
+`bunya_gpu_shell` is the RCC-recommended salloc, spelled out:
+
+```bash
+salloc --nodes=1 --ntasks-per-node=1 --cpus-per-task=16 --mem=64G --partition=gpu_cuda --qos=gpu --gres=gpu:4 --time=06:00:00 --job-name=cvt-shell --account=$BUNYA_ACCOUNT srun --export=PATH,TERM,HOME,LANG --pty /bin/bash -l
+```
+
+Pick a GPU type with `--gres=gpu:a100:4` or `--gres=gpu:h100:4` (H100s are capped at 4 per user).
+
+## 8. Centroid pipeline as a Slurm array
+
+When 3 or 4 GPUs on one node are slow to get, let Slurm schedule each centroid chunk on its own:
+
+```bash
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+VIDEO=data/raw/original.mp4 sbatch --array=0-3 slurm/run_chunks.sbatch
 squeue -u $USER
-#  JOBID  PARTITION  NAME        ARRAY_TASK  STATE    NODE
-#  12345  gpu_cuda   sam2-chunk  0           RUNNING  gpu-node-1
-#  12345  gpu_cuda   sam2-chunk  1           RUNNING  gpu-node-2
-#  12345  gpu_cuda   sam2-chunk  2           PENDING  (waiting for GPU)
-#  12345  gpu_cuda   sam2-chunk  3           PENDING  (waiting for GPU)
 
-# View chunk progress:
-cat outputs/slurm/chunk_0_*.out
-
-# 6. When all chunks finish, merge
-python scripts/merge_chunks.py outputs/runs/*_reference_chunk*/
-
-# 7. Download results (see Transfer Files section)
+# when all four tasks are done:
+ls -lt outputs/runs | head
+python scripts/merge_chunks.py outputs/runs/<timestamp>_centroid_chunk*/ -o outputs/runs/<timestamp>_centroid_merged
 ```
 
-**Difference vs salloc**: sbatch runs in the background. You can disconnect from Bunya and come back later. Slurm handles GPU scheduling. But you need to merge manually after all chunks finish.
+Each task reads the frame count from the video and processes its share. Chunk run dirs are named `<timestamp>_centroid_chunk<N>`; pass only the ones from the same submission to the merge.
 
-### Alternative: sbatch per-chunk (without array)
+## 9. Download results
 
-If `slurm/run_chunks.sbatch` isn't available, submit each chunk individually:
+`slurm/run_cutie.sbatch` zips its run directory and prints, at the end of `outputs/slurm/cutie_<JOBID>.out`, the `scp` line for the zip, the `Expand-Archive` line to unpack it into the laptop's `outputs/`, and the upload line for the filled `review.xlsx` (section 5).
 
-```bash
-cd ~/Balbi/yolo-sam2-lab-tracking
+`run_parallel.sh` (centroid) prints ready-made `scp` lines at the end of the job log (`outputs/slurm/pipeline_<JOBID>.out`). They look like this (PowerShell):
 
-sbatch --job-name=chunk0 --partition=gpu_cuda --qos=gpu --gres=gpu:1 \
-  --cpus-per-task=8 --mem=32G --time=06:00:00 \
-  --output=outputs/slurm/chunk_0_%j.out --error=outputs/slurm/chunk_0_%j.err \
-  --wrap='module load python/3.10.4-gcccore-11.3.0 && source .venv/bin/activate && \
-  python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  --start-frame 0 --end-frame 7500 --chunk-id 0 \
-  video_path=data/raw/original_120s.avi contacts.enabled=true'
-
-sbatch --job-name=chunk1 --partition=gpu_cuda --qos=gpu --gres=gpu:1 \
-  --cpus-per-task=8 --mem=32G --time=06:00:00 \
-  --output=outputs/slurm/chunk_1_%j.out --error=outputs/slurm/chunk_1_%j.err \
-  --wrap='module load python/3.10.4-gcccore-11.3.0 && source .venv/bin/activate && \
-  python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  --start-frame 7500 --end-frame 15000 --chunk-id 1 \
-  video_path=data/raw/original_120s.avi contacts.enabled=true'
-
-# Repeat for chunks 2, 3, etc. adjusting --start-frame, --end-frame, --chunk-id
-
-# Monitor
-squeue -u $USER
-tail -f outputs/slurm/chunk_0_*.out
-
-# When all done, merge
-ls -d outputs/runs/*chunk*
-python scripts/merge_chunks.py outputs/runs/*_reference_chunk*/
+```powershell
+scp uqcvaras@bunya.rcc.uq.edu.au:/scratch/user/uqcvaras/computer-vision-tracking/outputs/runs/<batch>/overlays/<name>_merged.avi C:/Users/uqcvaras/Downloads/computer-vision-tracking/outputs/
+scp uqcvaras@bunya.rcc.uq.edu.au:/scratch/user/uqcvaras/computer-vision-tracking/outputs/runs/<batch>/contacts_<batch>.tar.gz C:/Users/uqcvaras/Downloads/computer-vision-tracking/outputs/
 ```
+
+Whole batch folder: add `-r` and point at `outputs/runs/<batch>`. Each `scp` costs one password + push; for many files use WinSCP.
+
+List what is there first: `ls -lt ~/computer-vision-tracking/outputs/runs/`.
 
 ---
 
-## `run_parallel.sh` Reference
+## `run_parallel.sh` reference
 
-### Arguments
+Runs inside an allocation with N GPUs (interactive, or via `scripts/run_pipeline.sbatch`). Centroid pipeline only: `cutie_composite` holds the whole video in memory and has no chunk mode, so it never goes through this runner.
 
 | Arg | Description | Default |
 |-----|-------------|---------|
 | `$1` | Video path | (required) |
-| `$2` | Number of chunks/GPUs | `4` |
-| `$3` | Config file | `configs/hpc_reference.yaml` |
-| `$4` | Extra overrides (space-separated) | none |
-| `$5` | Pipeline name | `reference` |
+| `$2` | Number of chunks = GPUs | `3` (clamped to the GPUs visible) |
+| `$3` | Config file | `configs/hpc_centroid.yaml` |
+| `$4` | Extra overrides (space-separated `key=value`) | none |
+| `$5` | Pipeline name, resolves to `src.pipelines.<name>.run` | `centroid` |
 
-### Examples
+For the centroid pipeline it adds `contacts.enabled=true` by itself.
 
 ```bash
-# Default: 4 chunks, reference pipeline
-bash scripts/run_parallel.sh data/raw/original_120s.avi
-
-# 2 chunks (if only 2 GPUs available)
-bash scripts/run_parallel.sh data/raw/original_120s.avi 2
-
-# Custom config
-bash scripts/run_parallel.sh data/raw/original_120s.avi 4 configs/hpc_reference.yaml
-
-# With extra overrides
-bash scripts/run_parallel.sh data/raw/original_120s.avi 4 configs/hpc_reference.yaml "detection.confidence=0.3"
-
-# Centroid pipeline
-bash scripts/run_parallel.sh data/raw/original_120s.avi 4 configs/hpc_centroid.yaml "" centroid
-
-# Centroid with contacts
-bash scripts/run_parallel.sh data/raw/original_120s.avi 2 configs/hpc_centroid.yaml "contacts.enabled=true" centroid
+bash scripts/run_parallel.sh data/raw/original.mp4                 # 3 chunks, centroid
+bash scripts/run_parallel.sh data/raw/original.mp4 4               # 4 chunks
+bash scripts/run_parallel.sh data/raw/original.mp4 4 configs/hpc_centroid.yaml "detection.confidence=0.3"
+bash scripts/run_parallel.sh data/raw/multirat.avi 2 configs/hpc_isolated_composite.yaml "" isolated_composite
 ```
 
-### What It Does (step by step)
+What it does:
 
-1. **Creates batch directory** with timestamp: `outputs/runs/2026-02-27_141500_reference_batch/`
-2. **Reads video metadata** (total frames, FPS, resolution) using OpenCV
-3. **Divides frames** into N equal chunks (e.g., 30000 / 4 = 7500 per chunk)
-4. **Launches N processes** in parallel, each with `CUDA_VISIBLE_DEVICES=<gpu_id>`
-5. **Waits** for all chunks, reports timing per chunk
-6. **Finds run directories** by parsing logs (no collisions with previous runs)
-7. **Merges results** via `scripts/merge_chunks.py` (video + contacts + logs)
-8. **Compresses contacts** into `contacts_<batch_id>.tar.gz`
-9. **Prints download commands** (scp) for the merged video and contacts
+1. Counts the GPUs with `nvidia-smi -L` and clamps the chunk count to it.
+2. Creates `outputs/runs/<timestamp>_centroid_batch/` (on scratch through the symlink).
+3. Reads total frames, FPS and resolution with OpenCV and splits the frames evenly.
+4. Launches one `python -m src.pipelines.centroid.run` per chunk with `CUDA_VISIBLE_DEVICES=<i>`.
+5. Shows a live progress bar per chunk with an ETA (parsed from the chunk logs).
+6. Finds each chunk's run directory from its log, then runs `scripts/merge_chunks.py` (ffmpeg stream copy for the video, frame-offset merge for the contact CSVs).
+7. Compresses `contacts/` into `contacts_<batch>.tar.gz`.
+8. Prints the `scp` download commands using `BUNYA_USER`, `BUNYA_HOST` and `BUNYA_LOCAL_DIR` from `scripts/bunya_env.sh`.
 
-### Sample Output
-
-```
-Analyzing video: data/raw/original_120s.avi
-  Resolution: 640x480
-  FPS: 25.0
-  Total frames: 30000
-  Duration: 1200.0s (20.0 min)
-
-=== Parallel Execution Plan ===
-  Batch ID:   2026-02-27_141500_reference_batch
-  Batch dir:  outputs/runs/2026-02-27_141500_reference_batch
-  Config:     configs/hpc_reference.yaml
-  Video:      data/raw/original_120s.avi
-  Frames:     30000
-  Chunks:     4
-  Per chunk:  ~7500 frames
-
-  Chunk 0: frames 0 -> 7500 (GPU 0)
-  Chunk 1: frames 7500 -> 15000 (GPU 1)
-  Chunk 2: frames 15000 -> 22500 (GPU 2)
-  Chunk 3: frames 22500 -> 30000 (GPU 3)
-
-All 4 chunks launched. Waiting...
-  Monitor: tail -f outputs/runs/.../logs/chunk_0.log
-
-  Chunk 0: DONE (12m 34s)
-  Chunk 1: DONE (11m 58s)
-  Chunk 2: DONE (12m 15s)
-  Chunk 3: DONE (11m 42s)
-
-  Total time: 12m 34s
-
-=== All chunks completed. Merging... ===
-
-============================================================
-  BATCH COMPLETE: 2026-02-27_141500_reference_batch
-  TOTAL TIME:     12m 34s
-  BATCH DIR:      /home/s4948012/Balbi/.../2026-02-27_141500_reference_batch
-  MERGED VIDEO:   /home/s4948012/Balbi/.../reference_sam2.1_hiera_large_2026-02-27_merged.avi
-  CONTACTS:       /home/s4948012/Balbi/.../contacts_2026-02-27_141500_reference_batch.tar.gz
-============================================================
-
-# Download results (PowerShell):
-scp s4948012@bunya.rcc.uq.edu.au:/home/.../reference_sam2.1_hiera_large_2026-02-27_merged.avi \
-  "C:\Users\CatherineVaras\Downloads\yolo-sam2-lab-tracking\outputs\"
-scp s4948012@bunya.rcc.uq.edu.au:/home/.../contacts_2026-02-27_141500_reference_batch.tar.gz \
-  "C:\Users\CatherineVaras\Downloads\yolo-sam2-lab-tracking\outputs\"
-```
-
----
-
-## Output Structure
+## Output structure
 
 ```
-outputs/runs/2026-02-27_141500_reference_batch/
+outputs/runs/<timestamp>_centroid_batch/      (on scratch, via the outputs/runs symlink)
 ├── chunks/
-│   ├── *_reference_chunk0/
+│   ├── <timestamp>_centroid_chunk0/
 │   │   ├── config_used.yaml
-│   │   ├── overlays/
-│   │   │   └── reference_sam2.1_hiera_large_2026-02-27.avi
-│   │   ├── contacts/
-│   │   │   ├── contacts_per_frame.csv
-│   │   │   ├── contact_bouts.csv
-│   │   │   └── session_summary.json
-│   │   └── logs/
-│   │       └── run.log
-│   ├── *_reference_chunk1/
-│   ├── *_reference_chunk2/
-│   └── *_reference_chunk3/
+│   │   ├── overlays/centroid_<model>_<date>.avi
+│   │   ├── contacts/   contacts_per_frame.csv, contact_bouts.csv, session_summary.json
+│   │   └── logs/run.log
+│   ├── <timestamp>_centroid_chunk1/
+│   └── <timestamp>_centroid_chunk2/
 ├── overlays/
-│   └── reference_sam2.1_hiera_large_2026-02-27_merged.avi   <- FINAL VIDEO
+│   └── centroid_<model>_<date>_merged.avi    <- final video
 ├── contacts/
-│   ├── contacts_per_frame.csv          <- all frames combined (raw)
-│   ├── contact_bouts.csv               <- all bouts combined (raw)
-│   ├── session_summary.json            <- aggregated totals (raw)
-│   ├── contacts_real_per_frame.csv     <- post-processed per-frame labels
-│   ├── contacts_real_events.csv        <- clean events with MM:SS timestamps
-│   ├── session_summary_real.json       <- post-processing metadata + comparison
-│   ├── event_log.txt                   <- human-readable event log for validation
-│   └── reports/
-│       ├── timeline_comparison.png     <- raw vs real ethogram timeline
-│       ├── duration_by_type.png        <- total seconds per contact type
-│       ├── events_by_type.png          <- event count per contact type
-│       ├── event_duration_distribution.png <- duration histograms
-│       ├── comparison_by_type.csv      <- per-type statistics
-│       └── comparison_global.csv       <- global statistics
-├── contacts_2026-02-27_141500_reference_batch.tar.gz        <- compressed (includes all above)
+│   ├── contacts_per_frame.csv                <- all frames combined
+│   ├── contact_bouts.csv                     <- all bouts combined
+│   ├── session_summary.json                  <- aggregated totals
+│   └── (post-processed files and reports/ when the post-processing step is enabled)
+├── contacts_<timestamp>_centroid_batch.tar.gz
 ├── config_used.yaml
 └── logs/
-    ├── chunk_0.log
-    ├── chunk_1.log
-    ├── chunk_2.log
-    ├── chunk_3.log
-    └── run.log                     <- concatenated logs from all chunks
+    ├── chunk_0.log  chunk_1.log  chunk_2.log
+    └── run.log                               <- all chunk logs concatenated
 ```
 
----
-
-## First-Time Setup
-
-Only needed once when setting up the project on Bunya.
-
-### Python + venv
-
-```bash
-cd ~/Balbi/yolo-sam2-lab-tracking
-module load python/3.10.4-gcccore-11.3.0
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-```
-
-### PyTorch (CUDA 11.8)
-
-```bash
-export TMPDIR=$HOME/tmp && mkdir -p $TMPDIR
-python -m pip install --no-cache-dir torch torchvision torchaudio \
-  --index-url https://download.pytorch.org/whl/cu118
-
-# Validate
-python -c "import torch; print('CUDA:', torch.cuda.is_available())"
-```
-
-### SAM2 (required for reference, sam2_yolo, sam2_video)
-
-```bash
-# Clone SAM2 into models directory
-git clone https://github.com/facebookresearch/segment-anything-2.git models/sam2/segment-anything-2
-
-# Install SAM2 package
-python -m pip install ./models/sam2/segment-anything-2
-
-# Install project dependencies (filter out SAM2 editable line)
-grep -v "^-e ./models/sam2/segment-anything-2" requirements.txt > requirements.fixed.txt
-python -m pip install -r requirements.fixed.txt
-pip install ultralytics opencv-python roboflow
-
-# Download SAM2 checkpoints (tiny + large)
-cd models/sam2/segment-anything-2/checkpoints && bash download_ckpts.sh
-cd ~/Balbi/yolo-sam2-lab-tracking
-
-# Verify
-python -c "from sam2.build_sam import build_sam2; print('SAM2 OK')"
-```
-
-### SAM3 (optional — for sam3 pipeline)
-
-SAM3 requires **Python 3.12** and **PyTorch 2.7+** (CUDA 12.6).
-If Bunya's Python module is 3.10, you need a separate venv.
-
-```bash
-# Option A: Same venv (if Bunya has Python 3.12 module)
-module load python/3.12.x-gcccore-xx.x.x  # check: module avail python
-git clone https://github.com/facebookresearch/sam3.git models/sam3/sam3
-python -m pip install ./models/sam3/sam3
-
-# Option B: Use conda for Python 3.12 (if no system module)
-module load anaconda3
-conda create -n sam3 python=3.12 -y
-conda activate sam3
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-git clone https://github.com/facebookresearch/sam3.git models/sam3/sam3
-pip install -e ./models/sam3/sam3
-grep -v "^-e ./models/sam2/segment-anything-2" requirements.txt > requirements.fixed.txt
-pip install -r requirements.fixed.txt
-
-# Download SAM3 checkpoint (~3.2GB)
-export TMPDIR=$HOME/tmp && mkdir -p $TMPDIR
-pip install huggingface_hub
-huggingface-cli login   # paste HF token
-huggingface-cli download facebook/sam3 sam3.pt --local-dir models/sam3/
-
-# Verify
-python -c "from sam3.model_builder import build_sam3_image_model; print('SAM3 OK')"
-```
-
-### Running SAM3 on Bunya
-
-```bash
-# Single GPU test (2 min clip)
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --time=02:00:00 --mem=64G
-srun --pty bash
-cd ~/Balbi/yolo-sam2-lab-tracking
-# activate the SAM3 environment (conda or venv)
-python -m src.pipelines.sam3.run --config configs/hpc_sam3.yaml \
-    video_path=data/raw/original_120s.avi scan.max_frames=300
-```
-
----
-
-## Transfer Files
-
-### Upload video to Bunya (PowerShell)
-
-```powershell
-scp C:\Users\CatherineVaras\Downloads\yolo-sam2-lab-tracking\data\raw\original.mp4 `
-  s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/data/raw/
-```
-
-### Check available runs (Bunya)
-
-```bash
-ls -lt ~/Balbi/yolo-sam2-lab-tracking/outputs/runs/
-```
-
-### Download overlay video (PowerShell)
-
-```powershell
-# The scp command is printed automatically by run_parallel.sh
-# Example:
-scp s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/outputs/runs/2026-02-27_141500_reference_batch/overlays/reference_sam2.1_hiera_large_2026-02-27_merged.avi `
-  "C:\Users\CatherineVaras\Downloads\yolo-sam2-lab-tracking\outputs\"
-```
-
-### Download contacts (PowerShell)
-
-```powershell
-scp s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/outputs/runs/2026-02-27_141500_reference_batch/contacts_2026-02-27_141500_reference_batch.tar.gz `
-  "C:\Users\CatherineVaras\Downloads\yolo-sam2-lab-tracking\outputs\"
-```
-
-### Download entire batch (PowerShell)
-
-```powershell
-scp -r s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/outputs/runs/2026-02-27_141500_reference_batch `
-  "C:\Users\CatherineVaras\Downloads\yolo-sam2-lab-tracking\outputs\"
-```
-
----
+See `docs/contacts/` for the contact file formats.
 
 ## Monitoring
 
-### During `run_parallel.sh`
-
-If nothing appears after launching, the script is analyzing the video (reading frame count with OpenCV). Wait a moment.
+### Batch job
 
 ```bash
-# Check if Python processes are running
-ps aux | grep python | grep reference
-
-# Find latest batch directory
-LAST=$(ls -dt outputs/runs/*_batch/ 2>/dev/null | head -1)
-echo "Latest batch: $LAST"
-
-# Check if chunk logs exist yet
-ls -la $LAST/logs/
-
-# Watch a chunk log in real-time
-tail -f $LAST/logs/chunk_0.log
-
-# Quick status of all chunks
-for f in $LAST/logs/chunk_*.log; do echo "=== $(basename $f) ==="; tail -3 "$f"; done
-
-# Check GPU utilization
-nvidia-smi
+squeue -u $USER                                   # state, node, elapsed
+tail -f outputs/slurm/pipeline_<JOBID>.out        # the run_parallel.sh progress display
+sacct -j <JOBID> --format=JobID,State,Elapsed,MaxRSS,AllocTRES%40   # after it finished
 ```
 
-### During `sbatch` jobs
+### Interactive `run_parallel.sh`
+
+If nothing appears right after launching, the script is reading the frame count. Wait a moment.
 
 ```bash
-# Check job status
-squeue -u $USER
-
-# View chunk output
-cat outputs/slurm/chunk_0_*.out
-
-# Follow a log in real-time
-tail -f outputs/slurm/chunk_0_*.out
-
-# Check disk usage
-du -sh outputs/runs/
+LAST=$(ls -dt outputs/runs/*_batch/ 2>/dev/null | head -1); echo "$LAST"
+ls -la "$LAST/logs/"
+tail -f "$LAST/logs/chunk_0.log"
+for f in "$LAST"/logs/chunk_*.log; do echo "=== $(basename "$f") ==="; tail -3 "$f"; done
+nvidia-smi                                        # GPU utilisation
+ps aux | grep "src.pipelines" | grep -v grep
 ```
 
----
-
-## GPU vs CPU — Choosing `models.device`
-
-The `models.device` parameter in the YAML config controls where models run:
-
-| Value | Behavior |
-|-------|----------|
-| `"auto"` | Uses GPU if CUDA is available, falls back to CPU |
-| `"cuda"` | Forces GPU (fails if no CUDA) |
-| `"cpu"` | Forces CPU (always works, but SAM2 is very slow) |
-
-### If you got CPU on Bunya
-
-If you see `Using device: cpu`, check:
-1. You're on a **GPU node** (not the login node) — request one with `salloc`
-2. CUDA module is loaded — run `module load cuda` before activating venv
-3. PyTorch has CUDA — reinstall with `pip install torch --index-url https://download.pytorch.org/whl/cu118`
-
-Quick diagnostic:
-```bash
-nvidia-smi                                                    # Should show GPU
-python -c "import torch; print('CUDA:', torch.cuda.is_available())"  # Should say True
-```
-
-## CLI Overrides
-
-Any YAML parameter can be overridden with `key.subkey=value`:
+## Slurm commands
 
 ```bash
-# GPU + tiny model + only 300 frames
-python -m src.pipelines.reference.run --config configs/local_reference.yaml \
-    models.device=cuda scan.max_frames=300
-
-# Change YOLO confidence
-python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-    detection.confidence=0.4
-
-# Use a different video
-python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-    video_path=data/raw/another_video.mp4
-
-# Enable contacts
-python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-    contacts.enabled=true
+squeue -u $USER                    # my jobs (PD pending, R running)
+squeue -u $USER --start            # estimated start time of pending jobs
+scancel <JOB_ID>                   # cancel one job (or an array task: scancel <JOB_ID>_<task>)
+sacct -u $USER -S today            # history for today
+sinfo -p gpu_cuda                  # partition state
+rquota                             # home and scratch quotas
+module avail miniforge             # conda module versions
+nvidia-smi -L                      # GPUs in the current allocation
+hostname                           # bunyaN = login node, anything else = compute node
 ```
 
-### Common overrides
+## Recovery (finding the last batch)
 
-| Override | Effect |
-|----------|--------|
-| `models.device=cuda` | Force GPU |
-| `models.device=cpu` | Force CPU |
-| `scan.max_frames=300` | Process only 300 frames |
-| `scan.max_frames=null` | Process entire video |
-| `detection.confidence=0.4` | Raise YOLO detection threshold |
-| `detection.keypoint_min_conf=0.5` | Only high-confidence keypoints |
-| `video_path=data/raw/video.mp4` | Use a different input video |
-| `contacts.enabled=true` | Enable contact classification |
-
----
-
-## Other Run Options
+If a session dropped or you need previous results:
 
 ```bash
-# 5 min clip test
-python scripts/trim_video.py data/raw/original.mp4 --duration 300
-python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  video_path=data/raw/original_300s.avi contacts.enabled=true
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh && bunya_activate
+LAST=$(ls -dt outputs/runs/*_batch/ 2>/dev/null | head -1); echo "Batch: $LAST"
 
-# Full video (no trimming, single GPU)
-python -m src.pipelines.reference.run --config configs/hpc_reference.yaml \
-  video_path=data/raw/original.mp4 contacts.enabled=true
+ls "$LAST/overlays/" "$LAST/contacts/" 2>/dev/null || echo "not merged yet"
+for f in "$LAST"/logs/chunk_*.log; do echo "=== $(basename "$f") ==="; tail -3 "$f"; done
 
-# sam2_yolo pipeline (uses BoT-SORT tracking instead of IdentityMatcher)
-python -m src.pipelines.sam2_yolo.run --config configs/hpc_full.yaml \
-  video_path=data/raw/original_120s.avi contacts.enabled=true
+# merge by hand if every chunk finished but the merge did not run
+python scripts/merge_chunks.py "$LAST"/chunks/*_chunk*/ -o "$LAST"
 
-# Contacts only analysis (fast, no SAM2)
-python scripts/analyze_contacts.py --config configs/hpc_full.yaml contacts.enabled=true
+# verify the merged video
+python -c "import cv2,glob; v=glob.glob('$LAST/overlays/*_merged.avi')[0]; c=cv2.VideoCapture(v); n=int(c.get(cv2.CAP_PROP_FRAME_COUNT)); print(v, n, 'frames', round(n/c.get(cv2.CAP_PROP_FPS),1), 's')"
+
+# re-create the contacts tarball
+tar -czf "$LAST/contacts_$(basename "$LAST").tar.gz" -C "$LAST" contacts/
 ```
 
----
+A batch job that hit its walltime is simply resubmitted with a longer `--time`; chunk outputs of the aborted run can be deleted.
 
-## Slurm Admin Commands
+## Disk quota
 
 ```bash
-# See available partitions and nodes
-sinfo -p gpu_cuda
-
-# See GPUs across cluster nodes
-sinfo -p gpu_cuda -N -l
-
-# See your running/pending jobs
-squeue -u $USER
-
-# Cancel a specific job
-scancel <JOB_ID>
-
-# Interactive shell on allocated node
-srun --pty bash
-
-# Check GPU status
-nvidia-smi
-
-# List GPU devices
-nvidia-smi -L
-
-# Count available GPUs (not MIG sub-devices)
-nvidia-smi -L | grep -c "^GPU"
+rquota                                              # the numbers that matter
+du -sh ~/.conda ~/.cache 2>/dev/null                # home: conda env (~8 GB) + caches
+du -sh outputs/runs/* 2>/dev/null | sort -h | tail  # scratch: old batches
+conda clean -a -y                                   # drop the conda package cache
+rm -rf outputs/runs/<old batch>                     # keep the merged video + contacts tar, drop the rest
 ```
 
----
+Home is 50 GB and is never increased: conda env, SAM2 checkpoints and the repo fit comfortably as long as no videos or run outputs land there. Scratch is 300 GB and purges files idle for 90 days, which is why `data/raw` and `outputs/runs` point there.
 
-## Recovery (Finding Last Batch)
-
-If a process was accidentally stopped, or you need to find previous results:
+Full reset of the Bunya side (keeps nothing in home):
 
 ```bash
-# Find the latest batch directory
-LAST=$(ls -dt outputs/runs/*_batch/ 2>/dev/null | head -1)
-echo "Batch: $LAST"
-
-# Check if merged outputs exist
-ls "$LAST/overlays/" 2>/dev/null && ls "$LAST/contacts/" 2>/dev/null || echo "No merged yet"
-
-# Check chunk logs for errors
-for f in $LAST/logs/chunk_*.log; do echo "=== $(basename $f) ==="; tail -3 "$f"; done
-
-# Verify video integrity
-source .venv/bin/activate
-python -c "import cv2; c=cv2.VideoCapture('$LAST/overlays/reference_sam2.1_hiera_large_2026-02-27_merged.avi'); print(f'{int(c.get(cv2.CAP_PROP_FRAME_COUNT))} frames, {c.get(cv2.CAP_PROP_FRAME_COUNT)/c.get(cv2.CAP_PROP_FPS):.1f}s')"
-
-# Manually compress contacts if needed
-tar -czf "$LAST/contacts.tar.gz" -C "$LAST" contacts/
-ls -lh "$LAST/contacts.tar.gz"
-
-# Check if Python processes are still running
-ps aux | grep python | grep reference
+rm -rf ~/computer-vision-tracking ~/.conda/envs/rattrack
+# then repeat section 3; videos on scratch are untouched
 ```
 
----
+## Roboflow tooling on Bunya
 
-## Disk Quota
+`roboflow/run_extract.sh` (frame extraction for labelling) and `roboflow/train_yolo_pose.sbatch` (YOLO pose retraining) use the same `bunya_env.sh` setup; see `roboflow/TRAINING_GUIDE.md`. The sbatch files of the removed pipelines and the debug runners were deleted in the October 2026 cleanup; git history keeps them.
 
 ```bash
-# Check disk usage
-du -sh $HOME
-du -sh $HOME/.cache $HOME/.local
-
-# Check pipeline outputs size
-du -sh outputs/runs/
+bash roboflow/run_extract.sh data/raw/original.mp4 2     # inside bunya_gpu_shell 2 2
 ```
-
-> GPU flags (`--gres`, `--time`, `--mem`) do not affect disk quota.
-
-If quota is full — **nuclear reset** (last resort, destroys everything):
-
-```bash
-rm -rf ./* ./.??*
-mkdir -p ~/Balbi && cd ~/Balbi
-git clone https://github.com/catherinevaraspadilla-commits/yolo-sam2-lab-tracking.git
-```
-
----
-
-## Roboflow Extraction
-
-Extract annotated frames from a video for Roboflow labeling:
-
-```bash
-bash roboflow/run_extract.sh data/raw/original.mp4 2
-```
-
----
 
 ## Troubleshooting
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| `PD` in squeue | Waiting for GPU | Wait, or reduce `--gres=gpu:N` |
-| `Exit 1` on a chunk | Python error | Check `logs/chunk_N.log` |
-| `CUDA out of memory` | Too many processes per GPU | Use 1 chunk per GPU (default) |
-| `git pull` conflicts | Local changes on Bunya | `git stash && git pull && git stash pop` |
-| `salloc` hangs | No GPUs available | Try fewer GPUs or off-peak hours |
-| Video not found in merge | Old naming | Fixed: merge finds any `*.avi`/`*.mp4` |
-| `sbatch: error: Unable to open file` | Wrong directory | `cd ~/Balbi/yolo-sam2-lab-tracking` first |
-| `AttributeError: NoneType` | Old code on Bunya | `git pull` to get latest fixes |
+| `Invalid account or account/partition combination specified` | No account string yet, or a wrong one | Section 1: `groups`, then `export BUNYA_ACCOUNT=a_...` |
+| `bunya_env: WARNING: no account string yet` | Same | Same |
+| Okta push never arrives | Okta Verify not enrolled, or notifications off | Fix Okta Verify in the UQ Okta portal; the push waits 5 min |
+| `Permission denied (publickey,keyboard-interactive)` | Wrong password, or ssh was told to use keys only | Plain `ssh uqcvaras@bunya.rcc.uq.edu.au` and type the UQ password |
+| `sbatch: error: Unable to open ... outputs/slurm/...` | Submitted from the wrong directory, or `outputs/slurm` missing | `cd ~/computer-vision-tracking && source scripts/bunya_env.sh` |
+| `module: command not found` | Non-login shell | `bash -l`, or `source scripts/bunya_env.sh` (it loads Lmod) |
+| `conda env 'rattrack' not found` | Setup never ran | Section 3 |
+| `Using device: cpu` or `cuda=False` | On a login node, or a torch build newer than the driver | Run on a GPU node; compare `nvidia-smi` with the index in `bunya_setup.sh` (`TORCH_INDEX=...` to change it) and re-run setup |
+| Job pending for a long time (`Resources`, `Priority`) | 3-4 GPUs on one node are scarce | One GPU (`slurm/run_cutie.sbatch`), 2 GPUs, or the array script (section 8) |
+| `ERROR: HF_TOKEN is empty` | No Hugging Face token | `echo hf_... > ~/.hf_token && chmod 600 ~/.hf_token`, then re-source `bunya_env.sh` |
+| `401`, `403` or `GatedRepoError` loading `facebook/sam3` | Terms not accepted with the token's account | Accept them at https://huggingface.co/facebook/sam3, re-run `bunya_setup.sh` |
+| `KeyError: 'sam3_video'` or `cannot import name 'Sam3VideoModel'` | transformers 4.x | `pip install -U "transformers>=5.0"` inside the env (setup does this) |
+| CUTIE install fails building `cchardet`, `netifaces` or `PySide6` | Cutie's GUI/training extras | Setup falls back to `--no-deps` plus the inference packages by itself; re-run it |
+| `Phase 1 complete. Handoff: n/N rats` with `n < N` | SAM3 missed an animal in the first frames | Check the animal count passed to `run_cutie.sbatch`; try `OVERRIDES="sam3.score_threshold=0.3"` or another `sam3.sam3_phase_frames` |
+| `No events/bouts table with pair_key found` from `validate_contacts.py` | The clip produced no contact events | Nothing to validate: use a longer clip, or check `Total bouts` in the log |
+| `QOSMaxGRESPerJob` | More than 4 GPUs requested | `--gres=gpu:4` at most |
+| Process killed on a login node | pip, conda or inference on `bunyaN` | `bunya_gpu_shell` |
+| `CUDA out of memory` | Several processes on one GPU | One chunk per GPU (the default) |
+| `git pull` conflicts on Bunya | Edits made on Bunya | `git stash && git pull && git stash pop`, or discard with `git checkout -- .` |
+| `git status` shows `data/raw` | Setup never ran, or `.git/info/exclude` was lost | Re-run `bash scripts/bunya_setup.sh` |
+| Files vanished from `data/raw` or `outputs/runs` | 90-day scratch purge | Re-upload; keep master copies locally |
+| Exit 1 on a chunk | Python error | `logs/chunk_N.log` in the batch dir |

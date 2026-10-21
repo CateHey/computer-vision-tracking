@@ -71,7 +71,7 @@ def load_sam3_model(device: str):
 
     logger.info("Loading SAM3 model from facebook/sam3...")
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    model = Sam3VideoModel.from_pretrained("facebook/sam3", torch_dtype=dtype).to(device)
+    model = Sam3VideoModel.from_pretrained("facebook/sam3", dtype=dtype).to(device)
     processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
     logger.info("SAM3 model loaded.")
     return model, processor

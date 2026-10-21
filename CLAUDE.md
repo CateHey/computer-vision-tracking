@@ -32,8 +32,10 @@ Rear/anogenital point = `tail_start` (not `tail_base`).
 
 ## Other Pipelines
 
-`centroid` (older SAM2 centroid pipeline), `sam3_composite`, `sam3_reset`, `isolated_composite`, `samurai*`
-in `src/pipelines/`. Older ones (reference, sam3, sam2_yolo, sam2_video) are in `src/pipelines/deprecated/`.
+`centroid` (older SAM2 centroid pipeline, the only one with chunked multi-GPU runs), `isolated_composite` and
+`sam3_composite` (both imported by `cutie_composite`), `sam3_reset`, `samurai*` in `src/pipelines/`.
+The reference, sam3, sam2_yolo and sam2_video pipelines, their configs, the debug scripts, the tracked run
+outputs and the unused YOLO weights were deleted in the October 2026 cleanup (git history keeps them).
 
 **Never use YOLO box prompts for SAM2** (arbitrary detection order causes identity swaps; centroid-only prompting
 was swap-free). See `docs/centroid_pipeline.md` "Lessons Learned".
@@ -49,8 +51,10 @@ was swap-free). See `docs/centroid_pipeline.md` "Lessons Learned".
 | Validation | `scripts/validate_contacts.py`, `configs/validation.yaml` |
 | YOLO inference / weights | `src/common/yolo_inference.py`, `models/yolo/yolo26_v11.pt` |
 | Configs | `configs/local_cutie_composite.yaml`, `configs/hpc_cutie_composite.yaml` |
+| Bunya settings (account string, paths, conda env, HF token) | `scripts/bunya_env.sh` |
+| Bunya first-time setup | `scripts/bunya_setup.sh` |
+| Bunya batch job: cutie_composite + validation sample (1 GPU) | `slurm/run_cutie.sbatch` |
 | Old centroid pipeline / parallel runner | `src/pipelines/centroid/`, `scripts/run_parallel.sh`, `scripts/merge_chunks.py` |
-| Deprecated pipelines / configs | `src/pipelines/deprecated/`, `configs/deprecated/` |
 
 ## Running
 
@@ -62,7 +66,9 @@ python -m src.pipelines.cutie_composite.run --config configs/local_cutie_composi
 python -m src.pipelines.cutie_composite.run --config configs/local_cutie_composite.yaml \
     video_path=data/raw/multirat.avi detection.max_animals=6 scan.max_frames=900
 
-# HPC (Bunya, one GPU, one process; see final_documentation/03 section 3.4)
+# HPC (Bunya, one GPU, one process; see docs/setup/hpc.md). Source scripts/bunya_env.sh first:
+# it exports the Slurm account string and reads ~/.hf_token
+sbatch slurm/run_cutie.sbatch data/raw/<video> <n_animals> [seconds]   # setup if missing + pipeline + validation sample + zip
 python -m src.pipelines.cutie_composite.run --config configs/hpc_cutie_composite.yaml video_path=data/raw/<video>
 
 # Re-run post-processing only
@@ -88,6 +94,7 @@ flicker rate by duration, and min-duration / min-score threshold tables. Tests: 
 ## Conventions
 
 - Branches: work on `develop`
+- Bunya: staff account `uqcvaras`; every job needs the Slurm account string `a_<group>` (see `docs/setup/hpc.md`)
 - All configs in `configs/` — no hardcoded thresholds in code
 - CLI overrides: `key.subkey=value` (e.g., `detection.confidence=0.4`)
 - Output to `outputs/runs/<timestamp>_<tag>/`

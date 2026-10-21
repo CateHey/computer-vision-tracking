@@ -1,9 +1,10 @@
-#!/bin/bash
+#!/bin/bash --login
 ###############################################################################
 # SLURM BATCH SCRIPT - YOLO Pose Training on Bunya HPC
 ###############################################################################
 #
-# Submit with:   sbatch train_yolo_pose.sbatch
+# Submit with:   cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+#                sbatch roboflow/train_yolo_pose.sbatch
 # Monitor with:  squeue -u $USER
 # Cancel with:   scancel <JOB_ID>
 # View logs:     tail -f outputs/slurm/yolo_train_<JOBID>.out
@@ -28,18 +29,13 @@
 # Create output directory for Slurm logs
 mkdir -p outputs/slurm
 
-# Navigate to project directory
-cd ~/Balbi/yolo-sam2-lab-tracking
+# Navigate to project directory and activate the Bunya conda env
+cd "${BUNYA_PROJECT_DIR:-$HOME/computer-vision-tracking}"
+# shellcheck disable=SC1091
+source scripts/bunya_env.sh
+bunya_activate
 
-# Load Python module (Bunya-specific)
-module load python/3.10.4-gcccore-11.3.0
-
-# Activate the project virtual environment
-source .venv/bin/activate
-
-# Set temp directory (avoids /tmp quota issues on HPC)
-export TMPDIR=$HOME/tmp
-mkdir -p $TMPDIR
+# $TMPDIR is created per job by Bunya (node-local, deleted when the job ends)
 
 # Print environment info for debugging
 echo "============================================"
@@ -58,7 +54,7 @@ echo "============================================"
 ###############################################################################
 
 # If you haven't copied train_yolo_pose.py to Bunya yet, do it first:
-#   scp train_yolo_pose.py s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/
+#   scp roboflow/train_yolo_pose.py uqcvaras@bunya.rcc.uq.edu.au:~/computer-vision-tracking/roboflow/
 
 ###############################################################################
 # 3. RUN TRAINING
@@ -108,12 +104,12 @@ if [ -d "$RESULTS_DIR" ]; then
     echo "============================================================"
     echo ""
     echo "# Download trained model to your local machine (PowerShell):"
-    echo "scp s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/$RESULTS_DIR/weights/best.pt \\"
-    echo "  \"C:\\Users\\CatherineVaras\\Downloads\\roboflow\\\""
+    echo "scp ${BUNYA_USER}@${BUNYA_HOST}:${BUNYA_PROJECT_DIR}/$RESULTS_DIR/weights/best.pt \\"
+    echo "  \"C:\\Users\\uqcvaras\\Downloads\\computer-vision-tracking\\roboflow\\\""
     echo ""
     echo "# Download full results archive:"
-    echo "scp s4948012@bunya.rcc.uq.edu.au:~/Balbi/yolo-sam2-lab-tracking/$ARCHIVE \\"
-    echo "  \"C:\\Users\\CatherineVaras\\Downloads\\roboflow\\\""
+    echo "scp ${BUNYA_USER}@${BUNYA_HOST}:${BUNYA_PROJECT_DIR}/$ARCHIVE \\"
+    echo "  \"C:\\Users\\uqcvaras\\Downloads\\computer-vision-tracking\\roboflow\\\""
 else
     echo "WARNING: Results directory not found at $RESULTS_DIR"
 fi

@@ -35,10 +35,9 @@ models/sleap/
 # --- External repos ---
 external/
 
-# --- Run outputs ---
-outputs/runs/
-outputs/slurm/
-outputs/olds/
+# --- Run outputs (nothing under outputs/ is committed; .gitkeep keeps the dir) ---
+outputs/*
+!outputs/.gitkeep
 
 # --- Legacy directories (migrated) ---
 bunya/
@@ -47,3 +46,10 @@ frames/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# --- Secrets ---
+.env
+
+# --- CUTIE checkout + weights (cloned by scripts/bunya_setup.sh) ---
+models/cutie/
+weights/

@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings: Bunya runs them with bash and
+# "bash^M: bad interpreter" is the symptom of a CRLF checkout.
+*.sh      text eol=lf
+*.sbatch  text eol=lf

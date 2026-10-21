@@ -275,15 +275,17 @@ python -m src.pipelines.centroid.run --config configs/local_centroid.yaml
 ### HPC (Bunya — multi-GPU parallel)
 
 ```bash
-ssh s4948012@bunya.rcc.uq.edu.au
-cd ~/Balbi/yolo-sam2-lab-tracking
+ssh uqcvaras@bunya.rcc.uq.edu.au
+cd ~/computer-vision-tracking
 git pull
-module load python/3.10.4-gcccore-11.3.0
-source .venv/bin/activate
+source scripts/bunya_env.sh          # account string, paths, bunya_activate
 
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:3 --cpus-per-task=8 --mem=64G --time=24:00:00
-srun --pty bash
+# Batch (recommended): 3 GPUs, merges the chunks, prints download commands in the log
+sbatch scripts/run_pipeline.sbatch data/raw/original_120s.avi
 
+# Interactive alternative
+bunya_gpu_shell 3 24                 # 3 GPUs, 24 h
+cd ~/computer-vision-tracking && source scripts/bunya_env.sh && bunya_activate
 bash scripts/run_parallel.sh data/raw/original_120s.avi
 ```
 

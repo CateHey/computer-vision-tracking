@@ -341,8 +341,13 @@ if [ -d "$BATCH_DIR/contacts" ]; then
 fi
 
 # --- Step 8: Print download commands ---
-REMOTE_USER="${USER:-s4948012}"
-REMOTE_HOST="bunya.rcc.uq.edu.au"
+# Remote identity and the Windows download folder come from scripts/bunya_env.sh
+if [ -f scripts/bunya_env.sh ]; then
+    # shellcheck disable=SC1091
+    source scripts/bunya_env.sh
+fi
+REMOTE_USER="${BUNYA_USER:-${USER:-uqcvaras}}"
+REMOTE_HOST="${BUNYA_HOST:-bunya.rcc.uq.edu.au}"
 ABS_BATCH_DIR="$(cd "$BATCH_DIR" && pwd)"
 
 # Find the merged video
@@ -357,7 +362,7 @@ if [ -n "$CONTACTS_TAR" ]; then
     ABS_CONTACTS="$(cd "$(dirname "$CONTACTS_TAR")" && pwd)/$(basename "$CONTACTS_TAR")"
 fi
 
-LOCAL_DIR="C:\\Users\\CatherineVaras\\Downloads\\yolo-sam2-lab-tracking\\outputs"
+LOCAL_DIR="${BUNYA_LOCAL_DIR:-C:\\Users\\uqcvaras\\Downloads\\computer-vision-tracking}\\outputs"
 
 echo ""
 echo "============================================================"

@@ -294,11 +294,16 @@ TOTAL_MINS=$((TOTAL_ELAPSED / 60))
 TOTAL_SECS=$((TOTAL_ELAPSED % 60))
 
 # --- Step 7: Print summary and download commands ---
-REMOTE_USER="${USER:-s4948012}"
-REMOTE_HOST="bunya.rcc.uq.edu.au"
+# Remote identity and the Windows download folder come from scripts/bunya_env.sh
+if [ -f scripts/bunya_env.sh ]; then
+    # shellcheck disable=SC1091
+    source scripts/bunya_env.sh
+fi
+REMOTE_USER="${BUNYA_USER:-${USER:-uqcvaras}}"
+REMOTE_HOST="${BUNYA_HOST:-bunya.rcc.uq.edu.au}"
 ABS_FRAMES_DIR="$(cd "$FRAMES_DIR" && pwd)"
 FRAME_COUNT=$(ls -1 "$FRAMES_DIR"/*.jpg 2>/dev/null | wc -l)
-LOCAL_DIR="C:\\Users\\CatherineVaras\\Downloads\\yolo-sam2-lab-tracking\\roboflow"
+LOCAL_DIR="${BUNYA_LOCAL_DIR:-C:\\Users\\uqcvaras\\Downloads\\computer-vision-tracking}\\roboflow"
 
 echo ""
 echo "============================================================"

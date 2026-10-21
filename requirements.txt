@@ -19,7 +19,7 @@ ultralytics
 hydra-core
 
 # --- SAM3 (via HuggingFace) ---
-transformers>=4.45.0
+transformers>=5.0      # SAM3 (Sam3VideoModel) ships in 5.x
 accelerate
 huggingface_hub
 av
@@ -31,9 +31,14 @@ openpyxl
 pyyaml
 python-dotenv
 
-# --- Annotation platform ---
-roboflow
+# --- Progress bars / Cutie config objects (imported directly by the pipeline) ---
+tqdm
+omegaconf
 
-# --- Utilities ---
-ipython
-notebook
+# --- CUTIE (cutie_composite tracker) is NOT on PyPI: scripts/bunya_setup.sh clones
+#     https://github.com/hkchengrex/Cutie into models/cutie and runs `pip install -e models/cutie`
+
+# --- Optional, not needed by the pipeline (install by hand when you need them) ---
+# roboflow      # labelling uploads (scripts/upload_to_roboflow.py); pulls opencv-python-headless next to opencv-python
+# ipython
+# notebook
