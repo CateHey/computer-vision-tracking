@@ -89,6 +89,13 @@ eval "$(conda shell.bash hook)"
 conda activate rattrack
 ```
 
+Shortcut, added once to `~/.bashrc` so every later login only needs `rat`:
+
+```bash
+echo 'alias rat="cd ~/computer-vision-tracking && module load miniforge/26.3.2-1 && eval \"\$(conda shell.bash hook)\" && conda activate rattrack"' >> ~/.bashrc
+source ~/.bashrc
+```
+
 ## Pending: Slurm account
 
 Without a Slurm account, `sbatch`, `salloc` and `srun` fail with
