@@ -200,7 +200,9 @@ Attempts so far:
 | 2026-10-21 | `sbatch --test-only slurm/run_cutie.sbatch ...` | `Invalid account or account/partition combination specified` |
 | 2026-10-21 | `sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2` | same error |
 | 2026-10-21 | old interactive way: `salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=02:00:00` | same error |
-| 2026-10-21 | minimal requests (no GPU, default partition) | (pending) |
+| 2026-10-21 | minimal request, no GPU, default partition: `salloc --time=00:01:00` | same error |
+
+Conclusion: no Slurm request of any kind is accepted. Only a group admin can fix it.
 
 If the interactive way gets a node (the prompt changes from `bunyaN` to a compute node),
 the pipeline runs by hand:
