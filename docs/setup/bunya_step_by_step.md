@@ -9,6 +9,8 @@ From PowerShell on the laptop. Asks for the UQ password, then an Okta Verify pus
 
 ```powershell
 ssh uqcvaras@bunya.rcc.uq.edu.au
+
+
 ```
 
 ## 2. Clone the repo (develop branch)
@@ -49,7 +51,19 @@ The full version is required. List the available ones with `module spider minifo
 
 ```bash
 module load miniforge/26.3.2-1
+which conda          # -> /sw/local/rocky8/noarch/rcc/software/miniforge/26.1.0-0/bin/conda
 ```
+
+`conda --version` may print nothing right after loading the module; `which conda` is the
+reliable check. The module also defines a helper `conda-activate` that just runs
+`eval "$(conda shell.bash hook)"` and activates the base env. The plain hook below does
+the same and is what the job scripts use.
+
+```bash
+eval "$(conda shell.bash hook)"     # enables "conda activate" in this shell
+```
+
+## 5. Create the environment
 
 (in progress)
 
