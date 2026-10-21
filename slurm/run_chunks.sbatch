@@ -20,7 +20,7 @@
 # task computes its own frame range from SLURM_ARRAY_TASK_ID.
 #
 # Usage (4 chunks; --qos=gpu runs at most 4 at once):
-#   cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+#   cd ~/computer-vision-tracking
 #   VIDEO=data/raw/original.mp4 sbatch --array=0-3 slurm/run_chunks.sbatch
 #
 # Extra overrides:
@@ -48,10 +48,10 @@ OVERRIDES="${OVERRIDES:-}"
 CONTACTS_FLAG=""
 case "$PIPELINE" in *centroid*) CONTACTS_FLAG="contacts.enabled=true" ;; esac
 
-cd "${BUNYA_PROJECT_DIR:-$HOME/computer-vision-tracking}"
-# shellcheck disable=SC1091
-source scripts/bunya_env.sh
-bunya_activate
+cd "$HOME/computer-vision-tracking"
+module load miniforge/26.3.2-1
+eval "$(conda shell.bash hook)"
+conda activate rattrack
 
 if [ -n "$VIDEO" ]; then
     OVERRIDES="video_path=$VIDEO $OVERRIDES"

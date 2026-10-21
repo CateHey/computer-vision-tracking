@@ -35,7 +35,7 @@ python-dotenv
 tqdm
 omegaconf
 
-# --- CUTIE (cutie_composite tracker) is NOT on PyPI: scripts/bunya_setup.sh clones
+# --- CUTIE (cutie_composite tracker) is NOT on PyPI: the Bunya setup clones
 #     https://github.com/hkchengrex/Cutie into models/cutie and runs `pip install -e models/cutie`
 
 # --- Optional, not needed by the pipeline (install by hand when you need them) ---

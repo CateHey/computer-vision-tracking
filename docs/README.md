@@ -15,7 +15,7 @@ for the `centroid` pipeline; it is kept for the parts that still apply (setup, t
 | Document | Description |
 |----------|-------------|
 | [Local Setup](setup/local.md) | venv, PyTorch, SAM2, CUTIE, HF token, quick tests |
-| [HPC Setup (Bunya)](setup/hpc.md) | Account string, first-time setup, `cutie_composite` and `centroid` runs, file transfer, troubleshooting |
+| [HPC Setup (Bunya)](setup/bunya_paso_a_paso.md) | Account string, first-time setup, `cutie_composite` and `centroid` runs, file transfer, troubleshooting |
 
 ## Architecture
 

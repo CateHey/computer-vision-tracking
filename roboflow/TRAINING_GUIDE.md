@@ -30,12 +30,11 @@ cd ~/computer-vision-tracking
 git pull
 
 # 3. Request a GPU with salloc (interactive session)
-source scripts/bunya_env.sh     # account string + helpers
-bunya_gpu_shell 1 12           # 1 GPU, 12 h
+salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=4 --mem=64G --time=12:00:00 srun --pty bash -l
 
 # 4. Setup environment
 cd ~/computer-vision-tracking
-source scripts/bunya_env.sh && bunya_activate
+module load miniforge/26.3.2-1 && eval "$(conda shell.bash hook)" && conda activate rattrack
 
 # 5. Run training (script is inside roboflow/ folder)
 python roboflow/train_yolo_pose.py --epochs 100 --batch 16 --imgsz 640
@@ -247,10 +246,9 @@ rm -rf Pruebasratslabs-6
 Then retrain (salloc method):
 
 ```bash
-source scripts/bunya_env.sh     # account string + helpers
-bunya_gpu_shell 1 12           # 1 GPU, 12 h
+salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=4 --mem=64G --time=12:00:00 srun --pty bash -l
 cd ~/computer-vision-tracking
-source scripts/bunya_env.sh && bunya_activate
+module load miniforge/26.3.2-1 && eval "$(conda shell.bash hook)" && conda activate rattrack
 python roboflow/train_yolo_pose.py --epochs 100 --batch 16
 ```
 

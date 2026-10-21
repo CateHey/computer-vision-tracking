@@ -41,13 +41,13 @@ index order (`tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_e
 
 ```bash
 ssh uqcvaras@bunya.rcc.uq.edu.au                                        # UQ password + Okta push
-cd ~/computer-vision-tracking && source scripts/bunya_env.sh            # account string + ~/.hf_token
+cd ~/computer-vision-tracking && git pull
 sbatch slurm/run_cutie.sbatch data/raw/session.avi 2                    # paper pipeline, 1 GPU; args: video, number of animals
 sbatch scripts/run_pipeline.sbatch data/raw/session.avi                 # centroid pipeline: 3 GPUs, chunked
 ```
 
-Account string, first-time setup (`scripts/bunya_setup.sh`), memory sizing and downloads:
-[docs/setup/hpc.md](docs/setup/hpc.md).
+First-time setup from zero, one verified command at a time:
+[docs/setup/bunya_paso_a_paso.md](docs/setup/bunya_paso_a_paso.md).
 
 ## Project structure
 
@@ -99,7 +99,7 @@ Open `scripts/report_viewer.html` in a browser and drop in `results.xlsx`.
 
 - [final_documentation/README.md](final_documentation/README.md): the paper's methods reference
 - [docs/README.md](docs/README.md): index of the older design documentation. Key pages:
-  [HPC Guide](docs/setup/hpc.md),
+  [HPC Guide](docs/setup/bunya_paso_a_paso.md),
   [Local Setup](docs/setup/local.md),
   [Parameter Tuning](docs/guides/parameter_tuning.md),
   [Centroid Pipeline](docs/centroid_pipeline.md),

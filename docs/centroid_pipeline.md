@@ -278,14 +278,13 @@ python -m src.pipelines.centroid.run --config configs/local_centroid.yaml
 ssh uqcvaras@bunya.rcc.uq.edu.au
 cd ~/computer-vision-tracking
 git pull
-source scripts/bunya_env.sh          # account string, paths, bunya_activate
 
 # Batch (recommended): 3 GPUs, merges the chunks, prints download commands in the log
 sbatch scripts/run_pipeline.sbatch data/raw/original_120s.avi
 
 # Interactive alternative
-bunya_gpu_shell 3 24                 # 3 GPUs, 24 h
-cd ~/computer-vision-tracking && source scripts/bunya_env.sh && bunya_activate
+salloc --partition=gpu_cuda --qos=gpu --gres=gpu:3 --cpus-per-task=12 --mem=64G --time=24:00:00 srun --pty bash -l
+cd ~/computer-vision-tracking && module load miniforge/26.3.2-1 && eval "$(conda shell.bash hook)" && conda activate rattrack
 bash scripts/run_parallel.sh data/raw/original_120s.avi
 ```
 

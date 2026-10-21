@@ -15,10 +15,9 @@
 # Centroid Pipeline on Bunya HPC (single GPU, one process)
 # ============================================================================
 #
-# Submit from the project dir after sourcing scripts/bunya_env.sh (it exports
 # SBATCH_ACCOUNT, so --account is not needed on the command line):
 #
-#   cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+#   cd ~/computer-vision-tracking
 #   sbatch slurm/run_centroid.sbatch
 #
 # With overrides (any key=value the pipeline accepts):
@@ -28,7 +27,6 @@
 # Different config:
 #   CONFIG=configs/hpc_centroid.yaml sbatch slurm/run_centroid.sbatch
 #
-# No bunya_env.sh sourced?  sbatch --account=a_<group> slurm/run_centroid.sbatch
 #
 # For a full video use the multi-GPU runner instead:
 #   sbatch scripts/run_pipeline.sbatch data/raw/original.mp4
@@ -39,10 +37,10 @@ set -euo pipefail
 CONFIG="${CONFIG:-configs/hpc_centroid.yaml}"
 OVERRIDES="${OVERRIDES:-}"
 
-cd "${BUNYA_PROJECT_DIR:-$HOME/computer-vision-tracking}"
-# shellcheck disable=SC1091
-source scripts/bunya_env.sh
-bunya_activate
+cd "$HOME/computer-vision-tracking"
+module load miniforge/26.3.2-1
+eval "$(conda shell.bash hook)"
+conda activate rattrack
 
 echo "=== Centroid Pipeline ==="
 echo "Job ID:    $SLURM_JOB_ID"

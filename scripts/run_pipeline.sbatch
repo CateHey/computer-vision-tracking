@@ -4,7 +4,7 @@
 ###############################################################################
 #
 # Submit from the project dir on a login node (no salloc needed):
-#   cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+#   cd ~/computer-vision-tracking
 #   sbatch scripts/run_pipeline.sbatch data/raw/original_120s.avi
 #
 # Arguments:
@@ -18,7 +18,6 @@
 # Env knobs (prefix the sbatch command):
 #   CONFIG=configs/hpc_centroid.yaml  OVERRIDES="detection.confidence=0.3"  PIPELINE=centroid
 #
-# Account: scripts/bunya_env.sh exports SBATCH_ACCOUNT, so --account is picked
 # up automatically. Without it:  sbatch --account=a_<group> scripts/run_pipeline.sbatch ...
 #
 # Monitor:  squeue -u $USER      tail -f outputs/slurm/pipeline_<JOBID>.out
@@ -47,10 +46,10 @@ CONFIG="${CONFIG:-configs/hpc_centroid.yaml}"
 OVERRIDES="${OVERRIDES:-}"
 PIPELINE="${PIPELINE:-centroid}"
 
-cd "${BUNYA_PROJECT_DIR:-$HOME/computer-vision-tracking}"
-# shellcheck disable=SC1091
-source scripts/bunya_env.sh
-bunya_activate
+cd "$HOME/computer-vision-tracking"
+module load miniforge/26.3.2-1
+eval "$(conda shell.bash hook)"
+conda activate rattrack
 
 echo "============================================"
 echo "  Job ID:    $SLURM_JOB_ID"

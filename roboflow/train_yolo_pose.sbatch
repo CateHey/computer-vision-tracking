@@ -3,7 +3,7 @@
 # SLURM BATCH SCRIPT - YOLO Pose Training on Bunya HPC
 ###############################################################################
 #
-# Submit with:   cd ~/computer-vision-tracking && source scripts/bunya_env.sh
+# Submit with:   cd ~/computer-vision-tracking
 #                sbatch roboflow/train_yolo_pose.sbatch
 # Monitor with:  squeue -u $USER
 # Cancel with:   scancel <JOB_ID>
@@ -30,10 +30,10 @@
 mkdir -p outputs/slurm
 
 # Navigate to project directory and activate the Bunya conda env
-cd "${BUNYA_PROJECT_DIR:-$HOME/computer-vision-tracking}"
-# shellcheck disable=SC1091
-source scripts/bunya_env.sh
-bunya_activate
+cd "$HOME/computer-vision-tracking"
+module load miniforge/26.3.2-1
+eval "$(conda shell.bash hook)"
+conda activate rattrack
 
 # $TMPDIR is created per job by Bunya (node-local, deleted when the job ends)
 
@@ -104,11 +104,11 @@ if [ -d "$RESULTS_DIR" ]; then
     echo "============================================================"
     echo ""
     echo "# Download trained model to your local machine (PowerShell):"
-    echo "scp ${BUNYA_USER}@${BUNYA_HOST}:${BUNYA_PROJECT_DIR}/$RESULTS_DIR/weights/best.pt \\"
+    echo "scp uqcvaras@bunya.rcc.uq.edu.au:computer-vision-tracking/$RESULTS_DIR/weights/best.pt \\"
     echo "  \"C:\\Users\\uqcvaras\\Downloads\\computer-vision-tracking\\roboflow\\\""
     echo ""
     echo "# Download full results archive:"
-    echo "scp ${BUNYA_USER}@${BUNYA_HOST}:${BUNYA_PROJECT_DIR}/$ARCHIVE \\"
+    echo "scp uqcvaras@bunya.rcc.uq.edu.au:computer-vision-tracking/$ARCHIVE \\"
     echo "  \"C:\\Users\\uqcvaras\\Downloads\\computer-vision-tracking\\roboflow\\\""
 else
     echo "WARNING: Results directory not found at $RESULTS_DIR"

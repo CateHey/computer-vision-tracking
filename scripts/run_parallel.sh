@@ -341,11 +341,6 @@ if [ -d "$BATCH_DIR/contacts" ]; then
 fi
 
 # --- Step 8: Print download commands ---
-# Remote identity and the Windows download folder come from scripts/bunya_env.sh
-if [ -f scripts/bunya_env.sh ]; then
-    # shellcheck disable=SC1091
-    source scripts/bunya_env.sh
-fi
 REMOTE_USER="${BUNYA_USER:-${USER:-uqcvaras}}"
 REMOTE_HOST="${BUNYA_HOST:-bunya.rcc.uq.edu.au}"
 ABS_BATCH_DIR="$(cd "$BATCH_DIR" && pwd)"

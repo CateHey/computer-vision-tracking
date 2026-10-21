@@ -294,11 +294,6 @@ TOTAL_MINS=$((TOTAL_ELAPSED / 60))
 TOTAL_SECS=$((TOTAL_ELAPSED % 60))
 
 # --- Step 7: Print summary and download commands ---
-# Remote identity and the Windows download folder come from scripts/bunya_env.sh
-if [ -f scripts/bunya_env.sh ]; then
-    # shellcheck disable=SC1091
-    source scripts/bunya_env.sh
-fi
 REMOTE_USER="${BUNYA_USER:-${USER:-uqcvaras}}"
 REMOTE_HOST="${BUNYA_HOST:-bunya.rcc.uq.edu.au}"
 ABS_FRAMES_DIR="$(cd "$FRAMES_DIR" && pwd)"

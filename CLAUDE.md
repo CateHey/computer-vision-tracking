@@ -51,8 +51,7 @@ was swap-free). See `docs/centroid_pipeline.md` "Lessons Learned".
 | Validation | `scripts/validate_contacts.py`, `configs/validation.yaml` |
 | YOLO inference / weights | `src/common/yolo_inference.py`, `models/yolo/yolo26_v11.pt` |
 | Configs | `configs/local_cutie_composite.yaml`, `configs/hpc_cutie_composite.yaml` |
-| Bunya settings (account string, paths, conda env, HF token) | `scripts/bunya_env.sh` |
-| Bunya first-time setup | `scripts/bunya_setup.sh` |
+| Bunya setup, step by step (only what was verified) | `docs/setup/bunya_paso_a_paso.md` |
 | Bunya batch job: cutie_composite + validation sample (1 GPU) | `slurm/run_cutie.sbatch` |
 | Old centroid pipeline / parallel runner | `src/pipelines/centroid/`, `scripts/run_parallel.sh`, `scripts/merge_chunks.py` |
 
@@ -66,9 +65,8 @@ python -m src.pipelines.cutie_composite.run --config configs/local_cutie_composi
 python -m src.pipelines.cutie_composite.run --config configs/local_cutie_composite.yaml \
     video_path=data/raw/multirat.avi detection.max_animals=6 scan.max_frames=900
 
-# HPC (Bunya, one GPU, one process; see docs/setup/hpc.md). Source scripts/bunya_env.sh first:
-# it exports the Slurm account string and reads ~/.hf_token
-sbatch slurm/run_cutie.sbatch data/raw/<video> <n_animals> [seconds]   # setup if missing + pipeline + validation sample + zip
+# HPC (Bunya, one GPU, one process; setup in docs/setup/bunya_paso_a_paso.md)
+sbatch slurm/run_cutie.sbatch data/raw/<video> <n_animals>      # pipeline + validation sample + zip
 python -m src.pipelines.cutie_composite.run --config configs/hpc_cutie_composite.yaml video_path=data/raw/<video>
 
 # Re-run post-processing only
@@ -94,7 +92,7 @@ flicker rate by duration, and min-duration / min-score threshold tables. Tests: 
 ## Conventions
 
 - Branches: work on `develop`
-- Bunya: staff account `uqcvaras`; every job needs the Slurm account string `a_<group>` (see `docs/setup/hpc.md`)
+- Bunya: staff account `uqcvaras`; every job needs the Slurm account string `a_<group>` (see `docs/setup/bunya_paso_a_paso.md`)
 - All configs in `configs/` — no hardcoded thresholds in code
 - CLI overrides: `key.subkey=value` (e.g., `detection.confidence=0.4`)
 - Output to `outputs/runs/<timestamp>_<tag>/`

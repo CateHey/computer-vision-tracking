@@ -50,6 +50,6 @@ Thumbs.db
 # --- Secrets ---
 .env
 
-# --- CUTIE checkout + weights (cloned by scripts/bunya_setup.sh) ---
+# --- CUTIE checkout + weights (cloned during the Bunya setup) ---
 models/cutie/
 weights/

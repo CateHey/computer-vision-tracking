@@ -8,8 +8,6 @@ Utility scripts for execution, merging, data extraction, and upload.
 |--------|---------|
 | `run_parallel.sh` | Multi-GPU parallel execution — splits video into chunks, runs on separate GPUs, merges |
 | `run_pipeline.sbatch` | Slurm batch wrapper around `run_parallel.sh` (centroid pipeline only; the production job is `slurm/run_cutie.sbatch`) |
-| `bunya_env.sh` | Bunya settings: user, account string (auto from `groups`), paths, `bunya_activate`, `bunya_gpu_shell` |
-| `bunya_setup.sh` | One-time Bunya setup: scratch symlinks, conda env, PyTorch, SAM2, transformers 5 (SAM3), CUTIE, all weights |
 | `merge_chunks.py` | Merges chunk outputs: concatenates overlay videos (ffmpeg stream copy), combines contact CSVs |
 | `trim_video.py` | Alternative clip extraction |
 | `upload_to_roboflow.py` | Uploads extracted frames to Roboflow for labeling |
