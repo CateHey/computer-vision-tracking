@@ -139,7 +139,10 @@ python -c "import os; from huggingface_hub import snapshot_download; print(snaps
 
 Meta approved access on 2026-10-21 (same day, a few hours after the request).
 
-(download not yet run)
+Verified 2026-10-21: 12 files, 6.55 GB, about 1 minute, cached at
+`~/.cache/huggingface/hub/models--facebook--sam3/`. Never paste the token into chats,
+issues or repo files; if it leaks, delete it at https://huggingface.co/settings/tokens,
+create a new one and rewrite `~/.hf_token` (the cached model stays valid).
 
 ## 8. Run cutie_composite + evidence (needs the Slurm account)
 
