@@ -50,3 +50,10 @@ extract:
 # --- Scan limits ---
 scan:
   max_frames: null
+
+# --- Roboflow upload (scripts/upload_to_roboflow.py --config configs/local_extract.yaml) ---
+roboflow:
+  workspace: modelos-yolo
+  project: pruebasratslabs-c02t9
+  split: train        # train | valid | test
+  batch_name: null    # optional batch name to group uploads

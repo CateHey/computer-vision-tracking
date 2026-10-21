@@ -11,4 +11,3 @@ assignment are implemented, and why specific design decisions were made.
 - `identity_matcher.md` — Hungarian matching + SEPARATE/MERGED state machine
 - `tracking_analysis.md` — BoT-SORT and ByteTrack parameter analysis
 - `pipeline_improvements.md` — sam2_yolo pipeline design details, BoT-SORT config
-- `reference_comparison.md` — What was adopted/rejected from the reference toolkit

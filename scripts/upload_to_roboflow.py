@@ -9,12 +9,12 @@ Usage:
     export ROBOFLOW_API_KEY="your-key-here"
 
     python scripts/upload_to_roboflow.py \
-        --config configs/local_quick.yaml \
+        --config configs/local_extract.yaml \
         --frames-root outputs/runs/2025-12-09_143022_extract_frames/frames
 
     # Override split via CLI:
     python scripts/upload_to_roboflow.py \
-        --config configs/local_quick.yaml \
+        --config configs/local_extract.yaml \
         --frames-root frames/ \
         roboflow.split=valid
 """

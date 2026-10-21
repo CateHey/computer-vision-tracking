@@ -1,26 +1,32 @@
 # src/common/
 
-Shared utilities used by all pipelines. When adding functionality that multiple pipelines need, put it here.
+Shared utilities used by all pipelines. When adding functionality that several pipelines need, put it here.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `config_loader.py` | YAML config loading, CLI overrides, run directory setup, logging |
-| `io_video.py` | Video read/write, frame iteration |
-| `metrics.py` | `mask_iou()`, `compute_centroid()` |
-| `visualization.py` | Mask overlays, keypoint rendering, status bar |
-| `contacts.py` | ContactTracker — 5 contact types, bout detection, CSV/JSON/PDF reports |
-| `geometry.py` | `euclidean_distance()`, `match_dets_to_slots()` |
-| `cost.py` | `compute_assignment_cost()` — 3-component soft cost for identity matching |
-| `mask_dedup.py` | `deduplicate_masks()` — remove redundant SAM masks by IoU |
-| `model_loaders.py` | `load_yolo()` — YOLO model loading |
-| `tracking.py` | `SlotTracker` — used only by sam2_yolo pipeline |
-| `utils.py` | `Detection`, `Keypoint` dataclasses |
-| `constants.py` | Shared constants |
+| `config_loader.py` | YAML config loading, CLI overrides, run directory setup, logging, `get_device()` |
+| `io_video.py` | Video read/write, frame iteration, video properties |
+| `metrics.py` | `mask_iou()`, `compute_centroid()`, `evaluate_closeness()` |
+| `visualization.py` | Mask overlays, keypoint rendering, status text |
+| `contacts_v2.py` | `ContactTrackerV2`: continuous scores + Schmitt triggers, 5 types (N2N, N2AG, N2B, SBS, FOL) + NC, families, dynamics. **Used by `cutie_composite`** |
+| `individual_metrics.py` | Per-animal and directed-pair metrics computed from v2 bouts (who initiates, active vs passive); extra PDF pages |
+| `contacts_v21.py` | Variant of v2 (hysteresis rule engine, multi-scale temporal windows). Not imported by any pipeline |
+| `contacts.py` | `ContactTracker` v1 (centroid pipeline): 6 contact types + NC, bout detection, CSV/JSON/PDF |
+| `excel_report.py` | `build_excel_report()`: consolidates run outputs into `results.xlsx` |
+| `geometry.py` | `euclidean_distance()`, `resolve_overlaps()`, detection-to-slot matching |
+| `model_loaders.py` | `load_yolo()`, `load_models()` |
+| `yolo_inference.py` | `detect_only()` and YOLO result parsing (keypoints by name) |
+| `utils.py` | `Detection`, `Keypoint`, `FrameAnalysis` dataclasses |
+| `constants.py` | `DEFAULT_KEYPOINT_NAMES` and other shared constants |
+
+Removed in October 2026 (git history keeps them): `cost.py`, `mask_dedup.py`, `tracking.py`
+(assignment cost, mask dedup and the BoT-SORT `SlotTracker` of the deleted sam2_yolo / reference pipelines).
 
 ## Key Rules
 
-- `_PATH_KEYS` in `config_loader.py` lists config keys that resolve as file paths (includes `sam3_checkpoint`)
-- `match_dets_to_slots()` in `geometry.py` is used by both reference and sam3 pipelines
-- `cost.py` supports area veto: if area ratio > 5.0x, cost is set to INF
+- `_PATH_KEYS` in `config_loader.py` lists the config keys that resolve as file paths
+- Keypoints are addressed by name (`constants.DEFAULT_KEYPOINT_NAMES`), never by index;
+  the rear/anogenital point is `tail_start`
+- SBS in v2 uses `mask_contact_bl` (shared border length): CUTIE masks are disjoint, so mask IoU is always 0

@@ -38,11 +38,16 @@ These "hard cases" usually determine tracking quality.
 
 ### 1. Extract Candidate Frames
 
-Use the close-contact detection pipeline to find interaction frames:
+Use the interaction-frame extractor: a SAM2 centroid scan scores every frame by
+closeness, then a spread-out selection exports the close-interaction frames.
+On Bunya, inside a GPU allocation:
 
 ```bash
-python scripts/extract_frames.py all --config configs/local_quick.yaml
+bash roboflow/run_extract.sh data/raw/original.mp4 2     # -> roboflow/frames/*.jpg + metadata.csv
 ```
+
+The two underlying steps (`scan`, `select`) live in `roboflow/extract_interaction_frames.py`;
+configs are `configs/local_extract.yaml` and `configs/hpc_extract.yaml`.
 
 ### 2. Upload to Roboflow
 
@@ -50,8 +55,8 @@ python scripts/extract_frames.py all --config configs/local_quick.yaml
 export ROBOFLOW_API_KEY="your-key"
 
 python scripts/upload_to_roboflow.py \
-    --config configs/local_quick.yaml \
-    --frames-root outputs/runs/<run-dir>/frames \
+    --config configs/local_extract.yaml \
+    --frames-root roboflow/frames \
     --tag close_contact
 ```
 

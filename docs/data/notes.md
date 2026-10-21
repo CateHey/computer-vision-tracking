@@ -10,12 +10,12 @@
 
 ### Quick Local Tests
 - Process short clips: 5-10 seconds
-- Config: `configs/local_quick.yaml`
+- Config: `configs/local_cutie_composite.yaml`
 - Good for qualitative checks and iteration
 
 ### Full HPC Runs
 - Process entire videos: ~20 minutes
-- Config: `configs/hpc_full.yaml`
+- Config: `configs/hpc_cutie_composite.yaml`
 - Uses Bunya GPU nodes via Slurm
 
 ## Data Layout
@@ -24,7 +24,6 @@
 data/
   raw/                  # Full-length source videos (gitignored)
   clips/                # Short test clips (committed)
-    output-6s.mp4
     output-10s.mp4
   frames/               # Manually extracted frames (optional)
   roboflow_export/      # Roboflow dataset exports (gitignored)

@@ -9,4 +9,3 @@ of iterative improvements.
 ## Files
 
 - `observation_log.md` — Chronological log of observations, problems, and fixes
-- `pipeline_comparison.md` — Side-by-side comparison of pipeline runs on the same video

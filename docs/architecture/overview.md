@@ -27,7 +27,7 @@ detections, masks, tracks, social contact classifications, and summary reports.
 - **Role:** Fast pose detection — bounding boxes + 7 keypoints per rat
 - **Architecture:** NMS-free (end-to-end), dual detection head, C2PSA attention
 - **Weights:** `models/yolo/best.pt` (trained on custom rat dataset)
-- **Previous:** YOLOv8l-pose (archived as `yolov8lrata.pt`)
+- **Previous:** YOLOv8l-pose (`yolov8lrata.pt`, removed from the repo in October 2026; in git history)
 - See [YOLO26 Migration](../models/yolo26_migration.md) for upgrade details
 
 ### SAM2 (Meta)
