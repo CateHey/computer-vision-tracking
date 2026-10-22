@@ -183,6 +183,13 @@ echo 'alias rat="cd ~/computer-vision-tracking && module load miniforge/26.3.2-1
 source ~/.bashrc
 ```
 
+Auto-run it on every interactive login (once). The `$- == *i*` guard keeps it out of
+scp and Slurm job shells:
+
+```bash
+echo '[[ $- == *i* ]] && rat' >> ~/.bashrc
+```
+
 ## Pending: Slurm account
 
 Without a Slurm account, `sbatch`, `salloc` and `srun` fail with
