@@ -217,6 +217,10 @@ How RCC says it works (UQ-RCC hpc-docs: `guides/Accounting-group-admin.md`,
   allow about 1 hour before the first job.
 - RCC Service Desk: rcc-support@uq.edu.au.
 
+2026-10-22: added to the QBI accounting group ("QBI Group", Standard role) after an
+email to a group admin from the Balbi team. Next: log in again, wait about 1 hour for the
+Slurm sync, then `groups` shows the `a_...` string.
+
 Who to ask, in order: the supervisor (which accounting group does the lab use, and who
 owns it), then the group owner/admin to add `uqcvaras`; if nobody knows, RCC support.
 
