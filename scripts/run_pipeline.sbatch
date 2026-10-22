@@ -27,6 +27,7 @@
 ###############################################################################
 
 #SBATCH --job-name=centroid-pipeline
+#SBATCH --account=a_qbi
 #SBATCH --partition=gpu_cuda
 #SBATCH --qos=gpu
 #SBATCH --nodes=1

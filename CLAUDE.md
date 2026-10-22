@@ -92,7 +92,7 @@ flicker rate by duration, and min-duration / min-score threshold tables. Tests: 
 ## Conventions
 
 - Branches: work on `develop`
-- Bunya: staff account `uqcvaras`; every job needs the Slurm account string `a_<group>` (see `docs/setup/bunya_step_by_step.md`)
+- Bunya: staff account `uqcvaras`; every job needs the Slurm account string `a_qbi` (QBI group) (see `docs/setup/bunya_step_by_step.md`)
 - All configs in `configs/` — no hardcoded thresholds in code
 - CLI overrides: `key.subkey=value` (e.g., `detection.confidence=0.4`)
 - Output to `outputs/runs/<timestamp>_<tag>/`

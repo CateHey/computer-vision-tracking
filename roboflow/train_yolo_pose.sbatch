@@ -13,6 +13,7 @@
 
 # ---- Slurm resource requests ----
 #SBATCH --job-name=yolo-pose-train
+#SBATCH --account=a_qbi
 #SBATCH --partition=gpu_cuda           # GPU partition on Bunya
 #SBATCH --qos=gpu                      # GPU quality of service
 #SBATCH --gres=gpu:1                   # 1 GPU (YOLO trains on single GPU)

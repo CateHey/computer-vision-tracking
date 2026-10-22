@@ -227,6 +227,8 @@ How RCC says it works (UQ-RCC hpc-docs: `guides/Accounting-group-admin.md`,
 2026-10-22: added to the QBI accounting group ("QBI Group", Standard role) after an
 email to a group admin from the Balbi team. Next: log in again, wait about 1 hour for the
 Slurm sync, then `groups` shows the `a_...` string.
+Confirmed the same day: `groups` -> `qris-uq a_qbi`. The AccountString is **`a_qbi`**; every
+`.sbatch` file carries `#SBATCH --account=a_qbi`. For salloc add `--account=a_qbi`.
 
 Who to ask, in order: the supervisor (which accounting group does the lab use, and who
 owns it), then the group owner/admin to add `uqcvaras`; if nobody knows, RCC support.
