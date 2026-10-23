@@ -17,12 +17,12 @@ output:
   video_codec: XVID
   write_individual_videos: true
   overlay_colors:
-    - [0, 0, 255]      # R1 rojo
-    - [0, 255, 0]      # R2 verde
-    - [255, 0, 0]      # R3 azul
-    - [255, 255, 0]    # R4 amarillo
+    - [0, 0, 255]      # R1 red (BGR)
+    - [0, 255, 0]      # R2 green
+    - [255, 0, 0]      # R3 blue
+    - [255, 255, 0]    # R4 cyan
     - [255, 0, 255]    # R5 magenta
-    - [0, 255, 255]    # R6 cyan
+    - [0, 255, 255]    # R6 yellow
 
 # Device
 device: cuda

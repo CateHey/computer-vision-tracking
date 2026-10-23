@@ -76,12 +76,13 @@ python scripts/postprocess_contacts_simple.py outputs/runs/<run>/contacts/ --mak
 ## Validation workflow
 
 ```bash
-python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 15   # clips + review.xlsx + index.html
+python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 15   # one clip per scene (overlapping events), one review row per event
 # reviewer fills verdict / correct_type in <run>/validation/review.xlsx
 python scripts/validate_contacts.py score outputs/runs/<run>/validation/review.xlsx
 ```
 
-Verdicts: real, flicker, wrong_type, tracking_error, unsure. `score` writes precision with Wilson CIs per type,
+A scene groups events that overlap in time (`group_by: scene` in `configs/validation.yaml`; `--group-by event` for one clip each);
+every event of the run inside a scene is listed (`in_sample` false for the extras). Verdicts: real, flicker, wrong_type, tracking_error, unsure. `score` writes precision with Wilson CIs per type,
 flicker rate by duration, and min-duration / min-score threshold tables. Tests: `pytest tests/`.
 
 ## Documentation

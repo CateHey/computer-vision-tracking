@@ -4,7 +4,9 @@
 Subcommands
 -----------
 sample : stratified sample of events -> evidence clips, contact sheets,
-         review.xlsx, index.html, manifest.json
+         review.xlsx, index.html, manifest.json. By default events that overlap
+         in time are grouped into one clip (a scene) with every pair highlighted;
+         review.xlsx keeps one row per event and says where to look in the clip.
 score  : read a filled review.xlsx -> validation_summary.{md,json,png}
 
 Usage
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG: Dict[str, Any] = {
     "per_type": 15, "pad_sec": 1.0, "speed": 0.5, "seed": 42, "crf": 23,
     "source": None, "types": None,
+    "group_by": "scene", "max_scene_sec": 12.0,
     "duration_bins": [0.3, 0.5, 1.0, 2.0],
     "score_grid": [0.0, 0.5, 0.6, 0.7, 0.8, 0.9],
     "duration_grid": [0.0, 0.2, 0.3, 0.5, 1.0, 2.0],
@@ -307,8 +310,8 @@ def event_stats(ev: pd.Series, pf: Optional[pd.DataFrame]) -> Dict[str, Any]:
 # Per-animal BGR colours of the overlay video (configs: output.overlay_colors), R1..R6
 DEFAULT_COLORS: List[Tuple[int, int, int]] = [
     (0, 0, 255), (0, 255, 0), (255, 0, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
-COLOR_NAMES = {(0, 0, 255): "red", (0, 255, 0): "green", (255, 0, 0): "blue", (255, 255, 0): "yellow",
-               (255, 0, 255): "magenta", (0, 255, 255): "cyan"}
+COLOR_NAMES = {(0, 0, 255): "red", (0, 255, 0): "green", (255, 0, 0): "blue", (255, 255, 0): "cyan",
+               (255, 0, 255): "magenta", (0, 255, 255): "yellow"}  # BGR tuples
 
 
 def overlay_colors(run: Path) -> List[Tuple[int, int, int]]:
@@ -490,8 +493,156 @@ def cut_clip(cap, sid: str, ev: pd.Series, pf_pair: Optional[pd.DataFrame], fps:
     return n
 
 
+# --------------------------------------------------------------------------- scenes
+def _event_keys(df: pd.DataFrame) -> List[Tuple[str, str, int]]:
+    return list(zip(df["pair_key"].astype(str), df["contact_type"].astype(str), df["start_frame"].astype(int)))
+
+
+def build_scenes(sample: pd.DataFrame, events: pd.DataFrame, pad: int, nframes: int,
+                 max_frames: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Group events into scenes (one clip each), one review row per event.
+
+    1. Sampled events whose padded windows overlap form a chain; every other event of
+       the run that overlaps the chain is pulled in (in_sample=False) until nothing
+       else overlaps, so a clip never shows a contact the workbook does not list.
+    2. A chain longer than max_frames is cut into consecutive, non-overlapping
+       segments of equal length (no footage is repeated).
+    3. Each event is listed in exactly one segment, the one holding most of it;
+       partial=True when it continues outside that segment. Every event that is
+       visible in a segment is still highlighted there (key "visible").
+    """
+    chains: List[Dict[str, Any]] = []
+    for idx, e in sample.sort_values("start_frame").iterrows():
+        a = max(0, int(e["start_frame"]) - pad)
+        b = min(nframes - 1, int(e["end_frame"]) + pad)
+        if chains and a <= chains[-1]["b"]:
+            chains[-1]["b"] = max(chains[-1]["b"], b)
+            chains[-1]["idx"].append(idx)
+        else:
+            chains.append({"a": a, "b": b, "idx": [idx]})
+
+    out: List[Dict[str, Any]] = []
+    for ch in chains:
+        rows = sample.loc[ch["idx"]].copy()
+        rows["in_sample"] = True
+        a, b = ch["a"], ch["b"]
+        for _ in range(50):  # extras can pull in further extras; stop at the fixpoint
+            inside = events[(events["start_frame"] <= b) & (events["end_frame"] >= a)]
+            have = set(_event_keys(rows))
+            extra = inside[[k not in have for k in _event_keys(inside)]].copy()
+            if extra.empty:
+                break
+            extra["in_sample"] = False
+            rows = pd.concat([rows, extra])
+            a = max(0, min(a, int(extra["start_frame"].min()) - pad))
+            b = min(nframes - 1, max(b, int(extra["end_frame"].max()) + pad))
+        rows = rows.sort_values(["start_frame", "pair_key"]).reset_index(drop=True)
+
+        length = b - a + 1
+        n_seg = 1 if not max_frames or length <= max_frames else -(-length // max_frames)
+        seg_len = -(-length // n_seg)
+        segments = [(a + i * seg_len, min(b, a + (i + 1) * seg_len - 1)) for i in range(n_seg)]
+
+        def overlap(r, seg):
+            return max(0, min(int(r["end_frame"]), seg[1]) - max(int(r["start_frame"]), seg[0]) + 1)
+
+        assigned = [max(range(n_seg), key=lambda i: (overlap(r, segments[i]), -i)) for _, r in rows.iterrows()]
+        for i, (sa, sb) in enumerate(segments):
+            mine = rows[[k == i for k in assigned]].copy()
+            mine["partial"] = (mine["start_frame"] < sa) | (mine["end_frame"] > sb)
+            visible = rows[(rows["start_frame"] <= sb) & (rows["end_frame"] >= sa)].copy()
+            out.append({"a": sa, "b": sb, "events": mine.reset_index(drop=True),
+                        "visible": visible.reset_index(drop=True)})
+    for k, sc in enumerate(out, 1):
+        sc["scene_id"] = f"S{k:02d}"
+    return out
+
+
+def annotate_scene(frame: np.ndarray, scene_id: str, events: pd.DataFrame, n_listed: int, fps: float, fidx: int,
+                   rows_by_pair: Dict[str, Optional[pd.Series]],
+                   colors: Optional[List[Tuple[int, int, int]]]) -> np.ndarray:
+    """Burn the scene banner, every active pair's highlight and the state border.
+
+    `events` are all events visible in the clip (highlighted while active); n_listed is
+    how many of them have their review row in this clip.
+    """
+    import cv2
+    h, w = frame.shape[:2]
+    active = events[(events["start_frame"] <= fidx) & (events["end_frame"] >= fidx)]
+    inside = len(active) > 0
+    col = (0, 0, 220) if inside else (140, 140, 140)
+    ban = frame.copy()
+    cv2.rectangle(ban, (0, 0), (w, 84), (0, 0, 0), -1)
+    cv2.rectangle(ban, (0, h - 30), (w, h), (0, 0, 0), -1)
+    frame = cv2.addWeighted(ban, 0.6, frame, 0.4, 0)
+    for _, ev in active.iterrows():
+        highlight_pair(frame, ev, rows_by_pair.get(str(ev["pair_key"])), colors)
+    _put(frame, f"{scene_id} | {n_listed} event(s) to review in this clip | t={fmt_time(fidx / fps)} f={fidx} "
+                f"[{'LABEL ACTIVE' if inside else 'context'}]", (8, 22), 0.6)
+    labels = [f"{ev['sample_id']} {pair_label(ev['pair_key'])} {ev['contact_type']}"
+              f"{pair_colour_hint(ev['pair_key'], colors)}" for _, ev in active.iterrows()]
+    _put(frame, "  |  ".join(labels[:2]) if labels else "no contact active", (8, 48), 0.5,
+         (200, 200, 255) if inside else (200, 200, 200))
+    if len(labels) > 2:
+        _put(frame, "  |  ".join(labels[2:4]) + ("  ..." if len(labels) > 4 else ""), (8, 72), 0.5, (200, 200, 255))
+    parts = []
+    for _, ev in active.head(2).iterrows():
+        row = rows_by_pair.get(str(ev["pair_key"]))
+        if row is None:
+            continue
+        sc = _score_col(ev["contact_type"])
+        txt = f"{pair_label(ev['pair_key'])} raw={row.get('contact_type', '?')}"
+        if sc in row and pd.notna(row[sc]):
+            txt += f" {sc[6:]}={row[sc]:.2f}"
+        if "centroid_dist_bl" in row and pd.notna(row["centroid_dist_bl"]):
+            txt += f" cd={row['centroid_dist_bl']:.2f}BL"
+        parts.append(txt)
+    if parts:
+        _put(frame, "   ".join(parts), (8, h - 9), 0.5)
+    cv2.rectangle(frame, (0, 0), (w - 1, h - 1), col, 8 if inside else 4)
+    return frame
+
+
+def cut_scene_clip(cap, scene: Dict[str, Any], visible: pd.DataFrame, pf_pairs: Dict[str, pd.DataFrame], fps: float,
+                   out: Path, sheet: Path, speed: float, crf: int,
+                   colors: Optional[List[Tuple[int, int, int]]]) -> int:
+    """Write one annotated clip for a scene and a 3-thumbnail contact sheet."""
+    import cv2
+    a, b = scene["a"], scene["b"]
+    pairs = [str(k) for k in visible["pair_key"].unique()]
+    cap.set(cv2.CAP_PROP_POS_FRAMES, a)
+    wr, keep, n = None, {}, 0
+    want = {a, (a + b) // 2, b}
+    for fi in range(a, b + 1):
+        ok, fr = cap.read()
+        if not ok:
+            break
+        h, w = fr.shape[:2]
+        w2, h2 = w - w % 2, h - h % 2
+        if wr is None:
+            wr = _Writer(out, w2, h2, fps * speed, crf)
+        rows_by_pair = {k: (pf_pairs[k].loc[fi] if k in pf_pairs and fi in pf_pairs[k].index else None)
+                        for k in pairs}
+        fr = annotate_scene(fr, scene["scene_id"], visible, len(scene["events"]), fps, fi, rows_by_pair, colors)[:h2, :w2]
+        wr.write(fr)
+        if fi in want:
+            keep[fi] = fr
+        n += 1
+    if wr:
+        wr.close()
+    if keep:
+        thumbs = [cv2.resize(keep[k], None, fx=0.5, fy=0.5) for k in sorted(keep)]
+        cv2.imwrite(str(sheet), np.hstack(thumbs))
+    return n
+
+
 # --------------------------------------------------------------------------- outputs
 REVIEWER_COLS = ["verdict", "correct_type", "reviewer", "notes"]
+COLUMN_ORDER = ["sample_id", "scene_id", "clip", "thumbnail", "in_sample", "partial",
+                "pair_label", "contact_type", "contact_label",
+                "start_time", "end_time", "duration_sec", "duration_frames", "duration_tertile",
+                "clip_from", "clip_to", "peak_score", "mean_score", "secondary_type", "secondary_score"] \
+    + [f"frac_{f}" for f in QUALITY_FLAGS] + ["mean_nose_nose_dist_bl", "mean_mask_contact_bl"]
 
 
 def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
@@ -501,13 +652,11 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.datavalidation import DataValidation
 
+    present = set().union(*(r.keys() for r in rows)) if rows else set()
+    cols = [c for c in COLUMN_ORDER if c in present] + REVIEWER_COLS
     wb = Workbook()
     ws = wb.active
     ws.title = "review"
-    cols = ["sample_id", "clip", "thumbnail", "pair_label", "contact_type", "contact_label",
-            "start_time", "end_time", "duration_sec", "duration_frames", "duration_tertile",
-            "peak_score", "mean_score", "secondary_type", "secondary_score"] \
-        + [f"frac_{f}" for f in QUALITY_FLAGS] + ["mean_nose_nose_dist_bl", "mean_mask_contact_bl"] + REVIEWER_COLS
     ws.append(cols)
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
@@ -530,12 +679,15 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
     ins = wb.create_sheet("Instructions")
     text = [
         "Review instructions",
-        "For each row open the clip (RED border = label active, GREY = context) and fill in 'verdict'.",
-        "Watch the two animals named in pair_label: they are circled in their overlay colours",
-        "(R1 red, R2 green, R3 blue, R4 yellow, R5 magenta, R6 cyan). Clips play in slow motion.",
-        "Each clip is ONE event: one pair, one contact type, one time interval. Other animals are context.",
+        "Each row is ONE event: one pair of animals, one contact type, one time interval. Fill in 'verdict' per row.",
+        "Several rows can share a clip (same scene_id): the clip shows every contact of that moment, and",
+        "clip_from / clip_to say where in the clip (slow-motion time) this row's event is active.",
+        "The two animals of a row are circled in their overlay colours (R1 red, R2 green, R3 blue, R4 cyan,",
+        "R5 magenta, R6 yellow) and named in the banner while the event is active (RED border = some label active).",
+        "in_sample = FALSE marks events listed only because they overlap a sampled one; partial = TRUE means",
+        "the event continues in the previous or next clip (clips never repeat footage).",
         "",
-        "real: the physical/social contact of the given type is clearly visible for most of the red-border interval.",
+        "real: the physical/social contact of the given type is clearly visible for most of the event interval.",
         "flicker: label active but no real contact, a momentary brush (< ~0.3 s) or keypoint jitter.",
         "wrong_type: a real interaction, but of another type; fill in 'correct_type' (N2N, N2AG, N2B, SBS, FOL or NC).",
         "tracking_error: identity swap, merged masks or keypoints on the wrong animal.",
@@ -551,20 +703,28 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
 
 
 def write_index_html(rows: List[Dict[str, Any]], path: Path, title: str) -> None:
-    """Self-contained gallery grouped by type with filter buttons."""
-    types = sorted({r["contact_type"] for r in rows})
+    """Self-contained gallery: one card per clip (scene) listing its events, with type filters."""
     esc = html.escape
-    cards = []
+    types = sorted({r["contact_type"] for r in rows})
+    groups: Dict[str, List[Dict[str, Any]]] = {}
     for r in rows:
-        peak = "n/a" if r["peak_score"] is None else f'{r["peak_score"]:.2f}'
-        cards.append(
-            f'<div class="card" data-type="{esc(r["contact_type"])}"><h3>{esc(r["sample_id"])} '
-            f'<span class="t">{esc(r["contact_type"])}</span></h3>'
-            f'<video controls loop muted preload="metadata" src="{esc(r["clip"])}"></video>'
-            f'<p>{esc(str(r["contact_label"]))} &middot; <b>{esc(r["pair_label"])}</b><br>'
-            f'{esc(r["start_time"])} - {esc(r["end_time"])} &middot; {r["duration_sec"]:.2f} s '
-            f'({r["duration_frames"]} f, {esc(r["duration_tertile"])})<br>'
-            f'peak score {peak}</p></div>')
+        groups.setdefault(r["clip"], []).append(r)
+    cards = []
+    for clip, rs in groups.items():
+        head = rs[0].get("scene_id") or rs[0]["sample_id"]
+        items = []
+        for r in rs:
+            peak = "n/a" if r["peak_score"] is None else f'{r["peak_score"]:.2f}'
+            where = f' &middot; in clip {esc(r["clip_from"])}-{esc(r["clip_to"])}' if "clip_from" in r else ""
+            flag = "" if r.get("in_sample", True) else " <i>(extra)</i>"
+            items.append(f'<li><b>{esc(r["sample_id"])}</b> <span class="t">{esc(r["contact_type"])}</span> '
+                         f'{esc(r["pair_label"])} &middot; {esc(r["start_time"])}-{esc(r["end_time"])} '
+                         f'({r["duration_sec"]:.2f} s, {esc(str(r["duration_tertile"]))}){where} &middot; peak {peak}{flag}</li>')
+        tset = " ".join(sorted({r["contact_type"] for r in rs}))
+        cards.append(f'<div class="card" data-type="{esc(tset)}"><h3>{esc(head)} '
+                     f'<span class="n">{len(rs)} event(s)</span></h3>'
+                     f'<video controls loop muted preload="metadata" src="{esc(clip)}"></video>'
+                     f'<ul>{"".join(items)}</ul></div>')
     btns = '<button data-f="all" class="on">all</button>' + "".join(
         f'<button data-f="{esc(t)}">{esc(t)}</button>' for t in types)
     doc = f"""<!doctype html><html><head><meta charset="utf-8"><title>{esc(title)}</title>
@@ -572,25 +732,46 @@ def write_index_html(rows: List[Dict[str, Any]], path: Path, title: str) -> None
 :root{{--bg:#fff;--fg:#1a1a1a;--card:#f3f4f6;--acc:#305496}}
 @media(prefers-color-scheme:dark){{:root{{--bg:#151515;--fg:#eee;--card:#242424;--acc:#8fb0ee}}}}
 body{{background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;margin:16px}}
-#g{{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px}}
+#g{{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:14px}}
 .card{{background:var(--card);border-radius:8px;padding:10px}}.card video{{width:100%}}
-.card h3{{margin:0 0 6px}}.t{{color:var(--acc)}}p{{margin:6px 0 0;font-size:13px}}
+.card h3{{margin:0 0 6px}}.t{{color:var(--acc);font-weight:600}}.n{{font-weight:normal;font-size:13px;opacity:.7}}
+ul{{margin:6px 0 0;padding-left:18px;font-size:13px}}li{{margin:2px 0}}
 button{{margin:0 6px 10px 0;padding:6px 12px;border:1px solid var(--acc);background:none;color:var(--fg);border-radius:6px;cursor:pointer}}
 button.on{{background:var(--acc);color:var(--bg)}}</style></head><body>
-<h1>{esc(title)}</h1><p>{len(rows)} samples. Red border = label active, grey = context.</p>
+<h1>{esc(title)}</h1><p>{len(rows)} events in {len(groups)} clips. Red border = a label is active, grey = context.
+Each listed event is circled in its animals' colours while active.</p>
 <div>{btns}</div><div id="g">{''.join(cards)}</div><script>
 document.querySelectorAll('button').forEach(b=>b.onclick=()=>{{
 document.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
-document.querySelectorAll('.card').forEach(c=>c.style.display=(b.dataset.f==='all'||c.dataset.type===b.dataset.f)?'':'none');}});
+document.querySelectorAll('.card').forEach(c=>c.style.display=(b.dataset.f==='all'||c.dataset.type.split(' ').includes(b.dataset.f))?'':'none');}});
 </script></body></html>"""
     path.write_text(doc, encoding="utf-8")
+
+
+def _event_row(ev: pd.Series, pf: Optional[pd.DataFrame], fps: float) -> Dict[str, Any]:
+    """Workbook row shared by both modes (event columns + per-frame aggregates)."""
+    st = event_stats(ev, pf)
+    dur = ev["duration_sec"] if pd.notna(ev["duration_sec"]) else ev["n_frames"] / fps
+    peak = None if pd.isna(ev["peak_score"]) else float(ev["peak_score"])
+    return {
+        "sample_id": ev["sample_id"], "pair_label": pair_label(ev["pair_key"]),
+        "contact_type": ev["contact_type"], "contact_label": TYPE_NAMES.get(ev["contact_type"], ev["contact_type"]),
+        "start_time": fmt_time(ev["start_frame"] / fps), "end_time": fmt_time((ev["end_frame"] + 1) / fps),
+        "duration_sec": round(float(dur), 3), "duration_frames": int(ev["n_frames"]),
+        "duration_tertile": ev["duration_tertile"], "peak_score": peak,
+        "mean_score": st.get("mean_score"), "secondary_type": st.get("secondary_type"),
+        "secondary_score": st.get("secondary_score"),
+        **{f"frac_{f}": st.get(f"frac_{f}") for f in QUALITY_FLAGS},
+        "mean_nose_nose_dist_bl": st.get("mean_nose_nose_dist_bl"),
+        "mean_mask_contact_bl": st.get("mean_mask_contact_bl"),
+    }
 
 
 def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     """Run the `sample` subcommand."""
     import cv2
     cfg = load_config(overrides)
-    for k in ("per_type", "pad_sec", "speed", "seed", "source", "types"):
+    for k in ("per_type", "pad_sec", "speed", "seed", "source", "types", "group_by"):
         v = getattr(args, k, None)
         if v is not None:
             cfg[k] = v
@@ -609,50 +790,67 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     if cfg["types"]:
         keep = {t.strip().upper() for t in str(cfg["types"]).split(",")}
         events = events[events["contact_type"].isin(keep)]
+    events = events.reset_index(drop=True)
+    events["duration_tertile"] = ""
+    for t, g in events.groupby("contact_type"):
+        events.loc[g.index, "duration_tertile"] = assign_tertiles(g["duration_sec"]).values
 
     parts, avail, sampled = [], {}, {}
     for t, g in events.groupby("contact_type"):
-        s = stratified_sample(g.reset_index(drop=True), int(cfg["per_type"]), int(cfg["seed"]))
+        s = stratified_sample(g, int(cfg["per_type"]), int(cfg["seed"]))
         avail[t], sampled[t] = len(g), len(s)
         parts.append(s)
     if not parts:
         logger.error("No events to sample")
         return 1
-    sample = pd.concat(parts).sort_values(["contact_type", "start_frame"]).reset_index(drop=True)
-    sample["sample_id"] = [f"V{i + 1:03d}" for i in range(len(sample))]
+    sample = pd.concat(parts).sort_values(["contact_type", "start_frame"])
 
     cap = cv2.VideoCapture(str(video))
     nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     pad = int(round(float(cfg["pad_sec"]) * fps))
+    speed, crf = float(cfg["speed"]), int(cfg["crf"])
     colors = overlay_colors(run)
     pf_pairs: Dict[str, pd.DataFrame] = {}
     if pf is not None:
         for k, g in pf.groupby(pf["pair_key"].astype(str)):
             pf_pairs[k] = g.drop_duplicates("frame_idx").set_index("frame_idx")
 
-    rows = []
-    for _, ev in sample.iterrows():
-        sid = ev["sample_id"]
-        clip, sheet = f"clips/{sid}_{ev['contact_type']}_{pair_label(ev['pair_key'])}.mp4", f"thumbs/{sid}.png"
-        n = cut_clip(cap, sid, ev, pf_pairs.get(ev["pair_key"]), fps, pad, nframes,
-                     out / clip, out / sheet, float(cfg["speed"]), int(cfg["crf"]), colors)
-        st = event_stats(ev, pf)
-        dur = ev["duration_sec"] if pd.notna(ev["duration_sec"]) else ev["n_frames"] / fps
-        peak = None if pd.isna(ev["peak_score"]) else float(ev["peak_score"])
-        rows.append({
-            "sample_id": sid, "clip": clip, "thumbnail": sheet, "pair_label": pair_label(ev["pair_key"]),
-            "contact_type": ev["contact_type"], "contact_label": TYPE_NAMES.get(ev["contact_type"], ev["contact_type"]),
-            "start_time": fmt_time(ev["start_frame"] / fps), "end_time": fmt_time((ev["end_frame"] + 1) / fps),
-            "duration_sec": round(float(dur), 3), "duration_frames": int(ev["n_frames"]),
-            "duration_tertile": ev["duration_tertile"], "peak_score": peak,
-            "mean_score": st.get("mean_score"), "secondary_type": st.get("secondary_type"),
-            "secondary_score": st.get("secondary_score"),
-            **{f"frac_{f}": st.get(f"frac_{f}") for f in QUALITY_FLAGS},
-            "mean_nose_nose_dist_bl": st.get("mean_nose_nose_dist_bl"),
-            "mean_mask_contact_bl": st.get("mean_mask_contact_bl"),
-            "frames_written": n,
-        })
-        logger.info("%s %s %s -> %d frames", sid, ev["contact_type"], pair_label(ev["pair_key"]), n)
+    rows: List[Dict[str, Any]] = []
+    n_clips = 0
+    if str(cfg["group_by"]) == "event":
+        sample = sample.reset_index(drop=True)
+        sample["sample_id"] = [f"V{i + 1:03d}" for i in range(len(sample))]
+        for _, ev in sample.iterrows():
+            sid = ev["sample_id"]
+            clip, sheet = f"clips/{sid}_{ev['contact_type']}_{pair_label(ev['pair_key'])}.mp4", f"thumbs/{sid}.png"
+            n = cut_clip(cap, sid, ev, pf_pairs.get(str(ev["pair_key"])), fps, pad, nframes,
+                         out / clip, out / sheet, speed, crf, colors)
+            rows.append({**_event_row(ev, pf, fps), "clip": clip, "thumbnail": sheet, "frames_written": n})
+            n_clips += 1
+            logger.info("%s %s %s -> %d frames", sid, ev["contact_type"], pair_label(ev["pair_key"]), n)
+    else:
+        max_frames = int(round(float(cfg["max_scene_sec"]) * fps)) if cfg.get("max_scene_sec") else None
+        scenes = build_scenes(sample, events, pad, nframes, max_frames)
+        ids: Dict[Tuple[str, str, int], str] = {}
+        for sc in scenes:
+            sc["events"]["sample_id"] = [f"{sc['scene_id']}.{i + 1}" for i in range(len(sc["events"]))]
+            ids.update(zip(_event_keys(sc["events"]), sc["events"]["sample_id"]))
+        for sc in scenes:
+            evs, vis = sc["events"], sc["visible"]
+            vis["sample_id"] = [ids.get(k, "") for k in _event_keys(vis)]
+            clip, sheet = f"clips/{sc['scene_id']}.mp4", f"thumbs/{sc['scene_id']}.png"
+            n = cut_scene_clip(cap, sc, vis, pf_pairs, fps, out / clip, out / sheet, speed, crf, colors)
+            n_clips += 1
+            for _, ev in evs.iterrows():
+                lo = max(int(ev["start_frame"]), sc["a"]) - sc["a"]
+                hi = min(int(ev["end_frame"]), sc["b"]) + 1 - sc["a"]
+                rows.append({**_event_row(ev, pf, fps), "scene_id": sc["scene_id"], "clip": clip,
+                             "thumbnail": sheet, "in_sample": bool(ev["in_sample"]),
+                             "partial": bool(ev["partial"]),
+                             "clip_from": fmt_time(lo / (fps * speed)), "clip_to": fmt_time(hi / (fps * speed)),
+                             "frames_written": n})
+            logger.info("%s: %d event(s) to review (%d visible), frames %d-%d -> %d frames written",
+                        sc["scene_id"], len(evs), len(vis), sc["a"], sc["b"], n)
     cap.release()
 
     write_review_xlsx(rows, out / "review.xlsx")
@@ -660,8 +858,8 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     (out / "manifest.json").write_text(json.dumps({
         "source": src, "run_dir": str(run), "video": str(video), "fps": fps, "params": cfg,
         "seed": cfg["seed"], "available_per_type": avail, "sampled_per_type": sampled,
-        "n_samples": len(rows)}, indent=2, default=str))
-    logger.info("Wrote %d clips to %s", len(rows), out)
+        "n_samples": len(rows), "n_clips": n_clips}, indent=2, default=str))
+    logger.info("Wrote %d clips for %d events to %s", n_clips, len(rows), out)
     return 0
 
 
@@ -823,6 +1021,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     sp.add_argument("--seed", type=int)
     sp.add_argument("--types")
     sp.add_argument("--source", choices=["events", "bouts"])
+    sp.add_argument("--group-by", dest="group_by", choices=["scene", "event"],
+                    help="scene (default): one clip per group of overlapping events; event: one clip each")
     sp.add_argument("--out")
     sc = sub.add_parser("score", help="score a filled review.xlsx")
     sc.add_argument("review")
