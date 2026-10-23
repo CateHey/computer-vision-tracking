@@ -163,7 +163,20 @@ post-processing, Excel/PDF report, validation sample, scoring, zip) ran end to e
 synthetic sessions from `scripts/make_demo_session.py`: 11 evidence clips for 120 s,
 2 for 10 s. SAM3 + CUTIE themselves can only run on a GPU node.
 
-(pending Slurm account)
+First run, 2026-10-22 22:09 (job 30407392, 5 s test): Slurm accepted the job, A100 80GB
+(MIG 4g.40gb slice), `torch ... cuda True`. It then failed at import with
+`ModuleNotFoundError: No module named 'sam2'`: `src/common/model_loaders.py` imported SAM2
+at module level although `cutie_composite` never uses it. Fixed by importing SAM2 lazily;
+the full `cutie_composite` import chain was then checked without SAM2 installed.
+
+Waiting for the Slurm sync after joining the group (about 1 h) without polling by hand:
+
+```bash
+nohup bash -c 'until sacctmgr -n show assoc user=uqcvaras | grep -q a_qbi; do sleep 300; done; date; sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2 5' > ~/wait_submit.log 2>&1 &
+cat ~/wait_submit.log      # 'Submitted batch job N' once it went through
+```
+
+(second run pending)
 
 ## Every new login
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Tuple
 
 from ultralytics import YOLO
 
-from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor
+# SAM2 is imported lazily: cutie_composite (production) uses SAM3 + CUTIE and
+# never installs SAM2, but it imports load_yolo from this module.
+if TYPE_CHECKING:
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 from src.common.config_loader import get_device
 
@@ -54,6 +56,9 @@ def load_sam2_predictor(
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"SAM2 checkpoint not found: {checkpoint_path}")
     logger.info("Loading SAM2 from %s (config: %s)", checkpoint_path, config_name)
+    from sam2.build_sam import build_sam2
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+
     sam2_model = build_sam2(config_name, str(checkpoint_path), device=device)
     return SAM2ImagePredictor(sam2_model)
 
