@@ -180,7 +180,18 @@ SAM3 loads offline on the compute node: the job sets `HF_HUB_OFFLINE=1` (the mod
 `~/.cache/huggingface` from step 7) and a failed Hugging Face login only logs a warning.
 The job's `.out`/`.err` files appear only once the job leaves `PD` (pending) and starts.
 
-(second run, job 30428224, pending)
+Second run, 2026-10-23 (job 30428224, 5 s = 125 frames): the whole pipeline ran on the GPU.
+SAM3 + CUTIE tracked both mice, pose detected in 125/125 frames for each, 0 % carry-over,
+report.pdf and the zip were written (2.2 MB). Two issues:
+
+- `Contact post-processing failed: No module named 'scripts.postprocess_contacts_simple'`.
+  The editable CUTIE install puts `models/cutie` on sys.path, and Cutie ships its own
+  `scripts/__init__.py`, which shadowed this repo's `scripts/` (a namespace package).
+  Fixed by adding `scripts/__init__.py` and `src/__init__.py`; reproduced and verified locally.
+- 0 contact bouts in 5 s, so the validation sample had nothing to draw from (expected for
+  such a short clip; the job continues and still zips the run).
+
+(third run with the full 10 s clip pending)
 
 ## Every new login
 
