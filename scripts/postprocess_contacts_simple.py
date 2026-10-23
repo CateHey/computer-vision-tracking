@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
-CONTACT_TYPES = ["N2N", "N2AG", "N2B", "T2T", "FOL", "SBS"]
+CONTACT_TYPES = ["N2N", "N2AG", "N2B", "FOL", "SBS"]
 ALL_EVENT_TYPES = CONTACT_TYPES + ["NC"]
 PRIORITY_ORDER = {ct: i for i, ct in enumerate(CONTACT_TYPES)}
 
@@ -49,7 +49,6 @@ CT_COLORS = {
     "N2N": "#1f77b4",
     "N2AG": "#ff7f0e",
     "N2B": "#2ca02c",
-    "T2T": "#8c564b",
     "FOL": "#d62728",
     "SBS": "#9467bd",
     "NC": "#cccccc",
@@ -59,7 +58,6 @@ TYPE_LABELS = {
     "N2N": "Nose-to-nose",
     "N2AG": "Nose-to-anogenital",
     "N2B": "Nose-to-body",
-    "T2T": "Tail-to-tail",
     "FOL": "Following",
     "SBS": "Side-by-side",
     "NC": "No contact",
@@ -536,16 +534,21 @@ def extract_events(
         end_sec = (end_frame + 1) / fps
         dur_sec = end_sec - start_sec
 
-        # Investigador: voto mayoritario
+        # Investigator: majority vote over the frames whose RAW label is this event's
+        # type (smoothing can fold a few N2AG/N2B frames into the run, and their
+        # roles must not leak in). Symmetric types (N2N, SBS) have no investigator.
         inv_slot = None
-        if "investigator_slot" in df.columns and ct != "NC":
+        raw_ct = event_slice["contact_type"].astype(str).str.strip().str.upper()
+        same_type = event_slice[raw_ct == str(ct).upper()]
+        asymmetric = ct not in ("NC", "N2N", "SBS")
+        if "investigator_slot" in df.columns and asymmetric:
             inv_vals = pd.to_numeric(
-                event_slice["investigator_slot"], errors="coerce"
+                same_type["investigator_slot"], errors="coerce"
             ).dropna()
             if len(inv_vals) > 0:
                 inv_slot = int(Counter(inv_vals.astype(int)).most_common(1)[0][0])
-        elif "investigator_role" in df.columns and has_pair and ct != "NC":
-            roles = [r for r in event_slice["investigator_role"].fillna("").astype(str)
+        elif "investigator_role" in df.columns and has_pair and asymmetric:
+            roles = [r for r in same_type["investigator_role"].fillna("").astype(str)
                      if r in ("i", "j")]
             slots = str(key).split("_")
             if roles and len(slots) == 2:
@@ -1199,6 +1202,21 @@ def run_postprocess(
     """
     import copy
     config = copy.deepcopy(DEFAULT_CONFIG)
+    # configs/contacts_postprocess_simple.yaml is the single source of truth for the
+    # temporal rules; DEFAULT_CONFIG only covers a missing file.
+    yaml_path = Path(__file__).resolve().parent.parent / "configs" / "contacts_postprocess_simple.yaml"
+    if yaml_path.exists():
+        try:
+            import yaml
+            with open(yaml_path, encoding="utf-8") as f:
+                for key, val in (yaml.safe_load(f) or {}).items():
+                    if isinstance(val, dict) and isinstance(config.get(key), dict):
+                        config[key].update(val)
+                    else:
+                        config[key] = val
+            logger.info("Post-processing config: %s", yaml_path)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not read %s (%s); using built-in defaults", yaml_path, e)
     if config_overrides:
         for key, val in config_overrides.items():
             if isinstance(val, dict) and key in config and isinstance(config[key], dict):

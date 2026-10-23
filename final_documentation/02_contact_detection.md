@@ -133,8 +133,10 @@ improvement on v1's single global threshold.
 **Post-processing.** `postprocess_contacts_simple.py` then applies three temporal
 rules to the per-frame labels — majority-vote smoothing, gap bridging, and a
 minimum duration — and emits the final event table with human-readable
-timestamps. See [03_outputs_and_reports.md](03_outputs_and_reports.md) for the
-parameter values actually used, which are **not** the ones in the YAML.
+timestamps. The values come from `configs/contacts_postprocess_simple.yaml`, which
+the pipeline reads automatically (since October 2026; before that the built-in
+defaults were applied and the YAML was ignored). The `Parameters` sheet of
+`results.xlsx` records what was applied to a given run.
 
 Threshold rationale (literature review in
 `docs/contacts/threshold_research.md`): A-SOiD's CalMS21-derived 400 ms default

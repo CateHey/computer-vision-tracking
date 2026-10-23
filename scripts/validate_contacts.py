@@ -304,6 +304,89 @@ def event_stats(ev: pd.Series, pf: Optional[pd.DataFrame]) -> Dict[str, Any]:
     return out
 
 
+# Per-animal BGR colours of the overlay video (configs: output.overlay_colors), R1..R6
+DEFAULT_COLORS: List[Tuple[int, int, int]] = [
+    (0, 0, 255), (0, 255, 0), (255, 0, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
+COLOR_NAMES = {(0, 0, 255): "red", (0, 255, 0): "green", (255, 0, 0): "blue", (255, 255, 0): "yellow",
+               (255, 0, 255): "magenta", (0, 255, 255): "cyan"}
+
+
+def overlay_colors(run: Path) -> List[Tuple[int, int, int]]:
+    """BGR colour per animal from config_used.yaml (output.overlay_colors), else the defaults."""
+    try:
+        import yaml
+        cfg = yaml.safe_load((run / "config_used.yaml").read_text(encoding="utf-8")) or {}
+        raw = (cfg.get("output") or {}).get("overlay_colors")
+        if raw:
+            return [tuple(int(v) for v in c) for c in raw]
+    except Exception:  # noqa: BLE001  missing file or bad yaml: fall back
+        pass
+    return DEFAULT_COLORS
+
+
+def _pair_slots(pair_key: str) -> Tuple[Optional[int], Optional[int]]:
+    """'3_4' -> (3, 4); (None, None) if the key is not two slot indices."""
+    try:
+        i, j = str(pair_key).split("_")
+        return int(i), int(j)
+    except ValueError:
+        return None, None
+
+
+def _px(row: Optional[pd.Series], kx: str, ky: str) -> Optional[Tuple[int, int]]:
+    """Pixel point from two per-frame columns; None when absent or -1 (unavailable)."""
+    if row is None or kx not in row or ky not in row:
+        return None
+    x, y = row[kx], row[ky]
+    if pd.isna(x) or pd.isna(y) or float(x) < 0 or float(y) < 0:
+        return None
+    return int(round(float(x))), int(round(float(y)))
+
+
+def highlight_pair(frame: np.ndarray, ev: pd.Series, row: Optional[pd.Series],
+                   colors: Optional[List[Tuple[int, int, int]]]) -> None:
+    """Circle the two animals of the event's pair in their overlay colours (in place).
+
+    Needs the centroid/nose pixel columns of contacts_per_frame.csv (runs from
+    October 2026 on); older runs simply get no highlight. For N2N the two noses
+    are joined by a line.
+    """
+    import cv2
+    if row is None:
+        return
+    colors = colors or DEFAULT_COLORS
+    si, sj = _pair_slots(ev["pair_key"])
+    noses = []
+    for slot, cen_k, nose_k, bl_k in (
+            (si, ("centroid_i_x", "centroid_i_y"), ("nose_i_x", "nose_i_y"), "body_length_i_px"),
+            (sj, ("centroid_j_x", "centroid_j_y"), ("nose_j_x", "nose_j_y"), "body_length_j_px")):
+        col = colors[slot % len(colors)] if slot is not None else (255, 255, 255)
+        cen, nose = _px(row, *cen_k), _px(row, *nose_k)
+        bl = row.get(bl_k)
+        radius = int(max(30, 0.75 * float(bl))) if bl is not None and pd.notna(bl) and float(bl) > 0 else 60
+        if cen is not None:
+            cv2.circle(frame, cen, radius, (0, 0, 0), 5, cv2.LINE_AA)
+            cv2.circle(frame, cen, radius, col, 3, cv2.LINE_AA)
+            if slot is not None:
+                _put(frame, f"R{slot + 1}", (cen[0] - 16, cen[1] - radius - 10), 0.8, col, 2)
+        if nose is not None:
+            noses.append(nose)
+    if len(noses) == 2 and ev["contact_type"] == "N2N":
+        cv2.line(frame, noses[0], noses[1], (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.line(frame, noses[0], noses[1], (255, 255, 255), 2, cv2.LINE_AA)
+
+
+def pair_colour_hint(pair_key: str, colors: Optional[List[Tuple[int, int, int]]]) -> str:
+    """' (yellow / magenta)' for the banner when both colours have a name, else ''."""
+    colors = colors or DEFAULT_COLORS
+    names = []
+    for slot in _pair_slots(pair_key):
+        if slot is None:
+            return ""
+        names.append(COLOR_NAMES.get(tuple(colors[slot % len(colors)]), ""))
+    return f" ({names[0]} / {names[1]})" if all(names) else ""
+
+
 def _put(img, text, org, scale=0.55, color=(255, 255, 255), th=1):
     import cv2
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), th + 2, cv2.LINE_AA)
@@ -311,7 +394,8 @@ def _put(img, text, org, scale=0.55, color=(255, 255, 255), th=1):
 
 
 def annotate(frame: np.ndarray, sid: str, ev: pd.Series, fps: float, fidx: int,
-             row: Optional[pd.Series]) -> np.ndarray:
+             row: Optional[pd.Series],
+             colors: Optional[List[Tuple[int, int, int]]] = None) -> np.ndarray:
     """Burn banner, state border and live values into a frame."""
     import cv2
     h, w = frame.shape[:2]
@@ -322,7 +406,8 @@ def annotate(frame: np.ndarray, sid: str, ev: pd.Series, fps: float, fidx: int,
     cv2.rectangle(ban, (0, 0), (w, 58), (0, 0, 0), -1)
     cv2.rectangle(ban, (0, h - 30), (w, h), (0, 0, 0), -1)
     frame = cv2.addWeighted(ban, 0.6, frame, 0.4, 0)
-    pl = pair_label(ev["pair_key"])
+    highlight_pair(frame, ev, row, colors)
+    pl = pair_label(ev["pair_key"]) + pair_colour_hint(ev["pair_key"], colors)
     _put(frame, f"{sid} | {ctype} {TYPE_NAMES.get(ctype, '')} | look at {pl}", (8, 22), 0.6)
     _put(frame, f"event {fmt_time(ev['start_frame'] / fps)}-{fmt_time((ev['end_frame'] + 1) / fps)}  "
                 f"frames {ev['start_frame']}-{ev['end_frame']}  dur {ev['n_frames'] / fps:.2f}s  "
@@ -372,7 +457,8 @@ class _Writer:
 
 
 def cut_clip(cap, sid: str, ev: pd.Series, pf_pair: Optional[pd.DataFrame], fps: float,
-             pad: int, nframes: int, out: Path, sheet: Path, speed: float, crf: int) -> int:
+             pad: int, nframes: int, out: Path, sheet: Path, speed: float, crf: int,
+             colors: Optional[List[Tuple[int, int, int]]] = None) -> int:
     """Write the annotated clip and 3-thumbnail contact sheet. Returns frames written."""
     import cv2
     a = max(0, int(ev["start_frame"]) - pad)
@@ -391,7 +477,7 @@ def cut_clip(cap, sid: str, ev: pd.Series, pf_pair: Optional[pd.DataFrame], fps:
         if wr is None:
             wr = _Writer(out, w2, h2, fps * speed, crf)
         row = pf_pair.loc[fi] if pf_pair is not None and fi in pf_pair.index else None
-        fr = annotate(fr, sid, ev, fps, fi, row)[:h2, :w2]
+        fr = annotate(fr, sid, ev, fps, fi, row, colors)[:h2, :w2]
         wr.write(fr)
         if fi in want:
             keep[fi] = fr
@@ -409,7 +495,7 @@ REVIEWER_COLS = ["verdict", "correct_type", "reviewer", "notes"]
 
 
 def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
-    """review.xlsx with dropdowns + Spanish Instructions sheet."""
+    """review.xlsx with dropdowns + an Instructions sheet."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -443,17 +529,19 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
         dv.add(f"{L}2:{L}{last}")
     ins = wb.create_sheet("Instructions")
     text = [
-        "Instrucciones de revision",
-        "Para cada fila abra el clip (borde ROJO = etiqueta activa, GRIS = contexto) y complete 'verdict'.",
-        "Fijese en las ratas indicadas en pair_label. Los clips van a camara lenta.",
+        "Review instructions",
+        "For each row open the clip (RED border = label active, GREY = context) and fill in 'verdict'.",
+        "Watch the two animals named in pair_label: they are circled in their overlay colours",
+        "(R1 red, R2 green, R3 blue, R4 yellow, R5 magenta, R6 cyan). Clips play in slow motion.",
+        "Each clip is ONE event: one pair, one contact type, one time interval. Other animals are context.",
         "",
-        "real: el contacto fisico/social del tipo indicado ocurre visiblemente durante la mayor parte del intervalo de borde rojo.",
-        "flicker (destello): etiqueta activa pero sin contacto real, un roce momentaneo (< ~0.3 s) o jitter de keypoints.",
-        "wrong_type: hay una interaccion real pero de otro tipo; complete 'correct_type' (N2N, N2AG, N2B, SBS, FOL o NC).",
-        "tracking_error: intercambio de identidad, mascara fusionada o keypoints sobre el animal equivocado.",
-        "unsure: no se puede decidir con el clip; se excluye de la precision.",
+        "real: the physical/social contact of the given type is clearly visible for most of the red-border interval.",
+        "flicker: label active but no real contact, a momentary brush (< ~0.3 s) or keypoint jitter.",
+        "wrong_type: a real interaction, but of another type; fill in 'correct_type' (N2N, N2AG, N2B, SBS, FOL or NC).",
+        "tracking_error: identity swap, merged masks or keypoints on the wrong animal.",
+        "unsure: cannot be decided from the clip; excluded from precision.",
         "",
-        "Tambien complete 'reviewer' (sus iniciales) y 'notes' (opcional). No modifique las demas columnas.",
+        "Also fill in 'reviewer' (your initials) and 'notes' (optional). Do not edit the other columns.",
     ]
     for t in text:
         ins.append([t])
@@ -536,6 +624,7 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     cap = cv2.VideoCapture(str(video))
     nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     pad = int(round(float(cfg["pad_sec"]) * fps))
+    colors = overlay_colors(run)
     pf_pairs: Dict[str, pd.DataFrame] = {}
     if pf is not None:
         for k, g in pf.groupby(pf["pair_key"].astype(str)):
@@ -544,9 +633,9 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     rows = []
     for _, ev in sample.iterrows():
         sid = ev["sample_id"]
-        clip, sheet = f"clips/{sid}_{ev['contact_type']}_{ev['pair_key']}.mp4", f"thumbs/{sid}.png"
+        clip, sheet = f"clips/{sid}_{ev['contact_type']}_{pair_label(ev['pair_key'])}.mp4", f"thumbs/{sid}.png"
         n = cut_clip(cap, sid, ev, pf_pairs.get(ev["pair_key"]), fps, pad, nframes,
-                     out / clip, out / sheet, float(cfg["speed"]), int(cfg["crf"]))
+                     out / clip, out / sheet, float(cfg["speed"]), int(cfg["crf"]), colors)
         st = event_stats(ev, pf)
         dur = ev["duration_sec"] if pd.notna(ev["duration_sec"]) else ev["n_frames"] / fps
         peak = None if pd.isna(ev["peak_score"]) else float(ev["peak_score"])

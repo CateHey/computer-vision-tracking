@@ -278,6 +278,17 @@ class ContactEvent:
     body_length_i_px: float = 0.0
     body_length_j_px: float = 0.0
 
+    # Pixel positions of the pair (centroid and nose), used to highlight the two
+    # animals in the evidence clips. NaN when unavailable.
+    centroid_i_x: float = float("nan")
+    centroid_i_y: float = float("nan")
+    centroid_j_x: float = float("nan")
+    centroid_j_y: float = float("nan")
+    nose_i_x: float = float("nan")
+    nose_i_y: float = float("nan")
+    nose_j_x: float = float("nan")
+    nose_j_y: float = float("nan")
+
     # Rol asimétrico (quién investiga este frame; el del bout se decide aparte)
     investigator_role: Optional[str] = None
 
@@ -346,6 +357,11 @@ class ContactEvent:
             # 7
             "body_length_i_px": round(self.body_length_i_px, 2),
             "body_length_j_px": round(self.body_length_j_px, 2),
+            # 7b positions in px (evidence clips); -1 = unavailable
+            "centroid_i_x": _fmt(self.centroid_i_x), "centroid_i_y": _fmt(self.centroid_i_y),
+            "centroid_j_x": _fmt(self.centroid_j_x), "centroid_j_y": _fmt(self.centroid_j_y),
+            "nose_i_x": _fmt(self.nose_i_x), "nose_i_y": _fmt(self.nose_i_y),
+            "nose_j_x": _fmt(self.nose_j_x), "nose_j_y": _fmt(self.nose_j_y),
             # 8
             "investigator_role": self.investigator_role or "",
             "initiator": self.bout_initiator or "",
@@ -1083,6 +1099,16 @@ class ContactClassifier:
         # tail_base sigue disponible solo para la métrica tail_tail (no para tipos)
         tb_i = get_keypoint(det_i, KP_TAIL_BASE, self.min_kp_conf)
         tb_j = get_keypoint(det_j, KP_TAIL_BASE, self.min_kp_conf)
+
+        # Positions for the evidence clips
+        if centroid_i is not None:
+            event.centroid_i_x, event.centroid_i_y = float(centroid_i[0]), float(centroid_i[1])
+        if centroid_j is not None:
+            event.centroid_j_x, event.centroid_j_y = float(centroid_j[0]), float(centroid_j[1])
+        if nose_i is not None:
+            event.nose_i_x, event.nose_i_y = float(nose_i[0]), float(nose_i[1])
+        if nose_j is not None:
+            event.nose_j_x, event.nose_j_y = float(nose_j[0]), float(nose_j[1])
 
         # Buffer de paths para following (usa trasero; si no, centroide + flag F)
         if rear_i is not None:

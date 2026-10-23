@@ -292,8 +292,8 @@ defective (pre-2026-09-30) behaviour for comparison. Old `demo_as_shipped` /
    `high_mask_overlap_frames`, where the two masks may have merged.
 5. **Spot-check three or four events** by scrubbing to their timestamps from
    `event_log.txt` and confirming the label by eye.
-6. **Confirm which post-processing parameters were applied** — read the `Parameters`
-   sheet rather than assuming the YAML values (see §2.3).
+6. **Confirm which post-processing parameters were applied** in the `Parameters` sheet;
+   they must match `configs/contacts_postprocess_simple.yaml`, which the pipeline reads.
 7. **Check the handoff** in `run.log`: `Phase 1 complete. Handoff: n/N rats`. If
    `n < N`, re-run — the missing animals cannot be recovered mid-session.
 8. **Watch a unitary video.** If a second animal appears in

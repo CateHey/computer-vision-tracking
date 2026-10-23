@@ -205,6 +205,11 @@ python scripts/validate_contacts.py sample outputs/runs/<run> --source bouts
 A harmless `transformers` notice says the optional `kernels` package is missing (mask
 post-processing extras are skipped); tracking still succeeded.
 
+Fourth run, 2026-10-23 (job 30441656, `multimicevideo.avi`, 6 mice, first 10 s = 300
+frames at 30 fps): `Handoff: 6/6`, pose in 300/300 frames for every animal, 15 pairs, 86
+raw bouts -> 46 cleaned events (16 contacts: 7 N2AG, 5 SBS, 3 N2N, 1 FOL), 16 evidence
+clips, zip downloaded and opened on the laptop. First multi-animal run end to end.
+
 ## Every new login
 
 The module and the hook do not persist between sessions:
