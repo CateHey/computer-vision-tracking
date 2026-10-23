@@ -33,6 +33,8 @@ module load miniforge/26.3.2-1
 eval "$(conda shell.bash hook)"
 conda activate rattrack
 export HF_TOKEN="$(cat "$HOME/.hf_token")"
+# SAM3 is already in ~/.cache/huggingface: load it offline (compute nodes may lack internet)
+export HF_HUB_OFFLINE=1
 
 nvidia-smi -L
 python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"

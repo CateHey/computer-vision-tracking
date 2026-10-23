@@ -63,10 +63,15 @@ def load_sam3_model(device: str):
     from transformers import Sam3VideoModel, Sam3VideoProcessor
 
     token = os.environ.get("HF_TOKEN")
-    if token:
-        login(token=token)
-        logger.info("HuggingFace login successful")
-    else:
+    # With the model already cached (HF_HUB_OFFLINE=1 on Bunya) no login is needed, and
+    # compute nodes may have no internet: a failed login must not stop the run.
+    if token and os.environ.get("HF_HUB_OFFLINE") != "1":
+        try:
+            login(token=token)
+            logger.info("HuggingFace login successful")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("HuggingFace login failed (%s); using the local cache", e)
+    elif not token:
         logger.warning("HF_TOKEN not set in environment. Model load may fail.")
 
     logger.info("Loading SAM3 model from facebook/sam3...")

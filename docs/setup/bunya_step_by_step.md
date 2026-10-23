@@ -176,7 +176,11 @@ nohup bash -c 'until sacctmgr -n show assoc user=uqcvaras | grep -q a_qbi; do sl
 cat ~/wait_submit.log      # 'Submitted batch job N' once it went through
 ```
 
-(second run pending)
+SAM3 loads offline on the compute node: the job sets `HF_HUB_OFFLINE=1` (the model is in
+`~/.cache/huggingface` from step 7) and a failed Hugging Face login only logs a warning.
+The job's `.out`/`.err` files appear only once the job leaves `PD` (pending) and starts.
+
+(second run, job 30428224, pending)
 
 ## Every new login
 
