@@ -191,7 +191,19 @@ report.pdf and the zip were written (2.2 MB). Two issues:
 - 0 contact bouts in 5 s, so the validation sample had nothing to draw from (expected for
   such a short clip; the job continues and still zips the run).
 
-(third run with the full 10 s clip pending)
+Third run, 2026-10-23 (job 30428396, full 10 s = 250 frames): everything worked end to end.
+`Handoff: 2/2`, 0 % carry-over, post-processing ran (the `scripts` fix works), results.xlsx,
+report.pdf, event_log.txt and a 4.2 MB zip. Contacts: 4 raw bouts, 0.6 s in total, all
+shorter than the 0.3 s minimum, so 0 real contact events and the whole clip is one NC event.
+The validation sample therefore reports "No events to sample": not a bug, the clip has no
+contact. Evidence needs a longer stretch of the original video. To inspect the raw bouts:
+
+```bash
+python scripts/validate_contacts.py sample outputs/runs/<run> --source bouts
+```
+
+A harmless `transformers` notice says the optional `kernels` package is missing (mask
+post-processing extras are skipped); tracking still succeeded.
 
 ## Every new login
 
