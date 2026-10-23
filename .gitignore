@@ -56,3 +56,9 @@ Thumbs.db
 # --- CUTIE checkout + weights (cloned during the Bunya setup) ---
 models/cutie/
 weights/
+
+# --- Videos and archives dropped at the data/ root (keep raw videos in data/raw/) ---
+data/*.mp4
+data/*.avi
+data/*.mov
+data/*.zip
