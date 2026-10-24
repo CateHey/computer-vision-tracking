@@ -69,7 +69,7 @@ From centroid distance in body lengths, with hysteresis:
 | **N2N** | Nose-to-nose | investigative | nose of both |
 | **N2AG** | Nose-to-anogenital | investigative | nose + **`tail_start`** of the other |
 | **N2B** | Nose-to-body | investigative | nose inside the other's **mask**, gated by gaze alignment |
-| **SBS** | Side-by-side | affiliative | **mask IoU** + parallel orientation + low speed |
+| **SBS** | Side-by-side | affiliative | **shared mask border** (`mask_contact_bl`) + parallel orientation + low speed |
 | **FOL** | Following | **non-contact** | rear-path pursuit + aligned velocity + both moving |
 
 FOL sits in a *non-contact* family: following is a social behaviour but not

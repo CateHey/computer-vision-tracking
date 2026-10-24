@@ -15,6 +15,7 @@ from overhead video. Written as the methods reference for the paper.
 | [02_contact_detection.md](02_contact_detection.md) | How contacts are scored, classified into 5 types, and cleaned into events — **including three defects that currently suppress two of them** |
 | [03_outputs_and_reports.md](03_outputs_and_reports.md) | Every file produced, the report, the viewer, and how to run it |
 | [04_model_comparison.md](04_model_comparison.md) | Why CUTIE: what each segmentation backbone did and how it failed |
+| [05_contact_computation.md](05_contact_computation.md) | Code-level reference: the formulas and parameters behind every contact score, how frames become events, and the evidence trail (per-frame tables, run numbers, review clips) |
 
 ---
 
