@@ -64,6 +64,9 @@ From centroid distance in body lengths, with hysteresis:
 
 ## 2.2 The five contact types
 
+The exact formulas, thresholds and code locations are in
+[05_contact_computation.md](05_contact_computation.md).
+
 | Code | Name | Family | Depends on |
 |------|------|--------|------------|
 | **N2N** | Nose-to-nose | investigative | nose of both |
