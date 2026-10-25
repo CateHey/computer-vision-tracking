@@ -19,6 +19,8 @@
 #   mkdir -p outputs/slurm
 #   sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2      # video, number of animals
 #   sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2 5    # only the first 5 seconds
+#   OVERRIDES="contacts.n2b_nose_mask_radius_px=6" sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2 10
+#       any key=value of the config; what was applied is in <run>/config_used.yaml
 #
 # Watch:  squeue -u $USER      tail -f outputs/slurm/cutie_<JOBID>.out
 
@@ -27,6 +29,7 @@ set -euo pipefail
 VIDEO="$1"        # e.g. data/raw/original.mp4
 ANIMALS="$2"      # e.g. 2
 SECONDS_TO_RUN="${3:-}"   # optional: only the first N seconds
+OVERRIDES="${OVERRIDES:-}"  # optional config overrides, space-separated key=value
 
 cd "$HOME/computer-vision-tracking"
 module load miniforge/26.3.2-1
@@ -49,10 +52,11 @@ if [ -n "$SECONDS_TO_RUN" ]; then
     LIMIT="scan.max_frames=$FRAMES sam3.sam3_phase_frames=$SAM3_FRAMES"
     echo "Short run: $SECONDS_TO_RUN s = $FRAMES frames (SAM3 $SAM3_FRAMES, CUTIE the rest)"
 fi
+echo "Config overrides: ${OVERRIDES:-<none>}"
 
 # shellcheck disable=SC2086
 python -m src.pipelines.cutie_composite.run --config configs/hpc_cutie_composite.yaml \
-    video_path="$VIDEO" detection.max_animals="$ANIMALS" $LIMIT
+    video_path="$VIDEO" detection.max_animals="$ANIMALS" $LIMIT $OVERRIDES
 
 RUN="$(ls -d outputs/runs/*_cutie_composite | sort | tail -1)"
 echo "Run: $RUN"
