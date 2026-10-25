@@ -53,6 +53,7 @@ from src.pipelines.sam3_composite.run import (
     shift_mask_by_velocity,
     _carry_over_keypoints,
 )
+from src.pipelines.cutie_composite.sam3_init import select_sam3_init
 from src.pipelines.cutie_composite.cutie_tracker import (
     CutieTracker,
     slot_masks_to_index_mask,
@@ -310,10 +311,31 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         num_slots=num_slots, prev_centroids=state["prev_centroids"],
         is_first_chunk=True, manual_init_points=None, max_dist=max_assignment_dist)
 
-    sam3_results = process_chunk_with_sam3(
-        sam3_model, sam3_processor, phase1_frames,
-        text_prompt=text_prompt, device=device,
-        score_threshold=score_threshold, init_points=chunk_init_points)
+    require_all = bool(sam3_cfg.get("require_all_animals", True))
+    init = select_sam3_init(
+        phase1_frames,
+        lambda frames, thr, pts: process_chunk_with_sam3(
+            sam3_model, sam3_processor, frames, text_prompt=text_prompt, device=device,
+            score_threshold=thr, init_points=pts),
+        num_slots, score_threshold,
+        sam3_cfg.get("init_retry_thresholds") or [],
+        sam3_cfg.get("init_retry_start_frames") or [],
+        init_points=chunk_init_points)
+    sam3_results = init["results"]
+    logger.info("SAM3 init: %d/%d animals (start frame %d, threshold %.2f, %d attempt(s))",
+                init["count"], num_slots, init["start_frame"], init["threshold"], init["attempts"])
+    if init["count"] < num_slots:
+        if require_all:
+            logger.error("SAM3 found only %d/%d animals after %d attempt(s); aborting "
+                         "(sam3.require_all_animals: true). Check detection.max_animals and the "
+                         "first frames of the video.", init["count"], num_slots, init["attempts"])
+            main_writer.release()
+            for w in unitary_writers:
+                if w is not None:
+                    w.release()
+            raise SystemExit(2)
+        logger.warning("SAM3 found only %d/%d animals; continuing with partial animals",
+                       init["count"], num_slots)
 
     first_assignment_done = False
     last_good_slot_masks: List[Optional[np.ndarray]] = [None] * num_slots
@@ -355,8 +377,17 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
-    logger.info("=== PHASE 1 complete. Handoff: %d/%d rats ===",
-                sum(1 for m in last_good_slot_masks if m is not None), num_slots)
+    handoff_count = sum(1 for m in last_good_slot_masks if m is not None)
+    logger.info("=== PHASE 1 complete. Handoff: %d/%d rats ===", handoff_count, num_slots)
+    if handoff_count < num_slots and require_all:
+        logger.error("Handoff has %d/%d animals: one was lost during the SAM3 phase. Aborting "
+                     "(sam3.require_all_animals: true); a missing animal cannot be recovered later.",
+                     handoff_count, num_slots)
+        main_writer.release()
+        for w in unitary_writers:
+            if w is not None:
+                w.release()
+        raise SystemExit(2)
 
     # ==================================================================
     # HANDOFF — seed Cutie

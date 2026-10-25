@@ -32,6 +32,9 @@ detection:
 sam3:
   text_prompt: "mouse"
   score_threshold: 0.5
+  init_retry_thresholds: [0.4, 0.3]   # if fewer than max_animals are found at the start, rerun the SAM3 phase with these
+  init_retry_start_frames: [30, 60]   # then from these later frames (frames before them get no masks)
+  require_all_animals: true           # abort the run (job fails) when an animal is still missing at the handoff
 
 cutie:
   max_internal_size: 480           # lower for local (less VRAM). Bump to 720 if GPU allows

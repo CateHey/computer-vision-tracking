@@ -44,8 +44,10 @@ detection:
 sam3:
   text_prompt: "mouse"
   score_threshold: 0.5
-  sam3_phase_frames: 125           # frames que trackea SAM3 antes de pasar a Cutie
-  init_video_frames: 10            # (no usado en 2-fases, se mantiene por compat)
+  sam3_phase_frames: 125           # frames tracked by SAM3 before the CUTIE handoff
+  init_retry_thresholds: [0.4, 0.3]   # if fewer than max_animals are found at the start, rerun the SAM3 phase with these
+  init_retry_start_frames: [30, 60]   # then from these later frames (frames before them get no masks)
+  require_all_animals: true           # abort the run (job fails) when an animal is still missing at the handoff
 
 # Cutie (the continuous tracker)
 cutie:
