@@ -37,6 +37,8 @@ python -m src.pipelines.centroid.run --config configs/local_centroid.yaml contac
 Details: [docs/setup/local.md](docs/setup/local.md). Configs must list the 7 keypoint names in model
 index order (`tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear`); see `CLAUDE.md`.
 
+**Before reporting contact counts, read [OPEN_ISSUES.md](OPEN_ISSUES.md)**: the decisions still pending (what distance counts as contact, per-pair counting with several animals, minimum durations).
+
 ## Quick start (Bunya HPC)
 
 ```bash

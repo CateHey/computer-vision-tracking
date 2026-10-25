@@ -87,6 +87,9 @@ flicker rate by duration, and min-duration / min-score threshold tables. Tests: 
 
 ## Documentation
 
+`OPEN_ISSUES.md` (repo root) is the checklist of decisions and fixes still pending before contact counts are
+reported; update it when one is resolved.
+
 `final_documentation/` is the current reference (01 pipeline, 02 contact detection, 03 outputs and reports,
 04 model comparison, 05 contact computation: formulas, parameters and code references per contact type). `docs/` is older design history (see `docs/README.md`).
 
