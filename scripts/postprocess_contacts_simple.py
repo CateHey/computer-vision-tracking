@@ -300,6 +300,7 @@ def compute_labels(df: pd.DataFrame, config: dict, fps: float):
     gap_max = config.get("gap_bridging", {}).get("max_gap", 3)
     min_bout_sec = config.get("min_bout", {}).get("duration_sec", 0.3)
     min_bout_frames = max(1, round(min_bout_sec * fps))
+    per_type_frames = min_frames_by_type(config, fps)
 
     raw_types = normalize_labels(df["contact_type"])
     types = raw_types.copy()
@@ -308,6 +309,7 @@ def compute_labels(df: pd.DataFrame, config: dict, fps: float):
         t = apply_majority_vote(t, smooth_window)
         t = apply_gap_bridging(t, gap_max)
         t = apply_min_bout_filter(t, min_bout_frames)
+        t = apply_min_bout_filter_by_type(t, per_type_frames)
         types[idx] = t
     real_types = np.where(types == "", "NC", types).astype(object)
     return raw_types, real_types
@@ -464,6 +466,34 @@ def apply_min_bout_filter(types: np.ndarray, min_frames: int) -> np.ndarray:
             i += 1
 
     return result
+
+
+def apply_min_bout_filter_by_type(types: np.ndarray, min_frames_by_type: Dict[str, int]) -> np.ndarray:
+    """Remove runs of a given type shorter than that type's own minimum (frames).
+    Types absent from the dict keep the global minimum already applied."""
+    result = types.copy()
+    if not min_frames_by_type:
+        return result
+    n = len(result)
+    i = 0
+    while i < n:
+        if result[i] != "":
+            ct = result[i]
+            start = i
+            while i < n and result[i] == ct:
+                i += 1
+            need = min_frames_by_type.get(ct)
+            if need is not None and i - start < need:
+                result[start:i] = ""
+        else:
+            i += 1
+    return result
+
+
+def min_frames_by_type(config: dict, fps: float) -> Dict[str, int]:
+    """min_bout.by_type (seconds per contact type) -> frames."""
+    by_type = config.get("min_bout", {}).get("by_type") or {}
+    return {str(k).upper(): max(1, round(float(v) * fps)) for k, v in by_type.items()}
 
 
 # ── Event extraction ───────────────────────────────────────────────────────
@@ -890,6 +920,7 @@ def write_real_summary(
             "gap_bridging_max_gap": config.get("gap_bridging", {}).get("max_gap", 3),
             "min_bout_duration_sec": min_bout_sec,
             "min_bout_duration_frames": min_bout_frames,
+            "min_bout_by_type_sec": config.get("min_bout", {}).get("by_type") or {},
         },
         "raw_summary": {
             "contact_frames": raw_contact_frames,

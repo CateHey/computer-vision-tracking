@@ -40,6 +40,11 @@ gap_bridging:
 # minimum for meaningful social contact (literature consensus).
 min_bout:
   duration_sec: 0.3      # seconds (9 frames at 30fps). Literature option: 0.5.
+  # Per-type minimums on top of duration_sec (seconds). Empty = none. The tracker's
+  # own bout minimum for FOL is 12 frames (0.4 s); Live Mouse Tracker drops follow
+  # events shorter than 7 frames. To align the reported events with the tracker:
+  #   by_type: {FOL: 0.4}
+  by_type: {}
 
 # --- FPS fallback ---
 # Used only if no --fps flag, no session_summary.json, and no --video_path.

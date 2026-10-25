@@ -77,13 +77,17 @@ contacts:
   follow_radius_bl_exit: 0.6
   follow_min_speed_bls: 0.15
   follow_alignment_cos: 0.6
+  # --- keys that were code defaults, now explicit (see final_documentation/06) ---
+  min_keypoint_conf: 0.3            # keypoints below this are ignored for distances
+  fallback_body_length_px: 120       # body length until the estimator warms up (measured 164 px on the 6-mouse video)
+  social_anogenital_split: 0.55     # nose projected behind this fraction of nose->mid_body->tail_start = anogenital. MARS puts the genital boundary midway hips-tail base (~0.75-0.8)
+  n2b_nose_mask_radius_px: 0        # 0 = nose pixel inside the other mask (strict); e.g. 6 = within 6 px of it (LMT-style touching)
   activation_threshold: 0.5
   activation_threshold_rare: 0.35
   secondary_threshold: 0.4
   bout_max_gap_frames: 3
   bout_min_frames_n2n: 6
   bout_min_frames_n2ag: 6
-  bout_min_frames_t2t: 6
   bout_min_frames_fol: 12
   bout_min_frames_sbs: 6
   bout_min_frames_n2b: 6

@@ -83,6 +83,15 @@ def test_no_pair_key_behaves_as_before():
     assert len(ev[ev.contact_type == "N2N"]) == 1
 
 
+def test_per_type_minimum_bout_duration():
+    df = _table(run=(50, 60), ct_run="FOL")           # 10 frames of FOL = 0.33 s at 30 fps
+    _, real = compute_labels(df, DEFAULT_CONFIG, FPS)
+    assert "FOL" in set(real)                        # survives the global 0.3 s
+    cfg = {**DEFAULT_CONFIG, "min_bout": {"duration_sec": 0.3, "by_type": {"FOL": 0.4}}}
+    _, real = compute_labels(df, cfg, FPS)
+    assert "FOL" not in set(real)                    # removed by the 0.4 s FOL minimum
+
+
 def test_investigator_votes_only_over_frames_of_the_event_type():
     # Two raw N2B frames (role j) inside an N2AG run (role i) are folded into the run by
     # smoothing; the investigator must come from the N2AG frames only.

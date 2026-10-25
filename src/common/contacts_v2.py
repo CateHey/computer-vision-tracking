@@ -305,6 +305,11 @@ class ContactEvent:
     merged_state: bool = False
     fol_used_centroid: bool = False       # cambio F
 
+    # Simultaneous contacts of each animal in this frame (over all its pairs):
+    # 1 = dyadic only, 2 = the animal is in contact with two others (LMT 'group3').
+    n_contacts_i: int = 0
+    n_contacts_j: int = 0
+
     def to_csv_row(self) -> Dict[str, Any]:
         """Fila para contacts_per_frame.csv (Hoja A).
 
@@ -374,6 +379,9 @@ class ContactEvent:
             "single_detection": int(self.single_detection),
             "merged_state": int(self.merged_state),
             "fol_used_centroid": int(self.fol_used_centroid),
+            # 11b simultaneous contacts per animal (group configurations)
+            "n_contacts_i": self.n_contacts_i,
+            "n_contacts_j": self.n_contacts_j,
         }
         # 10
         row.update(self.scores.to_dict())
@@ -789,6 +797,10 @@ class BodyLengthEstimator:
 
     def current(self) -> float:
         if self._total_frames_seen < self.warmup_frames or len(self._observations) < 10:
+            # Warm start: as soon as a few real observations exist, use their median
+            # instead of the configured fallback (which can be 30 % off for a new arena).
+            if len(self._observations) >= 3:
+                return float(np.median(list(self._observations)))
             return self.fallback_px
         return self._cached_value
 
@@ -1022,6 +1034,10 @@ class ContactClassifier:
 
         # Overlap mask warning
         self.mask_overlap_warning = float(config.get("mask_overlap_warning", 0.5))
+        # N2B: 0 = the nose pixel must be inside the other mask (strict; with disjoint
+        # CUTIE masks it almost never happens); r > 0 = any mask pixel within r px of
+        # the nose counts (LMT-style "masks touching", see final_documentation/06).
+        self.n2b_radius = int(config.get("n2b_nose_mask_radius_px", 0))
 
         # Línea media (cambio: separa social vs anogenital por proyección sobre el eje)
         # t in [0,1] sobre nose(0) -> mid_body -> tail_start(1).
@@ -1555,18 +1571,8 @@ class ContactClassifier:
         if nose_nose_bl < self.contact_far or nose_i_rear_j_bl < self.contact_far or nose_j_rear_i_bl < self.contact_far:
             guard_factor = 0.7
 
-        score_i_in_j = 0.0
-        if nose_i is not None and mask_j is not None:
-            ix, iy = int(round(nose_i[0])), int(round(nose_i[1]))
-            if 0 <= iy < mask_j.shape[0] and 0 <= ix < mask_j.shape[1]:
-                if mask_j[iy, ix]:
-                    score_i_in_j = 1.0
-        score_j_in_i = 0.0
-        if nose_j is not None and mask_i is not None:
-            jx, jy = int(round(nose_j[0])), int(round(nose_j[1]))
-            if 0 <= jy < mask_i.shape[0] and 0 <= jx < mask_i.shape[1]:
-                if mask_i[jy, jx]:
-                    score_j_in_i = 1.0
+        score_i_in_j = 1.0 if self._nose_touches_mask(nose_i, mask_j) else 0.0
+        score_j_in_i = 1.0 if self._nose_touches_mask(nose_j, mask_i) else 0.0
 
         align_i = self._gaze_alignment(orient_i, nose_i, centroid_j)
         align_j = self._gaze_alignment(orient_j, nose_j, centroid_i)
@@ -1580,6 +1586,20 @@ class ContactClassifier:
         elif score_i_in_j > 0:
             return score_i_in_j, "i"
         return 0.0, None
+
+    def _nose_touches_mask(self, nose, mask) -> bool:
+        """Nose pixel inside the mask (n2b_radius = 0) or any mask pixel within
+        n2b_radius px of it (square window)."""
+        if nose is None or mask is None:
+            return False
+        x, y = int(round(nose[0])), int(round(nose[1]))
+        h, w = mask.shape[:2]
+        r = self.n2b_radius
+        if r <= 0:
+            return 0 <= y < h and 0 <= x < w and bool(mask[y, x])
+        y0, y1 = max(0, y - r), min(h, y + r + 1)
+        x0, x1 = max(0, x - r), min(w, x + r + 1)
+        return y1 > y0 and x1 > x0 and bool(np.asarray(mask[y0:y1, x0:x1]).any())
 
     # -------------------------- Dinámica (cambio D) --------------------------
 
@@ -1950,6 +1970,7 @@ class ContactTrackerV2:
         time_sec = frame_idx / self.fps
 
         slot_dets = self._map_detections_to_slots(detections, slot_centroids)
+        frame_events: List[ContactEvent] = []
         for slot_idx in range(self.num_slots):
             self.body_length_estimators[slot_idx].observe(slot_dets.get(slot_idx))
             self.velocity_estimators[slot_idx].update(
@@ -1975,6 +1996,19 @@ class ContactTrackerV2:
             self.bout_manager.process_event(event)
             self.dynamics_tracker.process_event(event)   # cambio D
             self._all_events.append(event)
+            frame_events.append(event)
+
+        # Group configurations: how many animals each one touches this frame
+        # (LMT: group2 = one other, group3 = two others). Pairs stay independent.
+        per_slot = [0] * self.num_slots
+        for ev in frame_events:
+            if ev.contact_type != ContactType.NONE and ev.family != Family.NON_CONTACT:
+                i, j = self.classifiers[ev.pair_key].slot_i, self.classifiers[ev.pair_key].slot_j
+                per_slot[i] += 1
+                per_slot[j] += 1
+        for ev in frame_events:
+            clf = self.classifiers[ev.pair_key]
+            ev.n_contacts_i, ev.n_contacts_j = per_slot[clf.slot_i], per_slot[clf.slot_j]
 
         self._frames_processed += 1
 
@@ -2176,6 +2210,15 @@ class ContactTrackerV2:
             "fol_used_centroid": sum(1 for e in self._all_events if e.fol_used_centroid),
         }
 
+        # Frames in which at least one animal touches two or more others (LMT group3+)
+        multi_contact = {
+            "frames_with_an_animal_in_2plus_contacts": len({
+                e.frame_idx for e in self._all_events if max(e.n_contacts_i, e.n_contacts_j) >= 2}),
+            "pair_frames_where_an_animal_has_2plus_contacts": sum(
+                1 for e in self._all_events if e.contact_type != ContactType.NONE
+                and max(e.n_contacts_i, e.n_contacts_j) >= 2),
+        }
+
         activation = float(self.config.get("activation_threshold", 0.5))
         rare = float(self.config.get("activation_threshold_rare", 0.35))
         concurrent_frames = 0
@@ -2213,6 +2256,7 @@ class ContactTrackerV2:
             "pair_summary": pair_summary,
             "dynamics_summary": dyn_summary,
             "quality_flags": quality_flags,
+            "multi_contact": multi_contact,
             "concurrent_frames": concurrent_frames,
             "concurrent_pairs": concurrent_pairs,
             "total_bouts": len(bouts),
