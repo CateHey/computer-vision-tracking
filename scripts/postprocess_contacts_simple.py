@@ -1252,7 +1252,9 @@ def run_postprocess(
     events_df = extract_events(df, real_types, fps)
 
     raw_bout_count = sum(_count_raw_bouts(raw_types, groups).values())
-    logger.info("Post-processing: %d raw bouts -> %d real events", raw_bout_count, len(events_df))
+    n_contact = int((events_df["contact_type"] != "NC").sum()) if len(events_df) else 0
+    logger.info("Post-processing: %d raw bouts -> %d contact events (+%d no-contact spans)",
+                raw_bout_count, n_contact, len(events_df) - n_contact)
 
     write_real_per_frame(df, real_types, contacts_dir)
     write_real_events(events_df, contacts_dir)

@@ -882,8 +882,18 @@ def compute_summary(df: pd.DataFrame, cfg: dict) -> Dict[str, Any]:
     df = df[df["verdict"].isin(VERDICTS)]
     df["duration_sec"] = pd.to_numeric(df["duration_sec"], errors="coerce")
     df["peak_score"] = pd.to_numeric(df.get("peak_score"), errors="coerce")
+    # Precision is estimated on the stratified sample only. Events listed just because
+    # they overlap a sampled one (in_sample = False, scene mode) over-represent busy
+    # moments, so they are summarised apart and never enter the per-type figures.
+    extras = None
+    if "in_sample" in df.columns:
+        core_mask = df["in_sample"].astype(str).str.strip().str.lower().isin(["true", "1", "yes"])
+        extras = df[~core_mask]
+        df = df[core_mask]
     s: Dict[str, Any] = {"n_reviewed": len(df), "overall": _prec(df) if len(df) else {}}
     s["per_type"] = {t: _prec(g) for t, g in df.groupby("contact_type")}
+    s["extras"] = {"n_reviewed": int(len(extras)), "overall": _prec(extras) if len(extras) else {},
+                   "per_type": {t: _prec(g) for t, g in extras.groupby("contact_type")}} if extras is not None else None
 
     def flick(g: pd.DataFrame) -> Dict[str, Any]:
         return {"n": len(g), "n_flicker": int((g["verdict"] == "flicker").sum()),
@@ -932,7 +942,9 @@ def _pct(x: Optional[float]) -> str:
 def render_md(s: Dict[str, Any]) -> str:
     """Markdown rendering of the summary."""
     L = ["# Validation summary", "",
-         f"Reviewed samples: **{s['n_reviewed']}**. Precision = real / (reviewed - unsure), "
+         f"Reviewed samples: **{s['n_reviewed']}** (stratified sample only"
+         + (f"; {s['extras']['n_reviewed']} extra overlapping events reviewed and reported apart" if s.get("extras") else "")
+         + "). Precision = real / (reviewed - unsure), "
          "Wilson 95% CI. Small n means wide intervals - always read n.", "",
          "## Precision per type", "",
          "| type | n | real | unsure | precision | 95% CI | verdicts |", "|---|---|---|---|---|---|---|"]

@@ -1088,6 +1088,8 @@ class ContactClassifier:
             event.single_detection = True
         if valid_keypoint_count(det_i, self.min_kp_conf) < 2 or valid_keypoint_count(det_j, self.min_kp_conf) < 2:
             event.missing_keypoints = True
+        if getattr(det_i, "carried", False) or getattr(det_j, "carried", False):
+            event.stale_keypoints = True   # geometry built on carried-over keypoints
 
         # Keypoints (mapeo corregido: tail_start = trasero/anogenital)
         nose_i = get_keypoint(det_i, KP_NOSE, self.min_kp_conf)

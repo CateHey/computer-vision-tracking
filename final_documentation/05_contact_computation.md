@@ -302,7 +302,16 @@ has one row per event with `clip_from` / `clip_to`. A reviewer marks each row `r
 `flicker`, `wrong_type` (+ `correct_type`), `tracking_error` or `unsure`;
 `validate_contacts.py score` turns that into precision per type with Wilson 95 % intervals
 (`wilson_ci`, line 122; `compute_summary`, line 878), flicker rate by duration and the
-precision that minimum-duration or minimum-score thresholds would give.
+precision that minimum-duration or minimum-score thresholds would give. Only the rows of
+the stratified sample enter those figures; events listed because they overlap a sampled
+one (`in_sample = FALSE`) are summarised apart, since they over-represent busy moments.
+
+**What the 6-mouse run says about sensitivity.** Of 4 500 pair-frames, 579 carry a raw
+contact label (298 N2AG, 118 SBS, 98 N2N, 34 N2B, 31 FOL). N2B is the rarest and none of
+its 34 frames survived post-processing. 14 frames have the two masks physically touching
+(shared border > 0.2 BL) and no label at all; in half of them a nose is within 0.34 BL of
+the other body. Those are the borderline cases a reviewer should expect to find missing
+rather than mislabelled.
 
 ---
 
@@ -316,3 +325,7 @@ precision that minimum-duration or minimum-score thresholds would give.
 | SBS can latch on the very first frames (velocity history empty, body length provisional) | `_score_sbs` + section 2 | review such events with extra care; a warm-up exclusion is an option |
 | Mask IoU and `high_mask_overlap` are meaningless with CUTIE | section 2 | keep as zero or drop the column |
 | `min_keypoint_conf` for the contacts is the code default 0.3 (not in the YAML) | `ContactClassifier.__init__` | add to the config if it is to be tuned |
+| `stale_keypoints` was never set: carried-over keypoints looked like detections | `_carry_over_keypoints`, `classify` | fixed 2026-10-25: `Detection.carried` is propagated to the flag |
+| N2B needs the nose *pixel* inside the other mask; with disjoint CUTIE masks it almost never fires, so flank sniffing is under-counted | `_score_n2b`, line 1532 | use the distance from the nose to the other mask (e.g. within 4 px, as `mask_contact_px` does) |
+| Contact = nose within 0.30 BL (about 2 cm for an 8 cm mouse), latched until 0.45 BL; this is proximity, not touch | `contact_zone_bl_enter/_exit` | calibrate px/cm for the arena and decide the distance the paper calls contact |
+| One pair-event per pair: an animal in two simultaneous contacts contributes two events and twice the contact time | section 8 | define per-animal and per-group counts explicitly before reporting |

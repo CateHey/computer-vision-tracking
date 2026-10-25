@@ -234,6 +234,7 @@ def _carry_over_keypoints(
         carried.x2 += dx
         carried.y2 += dy
         carried.track_id = i + 1
+        carried.carried = True   # flagged as stale_keypoints in contacts_per_frame.csv
         if carried.keypoints:
             for kp in carried.keypoints:
                 kp.x += dx

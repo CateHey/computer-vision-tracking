@@ -28,6 +28,7 @@ class Detection:
     class_name: Optional[str] = None
     keypoints: Optional[List[Keypoint]] = None
     track_id: Optional[int] = None
+    carried: bool = False   # keypoints copied from the previous frame (carry-over), not detected
 
     def center(self) -> Tuple[float, float]:
         """Return the (cx, cy) center of the bounding box."""

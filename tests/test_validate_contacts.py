@@ -47,6 +47,17 @@ def test_wilson():
     assert vc.wilson_ci(10, 10)[1] == 1.0
 
 
+def test_precision_uses_only_the_stratified_sample():
+    rows = []
+    for i, (v, ins) in enumerate([("real", True), ("real", True), ("flicker", True),
+                                  ("flicker", False), ("flicker", False)]):
+        rows.append({"sample_id": f"S01.{i + 1}", "contact_type": "N2N", "verdict": v, "in_sample": ins,
+                     "duration_sec": 0.5, "peak_score": 0.9, "duration_tertile": "short"})
+    s = vc.compute_summary(pd.DataFrame(rows), vc.DEFAULT_CONFIG)
+    assert s["n_reviewed"] == 3 and s["per_type"]["N2N"]["precision"] == pytest.approx(2 / 3)
+    assert s["extras"]["n_reviewed"] == 2 and s["extras"]["per_type"]["N2N"]["precision"] == 0.0
+
+
 def test_score_on_synthetic_review(tmp_path):
     verdicts = ["real", "real", "flicker", "wrong_type", "unsure", "tracking_error", "real", "flicker"]
     rows = []
