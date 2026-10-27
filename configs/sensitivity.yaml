@@ -1,0 +1,24 @@
+# ============================================================================
+# Sensitivity analysis grid (scripts/sensitivity_analysis.py)
+# ============================================================================
+# One parameter is varied at a time; every other parameter stays at its baseline:
+#   activation_threshold       0.50   (ScoreMap.argmax_type, all types except FOL)
+#   activation_threshold_rare  0.35   (ScoreMap.argmax_type, FOL)
+#   smoothing_window, gap_bridging_max_gap, min_bout_sec, min_bout.by_type
+#                                     -> configs/contacts_postprocess_simple.yaml
+# The baseline value is added to a grid that does not contain it, so every table
+# has a baseline row. Override from the CLI with key=value, e.g.
+#   python scripts/sensitivity_analysis.py outputs/runs/<run> min_bout_sec=[0.3,0.5]
+#
+# Not listed here because they cannot be re-evaluated offline: the Schmitt enter/exit
+# distances and the per-type score internals are fixed at tracking time (they shape the
+# five score_* columns this analysis starts from).
+
+activation_threshold: [0.40, 0.45, 0.50, 0.55, 0.60, 0.70]   # score needed to label a frame (N2N, N2AG, SBS, N2B)
+activation_threshold_rare: [0.25, 0.35, 0.45]                # same, for the rare type FOL
+smoothing_window: [3, 5, 7]                                  # frames, odd (majority vote)
+gap_bridging_max_gap: [1, 3, 5]                              # frames
+min_bout_sec: [0.2, 0.3, 0.4, 0.5, 1.0]                      # seconds (global minimum event duration)
+
+# Optional: fps for the run. null = session_summary.json / config_used.yaml / 30.
+fps: null
