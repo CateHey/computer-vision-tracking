@@ -30,6 +30,7 @@ device: cuda
 # Scan
 scan:
   max_frames: null                 # null = all frames (Cutie handles long videos)
+  preload_all_frames: false        # false = only the SAM3 phase is held in RAM, Cutie streams the rest; true = preload every frame
 
 # Detection (rats + YOLO keypoints)
 detection:

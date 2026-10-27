@@ -15,6 +15,13 @@
 # cutie_composite + validation sample + zip, on one GPU.
 # Requires the conda env "rattrack" (docs/setup/bunya_step_by_step.md) and ~/.hf_token.
 #
+# Long sessions: only the SAM3 phase (the first 125 frames, about 0.35 GB at 960x960) is held in
+# memory; the rest of the video is streamed frame by frame, so --mem=32G is enough whatever the
+# length. A longer video only needs more time, e.g.:
+#   sbatch --time=12:00:00 slurm/run_cutie.sbatch data/raw/<video> <animals>
+# (OVERRIDES="scan.preload_all_frames=true" restores the old preload of every frame: RAM for the
+# whole video.)
+#
 # Submit from ~/computer-vision-tracking:
 #   mkdir -p outputs/slurm
 #   sbatch slurm/run_cutie.sbatch data/raw/original.mp4 2      # video, number of animals

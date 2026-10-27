@@ -47,11 +47,15 @@ from src.pipelines.sam3_composite.run import (
     load_sam3_model,
     process_chunk_with_sam3,
     get_chunk_init_points,
-    extract_frames_to_memory,
     mask_centroid,
     assign_identities_by_centroid,
     shift_mask_by_velocity,
     _carry_over_keypoints,
+)
+from src.pipelines.sam3_composite.frames import (
+    extract_frames_to_memory,
+    iter_frames_from_video,
+    video_frame_count,
 )
 from src.pipelines.cutie_composite.sam3_init import select_sam3_init
 from src.pipelines.cutie_composite.cutie_tracker import (
@@ -72,7 +76,11 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     logger.info("Using device: %s", device)
 
     video_path = config["video_path"]
-    max_frames = config.get("scan", {}).get("max_frames")
+    scan_cfg = config.get("scan", {}) or {}
+    max_frames = scan_cfg.get("max_frames")
+    # false (default): only the SAM3 phase is held in memory and phase 2 streams the rest
+    # of the video; true: preload every frame (RAM for the whole video).
+    preload_all_frames = bool(scan_cfg.get("preload_all_frames", False))
     num_slots = config.get("detection", {}).get("max_animals", 2)
     kpt_names = config.get("detection", {}).get("keypoint_names", DEFAULT_KEYPOINT_NAMES)
     kpt_min_conf = config.get("detection", {}).get("keypoint_min_conf", 0.3)
@@ -112,10 +120,24 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
 
     # ---- Frames ----
     logger.info("Extracting frames from %s ...", video_path)
-    all_frames, fps, width, height = extract_frames_to_memory(
-        video_path, start_frame=start_frame, end_frame=end_frame, max_frames=max_frames)
-    num_frames = len(all_frames)
-    logger.info("Loaded %d frames @ %.1f fps (%dx%d)", num_frames, fps, width, height)
+    if preload_all_frames:
+        all_frames, fps, width, height = extract_frames_to_memory(
+            video_path, start_frame=start_frame, end_frame=end_frame, max_frames=max_frames)
+        num_frames = len(all_frames)
+        logger.info("Loaded %d frames @ %.1f fps (%dx%d)", num_frames, fps, width, height)
+    else:
+        all_frames = None
+        num_frames = video_frame_count(
+            video_path, start_frame=start_frame, end_frame=end_frame, max_frames=max_frames)
+        phase1_planned = min(sam3_phase_frames, num_frames)
+        phase1_frames, fps, width, height = extract_frames_to_memory(
+            video_path, start_frame=start_frame, end_frame=end_frame, max_frames=phase1_planned)
+        logger.info("Video: %d frames planned; phase 1 loaded %d frames @ %.1f fps (%dx%d)",
+                    num_frames, len(phase1_frames), fps, width, height)
+        if len(phase1_frames) < phase1_planned:
+            logger.warning("Video stream ended after %d frames (metadata announced %d); "
+                           "using the real count.", len(phase1_frames), num_frames)
+            num_frames = len(phase1_frames)
     if num_frames == 0:
         logger.error("No frames extracted.")
         return run_dir
@@ -302,7 +324,8 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     # PHASE 1 — SAM3
     # ==================================================================
     logger.info("=== PHASE 1: SAM3 tracking frames [0, %d) ===", sam3_phase_frames)
-    phase1_frames = all_frames[:sam3_phase_frames]
+    if preload_all_frames:
+        phase1_frames = all_frames[:sam3_phase_frames]
 
     chunk_init_points = get_chunk_init_points(
         sam3_model, sam3_processor,
@@ -407,8 +430,10 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         device=device, max_internal_size=cutie_max_internal,
         mem_every=cutie_mem_every, max_mem_frames=cutie_max_mem,
         use_long_term=cutie_long_term, weights_path=cutie_weights)
-    cutie.init_with_masks(all_frames[handoff_idx], index_mask, num_slots)
+    handoff_frame = all_frames[handoff_idx] if preload_all_frames else phase1_frames[-1]
+    cutie.init_with_masks(handoff_frame, index_mask, num_slots)
     logger.info("Cutie seeded at frame %d.", handoff_idx)
+    del handoff_frame, phase1_frames  # streaming mode: the SAM3-phase frames are no longer needed
 
     # ==================================================================
     # PHASE 2 — Cutie (pure tracking, no safety)
@@ -416,8 +441,16 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     logger.info("=== PHASE 2: Cutie tracking frames [%d, %d) ===",
                 sam3_phase_frames, num_frames)
 
-    for gidx in range(sam3_phase_frames, num_frames):
-        frame_rgb = all_frames[gidx]
+    # (gidx, frame_rgb) with gidx = index within the run (0 = start_frame), identical in both modes.
+    if preload_all_frames:
+        phase2_frames = ((g, all_frames[g]) for g in range(sam3_phase_frames, num_frames))
+    else:
+        phase2_frames = (
+            (vidx - start_frame, frame) for vidx, frame in iter_frames_from_video(
+                video_path, start_frame=start_frame + sam3_phase_frames,
+                end_frame=start_frame + num_frames))
+
+    for gidx, frame_rgb in phase2_frames:
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
         id_mask = cutie.track(frame_rgb)
@@ -428,6 +461,11 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         state["global_frame_idx"] += 1
         if state["global_frame_idx"] % 500 == 0:
             logger.info("Processed %d/%d frames", state["global_frame_idx"], num_frames)
+
+    if state["global_frame_idx"] < num_frames:
+        logger.warning("Video stream ended after %d frames (metadata announced %d); "
+                       "using the real count.", state["global_frame_idx"], num_frames)
+        num_frames = state["global_frame_idx"]
 
     # ==================================================================
     # Finalize

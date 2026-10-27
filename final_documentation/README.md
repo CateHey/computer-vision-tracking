@@ -67,9 +67,11 @@ also carries a **dynamics** label (closing / stable / separating).
 > **Every output produced before this date (e.g. `outputs/2026-07-28_*`) is invalid
 > and must be re-run.**
 
-**Scale.** `cutie_composite` loads the whole video into memory and runs as a single
-process — it has no chunk mode, so the parallel runner and chunk merger do not
-apply to it. Those belong to the older `centroid` pipeline.
+**Scale.** `cutie_composite` holds only the SAM3 phase (the first 125 frames) in memory
+and streams the rest of the video, so memory stays roughly constant whatever the
+video length (`scan.preload_all_frames: true` preloads every frame instead). It runs
+as a single process — it has no chunk mode, so the parallel runner and chunk merger
+do not apply to it. Those belong to the older `centroid` pipeline.
 
 ---
 
