@@ -307,6 +307,42 @@ precision that minimum-duration or minimum-score thresholds would give. Only the
 the stratified sample enter those figures; events listed because they overlap a sampled
 one (`in_sample = FALSE`) are summarised apart, since they over-represent busy moments.
 
+**Recall, inter-rater agreement and provenance (added 2026-10-28).**
+
+- *Recall proxy.* Precision says nothing about contacts the pipeline never labelled.
+  `validate_contacts.py sample --nc-per-run N` (`nc_windows`, `nc_window_sec` = 3 s and
+  `nc_near_bl` = 1.0 in `configs/validation.yaml`; default 0 = off) also draws N windows from the
+  NC (no-contact) spans of the events table: spans of at least `2 * pad_sec`, minus any contact
+  event of the same pair, cut into consecutive windows and sampled at random with the seed
+  (`sample_nc_windows`). Windows in which the pair's centroid distance falls below 1.0 BL at some
+  frame are drawn first, because misses hide where the animals are close; without the per-frame
+  table the draw is uniform. Each window is its own clip (`N01`, rows `N01.1`, contact_type `NC`,
+  banner "NC window: is there any contact between R1-R2?"). The reviewer answers `nc_correct` or
+  `missed_contact` (and the missed type in `correct_type`); `review.xlsx` offers one verdict list
+  for all rows (real, flicker, wrong_type, tracking_error, nc_correct, missed_contact, unsure) and
+  `score` ignores a verdict that does not fit the row type. `score` adds `recall_proxy` to
+  `validation_summary.json` and `.md`: `miss_rate` = missed / (windows - unsure) with a Wilson
+  95 % interval and `missed_by_type`. It is a rate per sampled window, and the near-pair preference
+  makes it higher than the miss rate over all no-contact time, so report it as a proxy for recall,
+  never as recall. NC rows never enter the precision figures.
+- *Inter-rater agreement.* `validate_contacts.py score --compare review_A.xlsx review_B.xlsx`
+  matches the rows of two reviewers by `sample_id` and reduces each verdict to "the label is
+  right" (real = yes; flicker, wrong_type, tracking_error = no; unsure excluded). It writes
+  `interrater_summary.json` and `.md` next to review A: Cohen's kappa (implemented by hand,
+  `cohen_kappa`) with the raw agreement and the 2x2 table, overall over the contact rows and per
+  contact type; the NC windows form their own group (nc_correct = yes, missed_contact = no) and
+  stay out of `overall`. kappa is undefined (null) when both reviewers use a single class. The
+  list of disagreeing rows is included for adjudication.
+- *Provenance.* `src/common/provenance.py` writes `<run>/provenance.json` right after the logger
+  is set up in `cutie_composite`: UTC time, host, Python, git commit of the repo and whether
+  tracked files differ from it (`git_dirty`, with the paths), commit of the CUTIE checkout
+  (`models/cutie`), versions of torch, transformers, ultralytics, opencv and numpy, the GPU name,
+  the MD5 of the YOLO weights and of the config (`config_md5`; `config_used_md5` is the config
+  with the CLI overrides applied), plus `video_path` and `cli_overrides`. A field that cannot be
+  determined is null or "not installed" and never stops the run. `validate_contacts.py sample`
+  copies the file into `manifest.json` (`provenance`), so a validation can be tied to the exact
+  code and weights that produced the events. Runs made before this change have no file.
+
 **Per-animal view, cm calibration and a keypoint check (added 2026-10-27).**
 
 - `per_animal_summary.csv` (`PerAnimal` sheet, "Per-animal summary" block of `event_log.txt`,

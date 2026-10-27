@@ -18,6 +18,7 @@ Shared utilities used by all pipelines. When adding functionality that several p
 | `geometry.py` | `euclidean_distance()`, `resolve_overlaps()`, detection-to-slot matching |
 | `model_loaders.py` | `load_yolo()`, `load_models()` |
 | `yolo_inference.py` | `detect_only()` and YOLO result parsing (keypoints by name) |
+| `provenance.py` | `write_provenance()`: `<run>/provenance.json` (git commit, package versions, GPU, MD5 of YOLO weights and config); called by `cutie_composite` |
 | `utils.py` | `Detection`, `Keypoint`, `FrameAnalysis` dataclasses |
 | `constants.py` | `DEFAULT_KEYPOINT_NAMES` and other shared constants |
 

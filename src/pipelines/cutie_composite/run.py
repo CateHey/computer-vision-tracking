@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import copy
 import gc
+import json
 import logging
 from datetime import date
 from typing import List, Optional, Tuple
@@ -35,6 +36,7 @@ from src.common.constants import DEFAULT_KEYPOINT_NAMES
 from src.common.utils import Detection
 from src.common.io_video import create_video_writer
 from src.common.model_loaders import load_yolo
+from src.common.provenance import write_provenance
 from src.common.yolo_inference import detect_only
 from src.common.contacts_v2 import ContactTrackerV2
 from src.pipelines.isolated_composite.composition import (
@@ -70,6 +72,17 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     config = load_config(config_path, cli_overrides)
     run_dir = setup_run_dir(config, tag="cutie_composite")
     setup_logging(run_dir)
+    try:
+        prov_path = write_provenance(run_dir, config_path, extra={
+            "yolo_path": (config.get("models") or {}).get("yolo_path"),
+            "video_path": config.get("video_path"),
+            "cli_overrides": list(cli_overrides or [])})
+        prov = json.loads(prov_path.read_text(encoding="utf-8"))
+        logger.info("Provenance: git %s%s, torch %s, transformers %s -> %s", prov.get("git_commit"),
+                    " (dirty)" if prov.get("git_dirty") else "", prov["packages"]["torch"],
+                    prov["packages"]["transformers"], prov_path)
+    except Exception:  # noqa: BLE001  provenance must never stop a run
+        logger.warning("Could not write provenance.json", exc_info=True)
 
     logger.info("Starting Cutie composite pipeline (SIMPLIFIED: SAM3 -> Cutie, no safety)")
     device = get_device(config)

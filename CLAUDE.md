@@ -79,6 +79,8 @@ python scripts/postprocess_contacts_simple.py outputs/runs/<run>/contacts/ --mak
 python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 15   # one clip per scene (overlapping events), one review row per event
 # reviewer fills verdict / correct_type in <run>/validation/review.xlsx
 python scripts/validate_contacts.py score outputs/runs/<run>/validation/review.xlsx
+python scripts/validate_contacts.py sample outputs/runs/<run> --nc-per-run 20   # + 20 no-contact (NC) windows, verdicts nc_correct / missed_contact -> `recall_proxy` in score
+python scripts/validate_contacts.py score --compare <review_A.xlsx> <review_B.xlsx>   # two reviewers -> Cohen's kappa in interrater_summary.{md,json}
 ```
 
 A scene groups events that overlap in time (`group_by: scene` in `configs/validation.yaml`; `--group-by event` for one clip each);
