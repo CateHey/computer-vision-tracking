@@ -51,7 +51,7 @@ TYPE_NAMES = {
 VERDICTS = ["real", "flicker", "wrong_type", "tracking_error", "unsure"]
 CORRECT_TYPES = ["N2N", "N2AG", "N2B", "SBS", "FOL", "NC"]
 QUALITY_FLAGS = ["stale_keypoints", "missing_keypoints", "single_detection",
-                 "high_mask_overlap", "fol_used_centroid"]
+                 "high_mask_overlap", "fol_used_centroid", "nose_off_mask"]
 TERTILES = ["short", "medium", "long"]
 NO_CONTACT = {"", "none", "nc", "nan", "non_contact", "null"}
 

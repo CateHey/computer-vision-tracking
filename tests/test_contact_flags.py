@@ -2,6 +2,9 @@
 import sys
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.common.contacts_v2 import ContactClassifier  # noqa: E402
@@ -69,3 +72,75 @@ def test_carried_keypoints_are_flagged_as_stale():
     assert _classify(_mouse(100, 100), _mouse(400, 100)).stale_keypoints is False
     assert _classify(_mouse(100, 100, carried=True), _mouse(400, 100)).stale_keypoints is True
     assert _classify(_mouse(100, 100), _mouse(400, 100, carried=True)).stale_keypoints is True
+
+
+def _classify_masks(mask_i, mask_j=None):
+    clf = ContactClassifier("0_1", 0, 1, {})
+    return clf.classify(_mouse(100, 100), _mouse(400, 100), mask_i, mask_j, (100.0, 100.0), (400.0, 100.0),
+                        (0.0, 0.0), (0.0, 0.0), 80.0, 80.0, frame_idx=0, time_sec=0.0)
+
+
+def test_nose_off_mask_flag():
+    # _mouse(100, 100): nose at (140, 100)
+    on_nose = np.zeros((300, 300), dtype=bool)
+    on_nose[85:115, 50:145] = True                       # covers the nose
+    far = np.zeros((300, 300), dtype=bool)
+    far[90:110, 100:120] = True                          # nearest pixel 21 px from the nose
+    ev = _classify_masks(on_nose)
+    assert ev.nose_off_mask_i is False and ev.nose_off_mask_j is False
+    assert _classify_masks(far).nose_off_mask_i is True
+    assert _classify_masks(None).nose_off_mask_i is False   # no mask: unknown, not flagged
+    # j is judged against its own mask: i's mask over i's nose does not help j
+    ev = _classify_masks(on_nose, far)                   # far does not cover j's nose (440, 100)
+    assert ev.nose_off_mask_i is False and ev.nose_off_mask_j is True
+    row = ev.to_csv_row()
+    assert (row["nose_off_mask_i"], row["nose_off_mask_j"], row["nose_off_mask"]) == (0, 1, 1)
+    assert _classify_masks(on_nose).to_csv_row()["nose_off_mask"] == 0
+
+
+def test_nose_off_mask_tolerance_is_three_pixels():
+    near = np.zeros((300, 300), dtype=bool)
+    near[90:110, 100:138] = True                         # last mask column (137) is 3 px left of the nose
+    nearer_miss = np.zeros((300, 300), dtype=bool)
+    nearer_miss[90:110, 100:137] = True                  # last column (136) is 4 px away
+    assert _classify_masks(near).nose_off_mask_i is False
+    assert _classify_masks(nearer_miss).nose_off_mask_i is True
+
+
+def test_nose_off_mask_in_session_quality_flags(tmp_path):
+    from src.common.contacts_v2 import ContactTrackerV2
+    m0, m1 = _mouse(100, 100), _mouse(400, 100)
+    on0 = np.zeros((300, 600), dtype=bool)
+    on0[85:115, 50:145] = True                           # covers m0's nose, not m1's
+    tr = ContactTrackerV2(tmp_path, fps=30, num_slots=2, video_path="x", config={})
+    tr.update([m0, m1], [on0, on0], [m0.center(), m1.center()], frame_idx=0)
+    summary = tr.finalize()
+    assert summary["quality_flags"]["nose_off_mask"] == 1          # m1's nose is off its mask
+
+
+def test_summary_reports_thresholds_in_cm(tmp_path):
+    from src.common.contacts_v2 import ContactTrackerV2
+    m0, m1 = _mouse(100, 100), _mouse(400, 100)
+    tr = ContactTrackerV2(tmp_path, fps=30, num_slots=2, video_path="x",
+                          config={"fallback_body_length_px": 100, "reference_body_length_cm": 10.0})
+    tr.update([m0, m1], [None, None], [m0.center(), m1.center()], frame_idx=0)
+    summary = tr.finalize()
+    meta = summary["metadata"]
+    assert meta["body_length_px_median"] == pytest.approx(100.0)
+    assert meta["cm_per_px"] == pytest.approx(0.1)
+    assert meta["cm_per_px_source"] == "estimated_from_body_length"
+    assert meta["thresholds_cm"]["contact_enter"] == pytest.approx(3.0)      # 0.30 BL x 100 px x 0.1
+    assert meta["thresholds_cm"]["contact_exit"] == pytest.approx(4.5)       # 0.45 BL
+    assert meta["thresholds_cm"]["proximity"] == pytest.approx(10.0)         # 1.0 BL
+
+
+def test_measured_cm_per_px_overrides_the_estimate(tmp_path):
+    from src.common.contacts_v2 import ContactTrackerV2
+    m0, m1 = _mouse(100, 100), _mouse(400, 100)
+    tr = ContactTrackerV2(tmp_path, fps=30, num_slots=2, video_path="x",
+                          config={"fallback_body_length_px": 100, "cm_per_px": 0.05,
+                                  "contact_zone_bl_enter": 0.2})
+    tr.update([m0, m1], [None, None], [m0.center(), m1.center()], frame_idx=0)
+    meta = tr.finalize()["metadata"]
+    assert meta["cm_per_px"] == pytest.approx(0.05) and meta["cm_per_px_source"] == "config"
+    assert meta["thresholds_cm"]["contact_enter"] == pytest.approx(1.0)      # 0.2 BL x 100 px x 0.05

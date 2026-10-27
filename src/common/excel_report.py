@@ -13,13 +13,15 @@ sheets are added when their source files are present.
 Sheets (in order):
     Summary     — headline session numbers, one row per contact type
     Events      — cleaned behavioural events (the reportable result)
+    PerAnimal   — events and contact time per animal, any partner     (v2 only)
     PerFrame    — full per-frame geometry with raw + cleaned labels
     Bouts       — inline bouts (diagnostic)
     Dynamics    — approach / avoid episodes without contact   (v2 only)
     Individual  — per-animal locomotion metrics               (v2 only)
     ByType      — raw vs cleaned comparison per contact type
     Global      — raw vs cleaned comparison, session totals
-    Parameters  — every parameter actually applied, flattened
+    Parameters  — every parameter actually applied, flattened (incl. the
+                  cm calibration of the contact thresholds)
 
 Usage:
     from src.common.excel_report import build_excel_report
@@ -63,6 +65,7 @@ SOURCE_FILES = [
     "contacts_per_frame.csv",
     "contacts_real_per_frame.csv",
     "contacts_real_events.csv",
+    "per_animal_summary.csv",        # v2 only
     "contact_bouts.csv",
     "dynamics_no_contact.csv",       # v2 only
     "session_summary.json",
@@ -124,7 +127,11 @@ def _flatten(obj: Any, prefix: str = "") -> List[Dict[str, Any]]:
 # Sections describing the run itself. They come from session_summary.json, which
 # a previous consolidation has already deleted, so on a re-run they are carried
 # forward from the existing workbook rather than silently lost.
-CARRIED_SECTIONS = ("video", "detection_thresholds", "quality_flags")
+CARRIED_SECTIONS = ("video", "calibration", "detection_thresholds", "quality_flags")
+
+# Keys of session_summary.json["metadata"] that describe the px -> cm calibration of the
+# contact thresholds; they get their own "calibration" section in the Parameters sheet.
+CALIBRATION_KEYS = ("body_length_px_median", "cm_per_px", "cm_per_px_source", "thresholds_cm")
 
 
 def _params_sheet(
@@ -150,9 +157,13 @@ def _params_sheet(
                 "value": row["value"],
             })
 
-    _add("video", summary.get("metadata", {}))
+    metadata = dict(summary.get("metadata", {}))
+    calibration = {k: metadata.pop(k) for k in CALIBRATION_KEYS if k in metadata}
+    _add("video", metadata)
+    _add("calibration", calibration)
     _add("detection_thresholds", summary.get("parameters", {}))
-    _add("quality_flags", summary.get("quality", {}))
+    # contacts_v2 writes the counts as "quality_flags"; "quality" is the older key
+    _add("quality_flags", summary.get("quality_flags", summary.get("quality", {})))
     _add("postprocessing", summary_real.get("parameters", {}))
     _add("postprocessing_metadata", summary_real.get("metadata", {}))
     _add("filtering_impact", summary_real.get("filtering_impact", {}))
@@ -347,6 +358,7 @@ def build_excel_report(
         per_frame = _read_csv(contacts_dir / "contacts_per_frame.csv")
 
     events = _read_csv(contacts_dir / "contacts_real_events.csv")
+    per_animal = _read_csv(contacts_dir / "per_animal_summary.csv")   # v2 only
     bouts = _read_csv(contacts_dir / "contact_bouts.csv")
     dynamics = _read_csv(contacts_dir / "dynamics_no_contact.csv")   # v2 only
     by_type = _read_csv(reports_dir / "comparison_by_type.csv")
@@ -376,6 +388,7 @@ def build_excel_report(
     sheets: List[tuple] = [
         ("Summary", _summary_sheet(summary, summary_real, events, types)),
         ("Events", events),
+        ("PerAnimal", per_animal),
         ("PerFrame", per_frame),
         ("Bouts", bouts),
         ("Dynamics", dynamics),

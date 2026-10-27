@@ -92,6 +92,11 @@ contacts:
   contact_zone_bl_enter: 0.30
   contact_zone_bl_exit: 0.45
   proximity_zone_bl: 1.0
+  # --- calibration: the thresholds above are in body lengths (BL); these give their centimetre
+  # equivalents in session_summary.json, event_log.txt and the Parameters sheet of results.xlsx ---
+  cm_per_px: null   # measured arena scale; null = estimated from the body length below
+  reference_body_length_cm: 9.5   # adult C57BL/6J nose to tail base (JAX Mouse Phenome Database: 9.7–10.1 cm at 20 months; young adults ~9–9.5 cm)
+  nose_off_mask_radius_px: 3      # quality flag nose_off_mask: no pixel of the animal's own mask within this many px of its nose
   # SBS por borde compartido de mascaras (BL); el IoU es 0 con mascaras disjuntas
   mask_contact_dilate_px: 4
   sbs_contact_bl_enter: 0.35

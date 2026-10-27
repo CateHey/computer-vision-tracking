@@ -65,6 +65,18 @@ TYPE_LABELS = {
 
 REQUIRED_COLUMNS = {"frame_idx", "time_sec", "zone", "contact_type"}
 
+# Per-animal view (Live Mouse Tracker style): types counted per animal, and the types that
+# have an investigator (the symmetric N2N and SBS do not). For FOL the "investigator" is the
+# follower.
+PER_ANIMAL_TYPES = ["N2N", "N2AG", "N2B", "SBS", "FOL"]
+ASYMMETRIC_TYPES = ("N2AG", "N2B", "FOL")
+PER_ANIMAL_COLUMNS = (
+    ["animal", "n_events_total"]
+    + [f"n_events_{ct}" for ct in PER_ANIMAL_TYPES]
+    + ["contact_time_sec", "time_2plus_contacts_sec",
+       "n_as_investigator", "n_as_receiver", "fol_time_sec"]
+)
+
 # Default config (used when no --config provided)
 DEFAULT_CONFIG = {
     "smoothing": {"window": 5},
@@ -630,6 +642,94 @@ def extract_events(
     return ev
 
 
+def _pair_slots(pair_key) -> Tuple[int, ...]:
+    """"0_2" -> (0, 2); () when the key does not parse."""
+    try:
+        return tuple(int(x) for x in str(pair_key).split("_"))
+    except ValueError:
+        return ()
+
+
+def per_animal_summary(
+    df: pd.DataFrame, real_types: np.ndarray, events_df: pd.DataFrame, fps: float
+) -> pd.DataFrame:
+    """One row per animal: its contacts with ANY other animal (pair events are untouched).
+
+    Live Mouse Tracker reports dyadic events per pair and per-animal events (contact with
+    any other animal; group2 = in contact with exactly one other, group3 = with two). This
+    is the per-animal view of the cleaned labels.
+
+    Animals come from the pair keys "i_j" (slot i -> "R(i+1)"). Columns:
+      n_events_total, n_events_<TYPE>  events of any pair that includes the animal
+                                       (NC spans are not events here)
+      contact_time_sec                 frames in which at least one of the animal's pairs has a
+                                       cleaned label other than NC and FOL (union, not a sum)
+      time_2plus_contacts_sec          frames in which two or more of its pairs are in contact
+      n_as_investigator/_receiver      asymmetric events (N2AG, N2B, FOL) where the animal is the
+                                       investigator (the follower, for FOL) / the other animal
+      fol_time_sec                     frames with FOL in any of its pairs
+    Without a pair_key column (single-pair v1 output) the result is empty.
+    """
+    empty = pd.DataFrame(columns=PER_ANIMAL_COLUMNS)
+    if "pair_key" not in df.columns:
+        return empty
+    groups = pair_groups(df)
+    pair_slots = {k: s for k, s in ((k, _pair_slots(k)) for k in groups) if len(s) == 2}
+    slots = sorted({s for ss in pair_slots.values() for s in ss})
+    if not slots:
+        return empty
+
+    # Per pair, boolean timelines over the unique session frames
+    frames = pd.to_numeric(df["frame_idx"], errors="coerce").to_numpy(dtype=float)
+    unique_frames = np.unique(frames[np.isfinite(frames)])
+    n_frames = len(unique_frames)
+    labels = np.asarray(real_types, dtype=object)
+    contact: Dict[str, np.ndarray] = {}
+    follow: Dict[str, np.ndarray] = {}
+    for key in pair_slots:
+        idx = groups[key]
+        ok = np.isfinite(frames[idx])
+        pos = np.searchsorted(unique_frames, frames[idx][ok])
+        lab = labels[idx][ok]
+        c = np.zeros(n_frames, dtype=bool)
+        f = np.zeros(n_frames, dtype=bool)
+        c[pos[(lab != "") & (lab != "NC") & (lab != "FOL")]] = True
+        f[pos[lab == "FOL"]] = True
+        contact[key], follow[key] = c, f
+
+    # Events of the cleaned table, restricted to the contact types
+    if events_df is not None and len(events_df) and "pair_key" in events_df.columns:
+        ev = events_df[events_df["contact_type"].isin(PER_ANIMAL_TYPES)].reset_index(drop=True)
+    else:
+        ev = pd.DataFrame(columns=["pair_key", "contact_type", "investigator_slot"])
+    ev_slots = ev["pair_key"].map(_pair_slots)
+    if "investigator_slot" in ev.columns:
+        inv = pd.to_numeric(ev["investigator_slot"], errors="coerce")
+    else:
+        inv = pd.Series(np.nan, index=ev.index, dtype=float)
+
+    rows = []
+    for s in slots:
+        mine = [k for k, ss in pair_slots.items() if s in ss]
+        in_contact = np.sum([contact[k] for k in mine], axis=0)
+        has_fol = np.any([follow[k] for k in mine], axis=0)
+
+        mine_ev = ev[ev_slots.map(lambda ss, s=s: s in ss).astype(bool)] if len(ev) else ev
+        asym = mine_ev["contact_type"].isin(ASYMMETRIC_TYPES) if len(mine_ev) else pd.Series(dtype=bool)
+        inv_mine = inv.loc[mine_ev.index][asym.to_numpy()] if len(mine_ev) else pd.Series(dtype=float)
+
+        row: Dict[str, Any] = {"animal": f"R{s + 1}", "n_events_total": int(len(mine_ev))}
+        for ct in PER_ANIMAL_TYPES:
+            row[f"n_events_{ct}"] = int((mine_ev["contact_type"] == ct).sum()) if len(mine_ev) else 0
+        row["contact_time_sec"] = round(float((in_contact >= 1).sum()) / fps, 3)
+        row["time_2plus_contacts_sec"] = round(float((in_contact >= 2).sum()) / fps, 3)
+        row["n_as_investigator"] = int((inv_mine == s).sum())
+        row["n_as_receiver"] = int(((inv_mine != s) & inv_mine.notna()).sum())
+        row["fol_time_sec"] = round(float(has_fol.sum()) / fps, 3)
+        rows.append(row)
+    return pd.DataFrame(rows, columns=PER_ANIMAL_COLUMNS)
+
+
 def _count_raw_bouts(types: np.ndarray, groups=None) -> Dict[str, int]:
     """Cuenta runs contiguos por tipo (por par si se pasan groups)."""
     counts = {ct: 0 for ct in CONTACT_TYPES}
@@ -705,6 +805,121 @@ def write_real_events(events_df: pd.DataFrame, output_dir: Path) -> Path:
     return path
 
 
+def write_per_animal_summary(per_animal: pd.DataFrame, output_dir: Path) -> Optional[Path]:
+    """Write per_animal_summary.csv (None when there are no per-animal rows)."""
+    if per_animal is None or per_animal.empty:
+        return None
+    path = output_dir / "per_animal_summary.csv"
+    per_animal.to_csv(path, index=False)
+    logger.info("Wrote %s (%d animals)", path, len(per_animal))
+    return path
+
+
+def load_calibration(input_dir: Path) -> Dict[str, Any]:
+    """Contact thresholds in BL and cm, as recorded by contacts_v2.
+
+    Reads session_summary.json (metadata + parameters); once the run is consolidated that
+    file is gone, so the "calibration" and "detection_thresholds" rows of the Parameters
+    sheet of results.xlsx are used instead. Returns {} when neither source exists, and
+    without the cm keys when the run predates the calibration metadata.
+    """
+    meta: Dict[str, Any] = {}
+    params: Dict[str, Any] = {}
+    summary_path = input_dir / "session_summary.json"
+    xlsx_path = input_dir / "results.xlsx"
+    if summary_path.exists():
+        try:
+            with summary_path.open(encoding="utf-8") as f:
+                summary = json.load(f)
+            meta = summary.get("metadata", {}) or {}
+            params = summary.get("parameters", {}) or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not read calibration from session_summary.json: %s", e)
+    elif xlsx_path.exists():
+        try:
+            sheet = pd.read_excel(xlsx_path, sheet_name="Parameters")
+            calib = sheet[sheet["section"] == "calibration"]
+            for name, value in zip(calib["parameter"], calib["value"]):
+                if str(name).startswith("thresholds_cm."):
+                    meta.setdefault("thresholds_cm", {})[str(name).split(".", 1)[1]] = value
+                else:
+                    meta[str(name)] = value
+            det = sheet[sheet["section"] == "detection_thresholds"]
+            params = dict(zip(det["parameter"], det["value"]))
+            if calib.empty and det.empty:
+                return {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not read calibration from results.xlsx: %s", e)
+            return {}
+    else:
+        return {}
+
+    def _num(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        return v if math.isfinite(v) else None
+
+    out: Dict[str, Any] = {
+        "contact_bl": _num(params.get("contact_zone_bl_enter", 0.30)),
+    }
+    thresholds = meta.get("thresholds_cm") or {}
+    out["contact_cm"] = _num(thresholds.get("contact_enter"))
+    for key in ("body_length_px_median", "cm_per_px"):
+        out[key] = _num(meta.get(key))
+    src = meta.get("cm_per_px_source")
+    out["cm_per_px_source"] = str(src) if isinstance(src, str) else None
+    return out
+
+
+def calibration_line(calibration: Optional[Dict[str, Any]]) -> Optional[str]:
+    """One header line for event_log.txt, e.g.
+    "Contact distance: 0.30 BL (≈ 2.7 cm; cm/px estimated from body length 164 px = 9.5 cm)".
+    Only the BL figure when the cm calibration is absent; None when nothing is known."""
+    if not calibration or calibration.get("contact_bl") is None:
+        return None
+    line = f"Contact distance: {calibration['contact_bl']:.2f} BL"
+    cm = calibration.get("contact_cm")
+    cm_per_px = calibration.get("cm_per_px")
+    bl_px = calibration.get("body_length_px_median")
+    if cm is None or cm_per_px is None:
+        return line
+    if calibration.get("cm_per_px_source") == "config":
+        how = f"cm/px = {cm_per_px:.4f} measured"
+    elif bl_px:
+        how = (f"cm/px estimated from body length {bl_px:.0f} px = "
+               f"{bl_px * cm_per_px:.1f} cm")
+    else:
+        how = f"cm/px = {cm_per_px:.4f} estimated from body length"
+    return f"{line} (\u2248 {cm:.1f} cm; {how})"
+
+
+def _per_animal_log_lines(per_animal: pd.DataFrame) -> List[str]:
+    """The "Per-animal summary" block of event_log.txt."""
+    lines = ["", "--- Per-animal summary ---",
+             "  Events of any pair that includes the animal. Contact time counts a frame once even",
+             "  when the animal touches two others; 2+ = time with two or more simultaneous contacts.",
+             "  Inv/Rec = events as investigator (follower, for FOL) / receiver."]
+    if per_animal is None or per_animal.empty:
+        lines.append("  (no per-animal data)")
+        return lines
+    lines.append(
+        f"  {'Animal':<6}  {'Events':>6}  " + "  ".join(f"{ct:>4}" for ct in PER_ANIMAL_TYPES)
+        + f"  {'Contact':>8}  {'2+':>6}  {'Inv':>3}  {'Rec':>3}  {'FOL time':>8}"
+    )
+    for _, r in per_animal.iterrows():
+        lines.append(
+            f"  {r['animal']:<6}  {int(r['n_events_total']):>6}  "
+            + "  ".join(f"{int(r[f'n_events_{ct}']):>4}" for ct in PER_ANIMAL_TYPES)
+            + f"  {format_duration(r['contact_time_sec']):>8}  "
+            f"{format_duration(r['time_2plus_contacts_sec']):>6}  "
+            f"{int(r['n_as_investigator']):>3}  {int(r['n_as_receiver']):>3}  "
+            f"{format_duration(r['fol_time_sec']):>8}"
+        )
+    return lines
+
+
 def write_event_log(
     events_df: pd.DataFrame,
     raw_types: np.ndarray,
@@ -713,11 +928,15 @@ def write_event_log(
     total_frames: int,
     output_dir: Path,
     groups: Optional[Dict[str, np.ndarray]] = None,
+    per_animal: Optional[pd.DataFrame] = None,
+    calibration: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Write event_log.txt — human-readable event log for validation.
 
     total_frames = frames unicos de la sesion; los tiempos de contacto se suman
     sobre pares, asi que los porcentajes se normalizan por sesion x n_pares.
+    per_animal adds the "Per-animal summary" block after "Summary by type";
+    calibration (see load_calibration) adds the contact distance in BL and cm to the header.
     """
     total_sec = total_frames / fps
     n_pairs = max(len(groups), 1) if groups else 1
@@ -741,6 +960,9 @@ def write_event_log(
         f"Video duration: {format_time(total_sec)} "
         f"({total_frames} frames @ {fps:.0f}fps)"
     )
+    cal_line = calibration_line(calibration)
+    if cal_line:
+        lines.append(cal_line)
     contact_pct = real_contact_sec / pair_sec * 100 if pair_sec > 0 else 0.0
     if n_pairs > 1:
         lines.append(f"Pairs: {n_pairs} (contact time is summed over pairs; % is of session x pairs)")
@@ -824,6 +1046,10 @@ def write_event_log(
 
         lines.append(line)
 
+    # Per-animal summary (contact with any other animal)
+    if per_animal is not None:
+        lines.extend(_per_animal_log_lines(per_animal))
+
     # Filtering impact (compare contact events only — NC is not in raw data)
     lines.append("")
     lines.append("--- Filtering impact ---")
@@ -871,6 +1097,7 @@ def write_real_summary(
     config: dict,
     input_dir: Path,
     output_dir: Path,
+    per_animal: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Write session_summary_real.json.
 
@@ -904,6 +1131,16 @@ def write_real_summary(
             "pct_of_session": round(total_dur / pair_sec * 100, 2) if pair_sec > 0 else 0.0,
         }
 
+    if per_animal is None:
+        per_animal = per_animal_summary(df, real_types, events_df, fps)
+    per_animal_json = {
+        str(r["animal"]): {
+            k: (int(r[k]) if k.startswith(("n_events", "n_as")) else float(r[k]))
+            for k in PER_ANIMAL_COLUMNS if k != "animal"
+        }
+        for _, r in per_animal.iterrows()
+    }
+
     summary = {
         "metadata": {
             "source_csv": str(input_dir / "contacts_per_frame.csv"),
@@ -935,6 +1172,7 @@ def write_real_summary(
             "total_contact_sec": round(real_contact_frames / fps, 2),
             "total_events": len(events_df),
         },
+        "per_animal": per_animal_json,
         "filtering_impact": {
             "frames_removed": raw_contact_frames - real_contact_frames,
             "flicker_rate_pct": round(
@@ -1287,13 +1525,18 @@ def run_postprocess(
     logger.info("Post-processing: %d raw bouts -> %d contact events (+%d no-contact spans)",
                 raw_bout_count, n_contact, len(events_df) - n_contact)
 
+    per_animal = per_animal_summary(df, real_types, events_df, fps)
+
     write_real_per_frame(df, real_types, contacts_dir)
     write_real_events(events_df, contacts_dir)
+    write_per_animal_summary(per_animal, contacts_dir)
     write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
-                    contacts_dir, groups=groups)
+                    contacts_dir, groups=groups, per_animal=per_animal,
+                    calibration=load_calibration(contacts_dir))
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, "pipeline", config, contacts_dir, contacts_dir,
+        per_animal=per_animal,
     )
 
     if make_reports:
@@ -1417,13 +1660,18 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else input_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    per_animal = per_animal_summary(df, real_types, events_df, fps)
+
     write_real_per_frame(df, real_types, output_dir)
     write_real_events(events_df, output_dir)
+    write_per_animal_summary(per_animal, output_dir)
     write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
-                    output_dir, groups=groups)
+                    output_dir, groups=groups, per_animal=per_animal,
+                    calibration=load_calibration(input_dir))
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, fps_source, config, input_dir, output_dir,
+        per_animal=per_animal,
     )
 
     # Optional reports
