@@ -56,6 +56,7 @@ Everything lives in `results.xlsx`, one table per sheet.
 |-------|------|---------------|
 | `Summary` | 6 | Headline numbers per contact type, plus a total row |
 | `Events` | one per event | The cleaned behavioural events — **the reportable result** |
+| `PerAnimal` | one per animal | Events and contact time per animal against any partner (`per_animal_summary.csv`, see 05 §9) |
 | `PerFrame` | one per frame | Complete geometry with both raw and cleaned labels |
 | `Bouts` | one per bout | Bouts from `contacts_v2` (diagnostic) |
 | `Dynamics` | one per episode | Approach / avoid episodes **without** contact ("Hoja B") |
@@ -79,7 +80,7 @@ The complete measurement record, grouped as `contacts_v2` writes it:
 | Body length | `body_length_i_px`, `body_length_j_px` |
 | Roles | `investigator_role`, `initiator`, `bout_id` |
 | Soft scores | one column per contact type, the continuous score before thresholding |
-| Quality flags | `stale_keypoints`, `high_mask_overlap`, `missing_keypoints`, `single_detection`, `merged_state`, `fol_used_centroid` |
+| Quality flags | `stale_keypoints`, `high_mask_overlap`, `missing_keypoints`, `single_detection`, `merged_state`, `fol_used_centroid`, `nose_off_mask_i/_j` and `nose_off_mask` (nose keypoint outside its own mask) |
 
 This is the sheet for any custom analysis. Two columns need care: `mask_iou` is
 identically 0 with CUTIE's disjoint masks (kept only for the `high_mask_overlap`
@@ -104,7 +105,8 @@ the event.
 ### `event_log.txt`
 
 The same events as plain text with timestamps — built for scrubbing to a time in the
-overlay video and confirming the label by eye.
+overlay video and confirming the label by eye. The header gives the contact distance in BL
+and cm, and a "Per-animal summary" block follows the summary by type.
 
 ### `Parameters` and the session-level numbers
 
@@ -116,6 +118,7 @@ records what produced it:
 | Section | What it records |
 |---------|-----------------|
 | `video` | Source file, FPS, frame count, duration, number of animals |
+| `calibration` | Median body length in px, `cm_per_px` and where it came from, and the contact thresholds in cm |
 | `detection_thresholds` | The contact zone and bout thresholds applied during the run |
 | `quality_flags` | Frame counts per quality flag |
 | `postprocessing` | The smoothing, gap-bridging and minimum-duration values **actually applied** |

@@ -304,6 +304,10 @@ class ContactEvent:
     single_detection: bool = False
     merged_state: bool = False
     fol_used_centroid: bool = False       # cambio F
+    # The nose keypoint of animal i / j lies outside that animal's own CUTIE mask
+    # (no mask pixel within nose_off_mask_radius_px): direct evidence of a misplaced keypoint.
+    nose_off_mask_i: bool = False
+    nose_off_mask_j: bool = False
 
     # Simultaneous contacts of each animal in this frame (over all its pairs):
     # 1 = dyadic only, 2 = the animal is in contact with two others (LMT 'group3').
@@ -379,6 +383,9 @@ class ContactEvent:
             "single_detection": int(self.single_detection),
             "merged_state": int(self.merged_state),
             "fol_used_centroid": int(self.fol_used_centroid),
+            "nose_off_mask_i": int(self.nose_off_mask_i),
+            "nose_off_mask_j": int(self.nose_off_mask_j),
+            "nose_off_mask": int(self.nose_off_mask_i or self.nose_off_mask_j),
             # 11b simultaneous contacts per animal (group configurations)
             "n_contacts_i": self.n_contacts_i,
             "n_contacts_j": self.n_contacts_j,
@@ -974,6 +981,24 @@ def mask_contact_px(mask_i, mask_j, dilate_px: int) -> float:
     return (c_ij + c_ji) / 2.0
 
 
+def mask_near_point(point, mask, radius_px: int = 0) -> bool:
+    """True when `mask` has a pixel under `point` (radius 0) or any pixel within
+    radius_px of it (square window of side 2 * radius_px + 1).
+
+    Shared by the N2B nose-in-mask test and the nose-off-mask quality flag.
+    Returns False when the point or the mask is None, or the window lies outside the image."""
+    if point is None or mask is None:
+        return False
+    x, y = int(round(point[0])), int(round(point[1]))
+    h, w = mask.shape[:2]
+    r = max(int(radius_px), 0)
+    if r == 0:
+        return 0 <= y < h and 0 <= x < w and bool(mask[y, x])
+    y0, y1 = max(0, y - r), min(h, y + r + 1)
+    x0, x1 = max(0, x - r), min(w, x + r + 1)
+    return y1 > y0 and x1 > x0 and bool(np.asarray(mask[y0:y1, x0:x1]).any())
+
+
 def ramp_up_score(x: float, low: float, high: float) -> float:
     if not math.isfinite(x):
         return 0.0
@@ -1038,6 +1063,9 @@ class ContactClassifier:
         # CUTIE masks it almost never happens); r > 0 = any mask pixel within r px of
         # the nose counts (LMT-style "masks touching", see final_documentation/06).
         self.n2b_radius = int(config.get("n2b_nose_mask_radius_px", 0))
+        # Quality flag: the nose keypoint is "off its mask" when no pixel of the animal's own
+        # mask lies within this many px of it.
+        self.nose_off_mask_radius = int(config.get("nose_off_mask_radius_px", 3))
 
         # Línea media (cambio: separa social vs anogenital por proyección sobre el eje)
         # t in [0,1] sobre nose(0) -> mid_body -> tail_start(1).
@@ -1117,6 +1145,12 @@ class ContactClassifier:
         # tail_base sigue disponible solo para la métrica tail_tail (no para tipos)
         tb_i = get_keypoint(det_i, KP_TAIL_BASE, self.min_kp_conf)
         tb_j = get_keypoint(det_j, KP_TAIL_BASE, self.min_kp_conf)
+
+        # Quality flag: a nose that falls outside its own animal's mask is a misplaced keypoint
+        if nose_i is not None and mask_i is not None:
+            event.nose_off_mask_i = not mask_near_point(nose_i, mask_i, self.nose_off_mask_radius)
+        if nose_j is not None and mask_j is not None:
+            event.nose_off_mask_j = not mask_near_point(nose_j, mask_j, self.nose_off_mask_radius)
 
         # Positions for the evidence clips
         if centroid_i is not None:
@@ -1590,16 +1624,7 @@ class ContactClassifier:
     def _nose_touches_mask(self, nose, mask) -> bool:
         """Nose pixel inside the mask (n2b_radius = 0) or any mask pixel within
         n2b_radius px of it (square window)."""
-        if nose is None or mask is None:
-            return False
-        x, y = int(round(nose[0])), int(round(nose[1]))
-        h, w = mask.shape[:2]
-        r = self.n2b_radius
-        if r <= 0:
-            return 0 <= y < h and 0 <= x < w and bool(mask[y, x])
-        y0, y1 = max(0, y - r), min(h, y + r + 1)
-        x0, x1 = max(0, x - r), min(w, x + r + 1)
-        return y1 > y0 and x1 > x0 and bool(np.asarray(mask[y0:y1, x0:x1]).any())
+        return mask_near_point(nose, mask, self.n2b_radius)
 
     # -------------------------- Dinámica (cambio D) --------------------------
 
@@ -2166,6 +2191,42 @@ class ContactTrackerV2:
         logger.info("Bouts CSV: %s (%d bouts)", path, len(bouts))
         return path
 
+    def _calibration_metadata(self) -> Dict[str, Any]:
+        """Scale between pixels and centimetres, and the contact thresholds in cm.
+
+        The thresholds are set in body lengths (BL). cm_per_px is the measured arena scale
+        (`contacts.cm_per_px`) or, when that is null, `reference_body_length_cm` divided by the
+        median body length measured in pixels. Threshold in cm = BL threshold x median body
+        length (px) x cm_per_px.
+        """
+        bl_values = [float(est.current()) for est in self.body_length_estimators.values()]
+        bl_median = float(np.median(bl_values)) if bl_values else 0.0
+
+        cm_per_px_cfg = self.config.get("cm_per_px")
+        if cm_per_px_cfg is not None:
+            cm_per_px: Optional[float] = float(cm_per_px_cfg)
+            source = "config"
+        else:
+            reference_cm = float(self.config.get("reference_body_length_cm", 9.5))
+            cm_per_px = reference_cm / bl_median if bl_median > 0 else None
+            source = "estimated_from_body_length"
+
+        bl_thresholds = {
+            "contact_enter": float(self.config.get("contact_zone_bl_enter", 0.30)),
+            "contact_exit": float(self.config.get("contact_zone_bl_exit", 0.45)),
+            "proximity": float(self.config.get("proximity_zone_bl", 1.0)),
+        }
+        thresholds_cm = {
+            name: (round(bl * bl_median * cm_per_px, 3) if cm_per_px is not None else None)
+            for name, bl in bl_thresholds.items()
+        }
+        return {
+            "body_length_px_median": round(bl_median, 2),
+            "cm_per_px": round(cm_per_px, 6) if cm_per_px is not None else None,
+            "cm_per_px_source": source,
+            "thresholds_cm": thresholds_cm,
+        }
+
     def _build_summary(self, bouts: List[Bout], dynamics_events: List[DynamicsEvent]) -> Dict[str, Any]:
         type_summary: Dict[str, Dict[str, Any]] = {}
         for ct in ContactType.all_contact_types():
@@ -2208,6 +2269,7 @@ class ContactTrackerV2:
             "single_detection": sum(1 for e in self._all_events if e.single_detection),
             "merged_state": sum(1 for e in self._all_events if e.merged_state),
             "fol_used_centroid": sum(1 for e in self._all_events if e.fol_used_centroid),
+            "nose_off_mask": sum(1 for e in self._all_events if e.nose_off_mask_i or e.nose_off_mask_j),
         }
 
         # Frames in which at least one animal touches two or more others (LMT group3+)
@@ -2249,6 +2311,7 @@ class ContactTrackerV2:
                 "last_frame_idx": self._last_frame_idx,
                 "frames_processed": self._frames_processed,
                 "phase": "1",
+                **self._calibration_metadata(),
             },
             "parameters": dict(self.config),
             "contact_type_summary": type_summary,

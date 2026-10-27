@@ -306,6 +306,32 @@ precision that minimum-duration or minimum-score thresholds would give. Only the
 the stratified sample enter those figures; events listed because they overlap a sampled
 one (`in_sample = FALSE`) are summarised apart, since they over-represent busy moments.
 
+**Per-animal view, cm calibration and a keypoint check (added 2026-10-27).**
+
+- `per_animal_summary.csv` (`PerAnimal` sheet, "Per-animal summary" block of `event_log.txt`,
+  `per_animal` in `session_summary_real.json`) has one row per animal, built from the cleaned
+  labels of every pair that includes it: events by type (`n_events_total`, `n_events_<TYPE>`),
+  `contact_time_sec` (frames in which at least one of its pairs is in contact, FOL excluded; a
+  union, so two simultaneous contacts count once), `time_2plus_contacts_sec` (frames with two or
+  more pairs in contact at once, LMT's group3), `n_as_investigator` / `n_as_receiver` (asymmetric
+  events N2AG, N2B, FOL; the follower counts as investigator for FOL) and `fol_time_sec`. Pair
+  events are unchanged. Function: `per_animal_summary` in `scripts/postprocess_contacts_simple.py`.
+- Contact thresholds are set in BL; `session_summary.json` metadata now carries
+  `body_length_px_median` (median of the per-animal estimates at the end of the run), `cm_per_px`,
+  `cm_per_px_source` and `thresholds_cm` (`contact_enter`, `contact_exit`, `proximity` =
+  BL threshold x body length in px x `cm_per_px`). `cm_per_px` is `contacts.cm_per_px` when it is
+  set (`config`) and `contacts.reference_body_length_cm` / `body_length_px_median` otherwise
+  (`estimated_from_body_length`, 9.5 cm for an adult C57BL/6J nose to tail base). The estimate
+  assumes the animals are of the reference size; a measured arena scale replaces it. The values
+  appear in the `calibration` section of the `Parameters` sheet and in the `event_log.txt` header
+  (`Contact distance: 0.30 BL (≈ 2.7 cm; ...)`).
+- `nose_off_mask_i`, `nose_off_mask_j` and `nose_off_mask` (1 if either) are per-frame quality
+  flags: the nose keypoint of an animal has no pixel of that animal's own mask within
+  `nose_off_mask_radius_px` (3) px, i.e. the keypoint is misplaced, which is most likely during
+  contact (B2 in OPEN_ISSUES). The count is in `quality_flags` of the summary and
+  `scripts/validate_contacts.py` reports it as `frac_nose_off_mask` per sampled event. A missing
+  nose or mask is not flagged.
+
 **What the 6-mouse run says about sensitivity.** Of 4 500 pair-frames, 579 carry a raw
 contact label (298 N2AG, 118 SBS, 98 N2N, 34 N2B, 31 FOL). N2B is the rarest and none of
 its 34 frames survived post-processing. 14 frames have the two masks physically touching
@@ -327,5 +353,5 @@ rather than mislabelled.
 | `min_keypoint_conf` for the contacts is the code default 0.3 (not in the YAML) | `ContactClassifier.__init__` | add to the config if it is to be tuned |
 | `stale_keypoints` was never set: carried-over keypoints looked like detections | `_carry_over_keypoints`, `classify` | fixed 2026-10-25: `Detection.carried` is propagated to the flag |
 | N2B needs the nose *pixel* inside the other mask; with disjoint CUTIE masks it almost never fires, so flank sniffing is under-counted | `_score_n2b`, line 1532 | use the distance from the nose to the other mask (e.g. within 4 px, as `mask_contact_px` does) |
-| Contact = nose within 0.30 BL (about 2 cm for an 8 cm mouse), latched until 0.45 BL; this is proximity, not touch | `contact_zone_bl_enter/_exit` | calibrate px/cm for the arena and decide the distance the paper calls contact |
-| One pair-event per pair: an animal in two simultaneous contacts contributes two events and twice the contact time | section 8 | define per-animal and per-group counts explicitly before reporting |
+| Contact = nose within 0.30 BL (about 2.7 cm for a 9.5 cm mouse), latched until 0.45 BL; this is proximity, not touch | `contact_zone_bl_enter/_exit` | the cm values are reported (section 9); measure `cm_per_px` for the arena and decide the distance the paper calls contact |
+| One pair-event per pair: an animal in two simultaneous contacts contributes two events and twice the contact time | section 8 | `per_animal_summary.csv` gives the per-animal union (section 9); define the per-group count before reporting |
