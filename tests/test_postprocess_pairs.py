@@ -9,8 +9,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.postprocess_contacts_simple import (  # noqa: E402
-    DEFAULT_CONFIG, assign_event_ids, calibration_line, compute_labels, extract_events,
-    load_calibration, normalize_labels, per_animal_summary, run_postprocess, session_frames,
+    DEFAULT_CONFIG, PAIR_MATRIX_COLUMNS, assign_event_ids, calibration_line, compute_labels,
+    extract_events, load_calibration, n_animals_in_table, normalize_labels, pair_contact_matrix,
+    per_animal_summary, run_postprocess, session_frames,
 )
 
 PAIRS = ["0_1", "0_2", "1_2"]
@@ -152,11 +153,18 @@ def test_per_animal_summary_union_overlap_and_roles():
     assert r1.time_2plus_contacts_sec == pytest.approx(1.0)     # frames 80-109
     assert r1.n_as_investigator == 1 and r1.n_as_receiver == 0
     assert r1.fol_time_sec == 0.0
+    # 200 frames at 30 fps = 6.667 s = 0.1111 min
+    assert r1.session_min == pytest.approx(200 / FPS / 60, abs=1e-4)
+    assert r1.events_per_min == pytest.approx(2 / (200 / FPS / 60), abs=1e-2)       # 18.0
+    assert r1.contact_sec_per_min == pytest.approx(3.0 / (200 / FPS / 60), abs=1e-2)  # 27.0
+    assert set(pa.session_min) == {r1.session_min}     # one session length for every animal
 
     r2 = pa.loc["R2"]                                            # only in the symmetric N2N
     assert r2.n_events_total == 1 and r2.contact_time_sec == pytest.approx(2.0)
     assert r2.time_2plus_contacts_sec == 0.0
     assert r2.n_as_investigator == 0 and r2.n_as_receiver == 0
+    assert r2.events_per_min == pytest.approx(9.0, abs=1e-2)
+    assert r2.contact_sec_per_min == pytest.approx(18.0, abs=1e-2)
 
     r3 = pa.loc["R3"]
     assert r3.n_events_total == 1 and r3.n_events_N2AG == 1
@@ -210,13 +218,24 @@ def test_run_postprocess_writes_per_animal_outputs(tmp_path):
 
     pa = pd.read_csv(tmp_path / "per_animal_summary.csv").set_index("animal")
     assert pa.loc["R1", "contact_time_sec"] == pytest.approx(3.0)
+    assert pa.loc["R1", "events_per_min"] == pytest.approx(18.0, abs=1e-2)
+    assert {"session_min", "events_per_min", "contact_sec_per_min"} <= set(pa.columns)
     log = (tmp_path / "event_log.txt").read_text(encoding="utf-8")
     assert "Contact distance: 0.30 BL (\u2248 2.7 cm; cm/px estimated from body length 164 px = 9.5 cm)" in log
     assert log.index("--- Summary by type ---") < log.index("--- Per-animal summary ---") \
-        < log.index("--- Filtering impact ---")
+        < log.index("Per-pair matrix: pair_contact_matrix.csv") < log.index("--- Filtering impact ---")
     summary = json.loads((tmp_path / "session_summary_real.json").read_text(encoding="utf-8"))
     assert summary["per_animal"]["R1"]["n_events_total"] == 2
     assert summary["per_animal"]["R3"]["n_as_receiver"] == 1
+    assert summary["per_animal"]["R1"]["events_per_min"] == pytest.approx(18.0, abs=1e-2)
+
+    pm = pd.read_csv(tmp_path / "pair_contact_matrix.csv").set_index("pair_label")
+    assert list(pm.index) == ["R1-R2", "R1-R3", "R2-R3"]                # every pair, empty ones too
+    assert pm.loc["R1-R3", "n_events_N2AG"] == 1 and pm.loc["R2-R3", "n_events_total"] == 0
+    assert summary["pair_matrix"]["R1-R2"]["n_events_N2N"] == 1
+    assert summary["pair_matrix"]["R1-R2"]["contact_sec"] == pytest.approx(2.0)
+    assert summary["pair_matrix"]["R2-R3"]["animal_a"] == "R2"
+    assert summary["pair_matrix"]["R2-R3"]["n_events_total"] == 0
 
 
 def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
@@ -234,8 +253,13 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
 
     xlsx = tmp_path / "results.xlsx"
     assert xlsx.exists() and not (tmp_path / "per_animal_summary.csv").exists()   # absorbed
+    assert not (tmp_path / "pair_contact_matrix.csv").exists()                      # absorbed
     sheets = pd.read_excel(xlsx, sheet_name=None)
     assert "PerAnimal" in sheets and len(sheets["PerAnimal"]) == 3
+    assert "PairMatrix" in sheets and len(sheets["PairMatrix"]) == 3               # 3 animals = 3 pairs
+    names = list(sheets)
+    assert names.index("PairMatrix") == names.index("PerAnimal") + 1                # right after PerAnimal
+    assert list(sheets["PairMatrix"].columns) == PAIR_MATRIX_COLUMNS
     params = sheets["Parameters"]
     cal = params[params.section == "calibration"].set_index("parameter")["value"]
     assert float(cal["cm_per_px"]) == pytest.approx(0.0579)
@@ -250,3 +274,94 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
     run_postprocess(tmp_path, FPS, make_reports=False, consolidate=True)
     params = pd.read_excel(xlsx, sheet_name="Parameters")
     assert "thresholds_cm.contact_enter" in set(params[params.section == "calibration"].parameter)
+
+
+# ── pair contact matrix ────────────────────────────────────────────────────
+
+RUNS_3_FOL = {**RUNS_3, "1_2": (20, 70, "FOL", "j")}
+
+
+def test_pair_contact_matrix_counts_durations_and_fol():
+    df = _multi_table(RUNS_3_FOL)
+    _, real = compute_labels(df, DEFAULT_CONFIG, FPS)
+    ev = extract_events(df, real, FPS)
+    session_sec = session_frames(df) / FPS
+    assert n_animals_in_table(df) == 3
+
+    pm = pair_contact_matrix(ev, n_animals_in_table(df), FPS, session_sec)
+    assert list(pm.columns) == PAIR_MATRIX_COLUMNS
+    assert list(pm.pair_key) == ["0_1", "0_2", "1_2"]
+    pm = pm.set_index("pair_label")
+    assert (pm.loc["R1-R2", "animal_a"], pm.loc["R1-R2", "animal_b"]) == ("R1", "R2")
+    assert (pm.loc["R2-R3", "animal_a"], pm.loc["R2-R3", "animal_b"]) == ("R2", "R3")
+    min_ = session_sec / 60
+
+    n2n = pm.loc["R1-R2"]                                   # one N2N of 60 frames = 2 s
+    assert n2n.n_events_total == 1 and n2n.n_events_N2N == 1 and n2n.n_events_N2AG == 0
+    assert n2n.contact_sec == pytest.approx(2.0)
+    assert n2n.contact_pct_of_session == pytest.approx(2.0 / session_sec * 100, abs=1e-2)
+    assert n2n.fol_sec == 0.0
+    assert n2n.events_per_min == pytest.approx(1 / min_, abs=1e-2)
+    assert n2n.contact_sec_per_min == pytest.approx(2.0 / min_, abs=1e-2)
+
+    assert pm.loc["R1-R3", "n_events_N2AG"] == 1 and pm.loc["R1-R3", "contact_sec"] == pytest.approx(2.0)
+
+    fol = pm.loc["R2-R3"]                                   # FOL counts as an event, not as contact time
+    assert fol.n_events_total == 1 and fol.n_events_FOL == 1
+    assert fol.contact_sec == 0.0 and fol.contact_pct_of_session == 0.0
+    assert fol.fol_sec == pytest.approx(50 / FPS, abs=1e-3)
+    assert fol.contact_sec_per_min == 0.0 and fol.events_per_min == pytest.approx(1 / min_, abs=1e-2)
+
+
+def test_pair_contact_matrix_lists_pairs_without_events():
+    df = _multi_table(RUNS_3)
+    _, real = compute_labels(df, DEFAULT_CONFIG, FPS)
+    ev = extract_events(df, real, FPS)                      # NC spans are in here too
+    pm = pair_contact_matrix(ev, 4, FPS, 200 / FPS)         # a 4th animal that never touched anyone
+    assert len(pm) == 6                                     # C(4, 2)
+    quiet = pm[pm.pair_key.isin(["0_3", "1_3", "2_3"])]
+    assert len(quiet) == 3
+    assert (quiet.n_events_total == 0).all() and (quiet.contact_sec == 0).all()
+    assert (quiet.events_per_min == 0).all()
+    # NC spans never count as events
+    assert pm.n_events_total.sum() == 2 and (ev.contact_type == "NC").sum() > 0
+
+
+def test_pair_contact_matrix_without_events_or_animals():
+    empty = pair_contact_matrix(pd.DataFrame(), 3, FPS, 10.0)
+    assert len(empty) == 3 and (empty.n_events_total == 0).all()
+    assert list(empty.columns) == PAIR_MATRIX_COLUMNS
+    assert pair_contact_matrix(pd.DataFrame(), 1, FPS, 10.0).empty
+    assert pair_contact_matrix(pd.DataFrame(), 0, FPS, 10.0).empty
+    df = _table()
+    assert n_animals_in_table(df.drop(columns=["pair_key"])) == 0
+    assert pair_contact_matrix(pd.DataFrame(), 3, FPS, 0.0).contact_pct_of_session.eq(0).all()
+
+
+def test_event_log_header_counts_contact_events_not_nc_spans(tmp_path):
+    _multi_table(RUNS_3).to_csv(tmp_path / "contacts_per_frame.csv", index=False)
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=False)
+    df = _multi_table(RUNS_3)
+    _, real = compute_labels(df, DEFAULT_CONFIG, FPS)
+    ev = extract_events(df, real, FPS)
+    n_nc = int((ev.contact_type == "NC").sum())
+    assert n_nc == 5                                        # 2 + 2 + 1 gaps around the 2 contact events
+
+    log = (tmp_path / "event_log.txt").read_text(encoding="utf-8")
+    assert f"Contact events: 2 (plus {n_nc} no-contact spans) | " in log
+    assert "Total events" not in log
+    # 4 s of contact (2 events x 2 s) over 3 pairs x 6.667 s = 20 s of pair-time
+    assert "Contact time: 4.0 s = 20.0% of pair-time" in log
+    assert "Pairs: 3 (contact time is summed over pairs; % is of pair-time = session x pairs)" in log
+
+
+def test_event_log_header_two_animals_is_percent_of_session(tmp_path):
+    df = _multi_table(RUNS_3)
+    df = df[df.pair_key == "0_1"].reset_index(drop=True)    # 2 animals: one pair
+    df.to_csv(tmp_path / "contacts_per_frame.csv", index=False)
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=False)
+    log = (tmp_path / "event_log.txt").read_text(encoding="utf-8")
+    assert "Contact events: 1 (plus 2 no-contact spans) | Contact time: 2.0 s = 30.0% of session" in log
+    assert "Pairs:" not in log
+    pm = pd.read_csv(tmp_path / "pair_contact_matrix.csv")
+    assert list(pm.pair_label) == ["R1-R2"] and pm.n_events_total.iloc[0] == 1

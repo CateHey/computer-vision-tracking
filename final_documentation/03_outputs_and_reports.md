@@ -56,7 +56,8 @@ Everything lives in `results.xlsx`, one table per sheet.
 |-------|------|---------------|
 | `Summary` | 6 | Headline numbers per contact type, plus a total row |
 | `Events` | one per event | The cleaned behavioural events — **the reportable result** |
-| `PerAnimal` | one per animal | Events and contact time per animal against any partner (`per_animal_summary.csv`, see 05 §9) |
+| `PerAnimal` | one per animal | Events and contact time per animal against any partner, plus the same per session minute (`session_min`, `events_per_min`, `contact_sec_per_min`; `per_animal_summary.csv`, see 05 §9) |
+| `PairMatrix` | one per pair of animals | Events by type, contact time (FOL excluded), `fol_sec`, `contact_pct_of_session` and rates per minute for every pair, including pairs with no events: the table behind the social-network figure (`pair_contact_matrix.csv`) |
 | `PerFrame` | one per frame | Complete geometry with both raw and cleaned labels |
 | `Bouts` | one per bout | Bouts from `contacts_v2` (diagnostic) |
 | `Dynamics` | one per episode | Approach / avoid episodes **without** contact ("Hoja B") |

@@ -14,6 +14,7 @@ Sheets (in order):
     Summary     — headline session numbers, one row per contact type
     Events      — cleaned behavioural events (the reportable result)
     PerAnimal   — events and contact time per animal, any partner     (v2 only)
+    PairMatrix  — events and contact time per pair of animals, incl. empty pairs (v2 only)
     PerFrame    — full per-frame geometry with raw + cleaned labels
     Bouts       — inline bouts (diagnostic)
     Dynamics    — approach / avoid episodes without contact   (v2 only)
@@ -66,6 +67,7 @@ SOURCE_FILES = [
     "contacts_real_per_frame.csv",
     "contacts_real_events.csv",
     "per_animal_summary.csv",        # v2 only
+    "pair_contact_matrix.csv",       # v2 only
     "contact_bouts.csv",
     "dynamics_no_contact.csv",       # v2 only
     "session_summary.json",
@@ -359,6 +361,7 @@ def build_excel_report(
 
     events = _read_csv(contacts_dir / "contacts_real_events.csv")
     per_animal = _read_csv(contacts_dir / "per_animal_summary.csv")   # v2 only
+    pair_matrix = _read_csv(contacts_dir / "pair_contact_matrix.csv")   # v2 only
     bouts = _read_csv(contacts_dir / "contact_bouts.csv")
     dynamics = _read_csv(contacts_dir / "dynamics_no_contact.csv")   # v2 only
     by_type = _read_csv(reports_dir / "comparison_by_type.csv")
@@ -389,6 +392,7 @@ def build_excel_report(
         ("Summary", _summary_sheet(summary, summary_real, events, types)),
         ("Events", events),
         ("PerAnimal", per_animal),
+        ("PairMatrix", pair_matrix),
         ("PerFrame", per_frame),
         ("Bouts", bouts),
         ("Dynamics", dynamics),
