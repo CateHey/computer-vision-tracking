@@ -248,10 +248,11 @@ raw label is the event's type** (symmetric types N2N and SBS never get one). Run
 are written too, as NC events, so every pair's timeline is fully covered. `event_id` is unique
 over the session and ordered by start frame, then pair.
 
-> Two minimum durations therefore exist: the tracker's per-type bout minimum (6 / 12 frames)
-> and the post-processing minimum (9 frames at 30 fps). The events are derived from the raw
-> labels, not from the bouts, so a 10-frame FOL run is an event although the tracker would
-> have discarded it as a bout. Pick one definition before reporting.
+> Two minimum durations exist: the tracker's per-type bout minimum (6 / 12 frames) and the
+> post-processing minimum (9 frames at 30 fps). The events are derived from the raw labels,
+> not from the bouts. Since 2026-10-27 `min_bout.by_type: {FOL: 0.4}` in
+> `configs/contacts_postprocess_simple.yaml` gives following the same 0.4 s floor as the
+> tracker, so the two definitions agree for every type (see 06 §A3).
 
 ---
 

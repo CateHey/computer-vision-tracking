@@ -44,7 +44,7 @@ min_bout:
   # own bout minimum for FOL is 12 frames (0.4 s); Live Mouse Tracker drops follow
   # events shorter than 7 frames. To align the reported events with the tracker:
   #   by_type: {FOL: 0.4}
-  by_type: {}
+  by_type: {FOL: 0.4}
 
 # --- FPS fallback ---
 # Used only if no --fps flag, no session_summary.json, and no --video_path.
