@@ -8,6 +8,9 @@ source: null            # events | bouts | null (auto: events if it has pair_key
 types: null             # e.g. "N2N,SBS"; null = all types present
 group_by: scene         # scene = one clip per group of overlapping events (one review row per event); event = one clip per event
 max_scene_sec: 12       # longest clip (video seconds); longer chains of events are split into several scenes
+nc_windows: 0           # no-contact windows sampled for the recall proxy (0 = off; CLI --nc-per-run N)
+nc_window_sec: 3.0      # length of each NC window (s); NC spans shorter than 2 * pad_sec are not used
+nc_near_bl: 1.0         # windows where the pair's centroid distance drops below this (body lengths) are drawn first
 duration_bins: [0.3, 0.5, 1.0, 2.0]        # seconds; edges for flicker-rate bins
 score_grid: [0.0, 0.5, 0.6, 0.7, 0.8, 0.9]  # peak_score thresholds for precision table
 duration_grid: [0.0, 0.2, 0.3, 0.5, 1.0, 2.0]  # minimum-duration thresholds (s)

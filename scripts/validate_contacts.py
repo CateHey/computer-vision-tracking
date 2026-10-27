@@ -7,12 +7,17 @@ sample : stratified sample of events -> evidence clips, contact sheets,
          review.xlsx, index.html, manifest.json. By default events that overlap
          in time are grouped into one clip (a scene) with every pair highlighted;
          review.xlsx keeps one row per event and says where to look in the clip.
+         With --nc-per-run N it also samples N windows from the spans where the pipeline
+         reported NO contact (recall proxy: a reviewer says whether a contact was missed).
 score  : read a filled review.xlsx -> validation_summary.{md,json,png}
+         (precision per type; recall_proxy when NC windows were reviewed).
+         `score --compare A.xlsx B.xlsx` -> interrater_summary.{md,json} (Cohen's kappa).
 
 Usage
 -----
-    python scripts/validate_contacts.py sample <run_dir> [--per-type 15] [key=value ...]
+    python scripts/validate_contacts.py sample <run_dir> [--per-type 15] [--nc-per-run 20] [key=value ...]
     python scripts/validate_contacts.py score <validation_dir>/review.xlsx
+    python scripts/validate_contacts.py score --compare review_A.xlsx review_B.xlsx
 """
 from __future__ import annotations
 
@@ -25,7 +30,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -40,6 +45,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "per_type": 15, "pad_sec": 1.0, "speed": 0.5, "seed": 42, "crf": 23,
     "source": None, "types": None,
     "group_by": "scene", "max_scene_sec": 12.0,
+    "nc_windows": 0, "nc_window_sec": 3.0, "nc_near_bl": 1.0,
     "duration_bins": [0.3, 0.5, 1.0, 2.0],
     "score_grid": [0.0, 0.5, 0.6, 0.7, 0.8, 0.9],
     "duration_grid": [0.0, 0.2, 0.3, 0.5, 1.0, 2.0],
@@ -49,6 +55,9 @@ TYPE_NAMES = {
     "SBS": "Side-by-Side", "FOL": "Following",
 }
 VERDICTS = ["real", "flicker", "wrong_type", "tracking_error", "unsure"]
+NC_VERDICTS = ["nc_correct", "missed_contact", "unsure"]  # verdicts that apply to NC-window rows
+# One dropdown for every row of review.xlsx: contact rows use VERDICTS, NC rows use NC_VERDICTS.
+ALL_VERDICTS = ["real", "flicker", "wrong_type", "tracking_error", "nc_correct", "missed_contact", "unsure"]
 CORRECT_TYPES = ["N2N", "N2AG", "N2B", "SBS", "FOL", "NC"]
 QUALITY_FLAGS = ["stale_keypoints", "missing_keypoints", "single_detection",
                  "high_mask_overlap", "fol_used_centroid", "nose_off_mask"]
@@ -145,8 +154,8 @@ def _find_xlsx(run: Path) -> Optional[Path]:
     return None
 
 
-def load_events(run: Path, source: Optional[str] = None) -> Tuple[pd.DataFrame, str]:
-    """Load events (preferred, if they have pair_key) or bouts. Returns (df, source_name)."""
+def _load_events_table(run: Path, source: Optional[str] = None) -> Tuple[pd.DataFrame, str]:
+    """Raw events (preferred, if they have pair_key) or bouts table, NC rows included."""
     xlsx = _find_xlsx(run)
     cdir = run / "contacts"
     cands: List[Tuple[str, Optional[pd.DataFrame]]] = []
@@ -164,8 +173,37 @@ def load_events(run: Path, source: Optional[str] = None) -> Tuple[pd.DataFrame, 
         cands.append(("bouts", bt))
     for name, df in cands:
         if df is not None and len(df) and "pair_key" in df.columns:
-            return _normalise_events(df), name
+            return df, name
     raise FileNotFoundError(f"No events/bouts table with pair_key found under {run}")
+
+
+def load_events(run: Path, source: Optional[str] = None) -> Tuple[pd.DataFrame, str]:
+    """Load contact events (preferred, if they have pair_key) or bouts; NC rows are dropped.
+
+    Returns (df, source_name).
+    """
+    df, name = _load_events_table(run, source)
+    return _normalise_events(df), name
+
+
+def nc_spans(df: pd.DataFrame) -> pd.DataFrame:
+    """The no-contact (NC) rows of a raw events table: pair_key, start_frame, end_frame."""
+    cols = ["pair_key", "start_frame", "end_frame"]
+    ct = df["contact_type"].astype(str).str.strip().str.lower()
+    nc = df[ct.isin(NO_CONTACT)].copy()
+    if nc.empty:
+        return pd.DataFrame({"pair_key": pd.Series(dtype=str), "start_frame": pd.Series(dtype=int),
+                             "end_frame": pd.Series(dtype=int)})
+    nc["pair_key"] = nc["pair_key"].astype(str)
+    nc["start_frame"] = nc["start_frame"].astype(int)
+    nc["end_frame"] = nc["end_frame"].astype(int)
+    return nc[cols].reset_index(drop=True)
+
+
+def load_nc_spans(run: Path, source: Optional[str] = None) -> pd.DataFrame:
+    """NC spans of the run's events table (empty when the table has no NC rows)."""
+    df, _ = _load_events_table(run, source)
+    return nc_spans(df)
 
 
 def _normalise_events(df: pd.DataFrame) -> pd.DataFrame:
@@ -272,6 +310,117 @@ def stratified_sample(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
             pick = rng.choice(len(g), size=take[t], replace=False)
             parts.append(g.iloc[np.sort(pick)])
     return pd.concat(parts).sort_values("start_frame")
+
+
+def index_per_frame(pf: Optional[pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+    """Per-pair view of the per-frame table, indexed by frame_idx (empty dict when pf is None)."""
+    out: Dict[str, pd.DataFrame] = {}
+    if pf is None:
+        return out
+    for k, g in pf.groupby(pf["pair_key"].astype(str)):
+        out[k] = g.drop_duplicates("frame_idx").set_index("frame_idx").sort_index()
+    return out
+
+
+def _subtract_intervals(a: int, b: int, cuts: Sequence[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """[a, b] minus the inclusive intervals in `cuts` (empty pieces are dropped)."""
+    pieces: List[Tuple[int, int]] = []
+    cur = a
+    for c0, c1 in sorted(cuts):
+        if c1 < cur:
+            continue
+        if c0 > b:
+            break
+        if c0 > cur:
+            pieces.append((cur, c0 - 1))
+        cur = max(cur, c1 + 1)
+        if cur > b:
+            break
+    if cur <= b:
+        pieces.append((cur, b))
+    return pieces
+
+
+def nc_candidate_windows(nc: pd.DataFrame, contacts: pd.DataFrame, fps: float, window_sec: float,
+                         min_span_sec: float, nframes: Optional[int] = None) -> pd.DataFrame:
+    """Cut the NC spans into candidate windows: (pair_key, start_frame, end_frame).
+
+    A span is first trimmed by every contact event of the same pair (safety net: the
+    events table should already be consistent), and spans shorter than `min_span_sec`
+    are dropped. A span is then cut into consecutive windows of `window_sec` (the
+    remainder is dropped); a span shorter than one window becomes one shorter window.
+    """
+    win = max(1, int(round(window_sec * fps)))
+    min_len = max(1, int(math.ceil(min_span_sec * fps - 1e-9)))
+    cuts: Dict[str, List[Tuple[int, int]]] = {}
+    if len(contacts):
+        for k, g in contacts.groupby(contacts["pair_key"].astype(str)):
+            cuts[k] = list(zip(g["start_frame"].astype(int), g["end_frame"].astype(int)))
+    out: List[Tuple[str, int, int]] = []
+    for _, r in nc.iterrows():
+        pk, a, b = str(r["pair_key"]), max(0, int(r["start_frame"])), int(r["end_frame"])
+        if nframes is not None:
+            b = min(b, nframes - 1)
+        if b < a:
+            continue
+        for s0, s1 in _subtract_intervals(a, b, cuts.get(pk, [])):
+            length = s1 - s0 + 1
+            if length < min_len:
+                continue
+            if length < win:
+                out.append((pk, s0, s1))
+            else:
+                out.extend((pk, s0 + i * win, s0 + (i + 1) * win - 1) for i in range(length // win))
+    return pd.DataFrame(out, columns=["pair_key", "start_frame", "end_frame"])
+
+
+def _min_centroid_bl(pp: Optional[pd.DataFrame], a: int, b: int) -> float:
+    """Smallest finite centroid distance (body lengths) of a pair over frames a..b; nan if unknown."""
+    if pp is None or "centroid_dist_bl" not in pp.columns:
+        return float("nan")
+    v = pd.to_numeric(pp.loc[a:b, "centroid_dist_bl"], errors="coerce").to_numpy(dtype=float)
+    v = v[np.isfinite(v)]
+    return float(v.min()) if len(v) else float("nan")
+
+
+def sample_nc_windows(nc: pd.DataFrame, contacts: pd.DataFrame, pf_pairs: Optional[Dict[str, pd.DataFrame]],
+                      fps: float, n: int, window_sec: float, min_span_sec: float, seed: int,
+                      near_bl: float = 1.0, nframes: Optional[int] = None) -> pd.DataFrame:
+    """Sample n no-contact windows (seeded), the recall-proxy side of the validation.
+
+    Misses hide where the animals are close, so windows in which the pair's centroid
+    distance drops below `near_bl` body lengths at some frame (column nc_near = True) are
+    drawn first; if there are fewer than n of them the rest is filled from the other
+    windows. Without a per-frame table (pf_pairs empty) every window is equally likely and
+    nc_near is NaN. Returns the windows sorted by start_frame with the columns of an event
+    table (contact_type "NC") plus nc_near and min_centroid_dist_bl.
+    """
+    cand = nc_candidate_windows(nc, contacts, fps, window_sec, min_span_sec, nframes)
+    cols = ["pair_key", "contact_type", "start_frame", "end_frame", "n_frames", "duration_sec",
+            "peak_score", "duration_tertile", "nc_near", "min_centroid_dist_bl"]
+    if cand.empty or n <= 0:
+        return pd.DataFrame(columns=cols)
+    have_pf = bool(pf_pairs)
+    mins = np.array([_min_centroid_bl((pf_pairs or {}).get(r.pair_key), r.start_frame, r.end_frame)
+                     for r in cand.itertuples()]) if have_pf else np.full(len(cand), np.nan)
+    near = np.where(np.isfinite(mins), mins < near_bl, False)
+    rng = np.random.default_rng([int(seed), 7])
+    pools = [np.flatnonzero(near), np.flatnonzero(~near)] if have_pf else [np.arange(len(cand))]
+    pick: List[int] = []
+    for pool in pools:
+        k = min(n - len(pick), len(pool))
+        if k > 0:
+            pick.extend(int(i) for i in rng.choice(pool, size=k, replace=False))
+    pick.sort()
+    out = cand.iloc[pick].copy()
+    out["contact_type"] = "NC"
+    out["n_frames"] = out["end_frame"] - out["start_frame"] + 1
+    out["duration_sec"] = out["n_frames"] / fps
+    out["peak_score"] = np.nan
+    out["duration_tertile"] = ""
+    out["nc_near"] = near[pick] if have_pf else np.nan
+    out["min_centroid_dist_bl"] = mins[pick]
+    return out.sort_values(["start_frame", "pair_key"]).reset_index(drop=True)[cols]
 
 
 # --------------------------------------------------------------------------- clips
@@ -603,10 +752,37 @@ def annotate_scene(frame: np.ndarray, scene_id: str, events: pd.DataFrame, n_lis
     return frame
 
 
+def annotate_nc_window(frame: np.ndarray, scene_id: str, win: pd.Series, fps: float, fidx: int,
+                       row: Optional[pd.Series],
+                       colors: Optional[List[Tuple[int, int, int]]]) -> np.ndarray:
+    """Banner for a no-contact window: names the pair to watch, circles both animals, orange border."""
+    import cv2
+    h, w = frame.shape[:2]
+    ban = frame.copy()
+    cv2.rectangle(ban, (0, 0), (w, 58), (0, 0, 0), -1)
+    cv2.rectangle(ban, (0, h - 30), (w, h), (0, 0, 0), -1)
+    frame = cv2.addWeighted(ban, 0.6, frame, 0.4, 0)
+    highlight_pair(frame, win, row, colors)
+    pl = pair_label(win["pair_key"]) + pair_colour_hint(win["pair_key"], colors)
+    _put(frame, f"{win['sample_id']} | NC window: is there any contact between {pl}?", (8, 22), 0.6)
+    _put(frame, f"window {fmt_time(win['start_frame'] / fps)}-{fmt_time((win['end_frame'] + 1) / fps)}  "
+                f"frames {win['start_frame']}-{win['end_frame']}  t={fmt_time(fidx / fps)} f={fidx}  "
+                f"[no label active]", (8, 48), 0.5, (200, 200, 200))
+    if row is not None:
+        parts = [f"raw={row.get('contact_type', '?')}"]
+        for c, lab in (("nose_nose_dist_bl", "nn"), ("centroid_dist_bl", "cd"), ("mask_contact_bl", "mc")):
+            if c in row and pd.notna(row[c]):
+                parts.append(f"{lab}={row[c]:.2f}BL")
+        _put(frame, "  ".join(parts), (8, h - 9), 0.5)
+    cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 165, 255), 6)
+    return frame
+
+
 def cut_scene_clip(cap, scene: Dict[str, Any], visible: pd.DataFrame, pf_pairs: Dict[str, pd.DataFrame], fps: float,
                    out: Path, sheet: Path, speed: float, crf: int,
                    colors: Optional[List[Tuple[int, int, int]]]) -> int:
-    """Write one annotated clip for a scene and a 3-thumbnail contact sheet."""
+    """Write one annotated clip for a scene (scene["kind"] == "nc": a no-contact window) and a
+    3-thumbnail contact sheet."""
     import cv2
     a, b = scene["a"], scene["b"]
     pairs = [str(k) for k in visible["pair_key"].unique()]
@@ -623,7 +799,13 @@ def cut_scene_clip(cap, scene: Dict[str, Any], visible: pd.DataFrame, pf_pairs: 
             wr = _Writer(out, w2, h2, fps * speed, crf)
         rows_by_pair = {k: (pf_pairs[k].loc[fi] if k in pf_pairs and fi in pf_pairs[k].index else None)
                         for k in pairs}
-        fr = annotate_scene(fr, scene["scene_id"], visible, len(scene["events"]), fps, fi, rows_by_pair, colors)[:h2, :w2]
+        if scene.get("kind") == "nc":
+            win = scene["events"].iloc[0]
+            fr = annotate_nc_window(fr, scene["scene_id"], win, fps, fi,
+                                    rows_by_pair.get(str(win["pair_key"])), colors)[:h2, :w2]
+        else:
+            fr = annotate_scene(fr, scene["scene_id"], visible, len(scene["events"]), fps, fi,
+                                rows_by_pair, colors)[:h2, :w2]
         wr.write(fr)
         if fi in want:
             keep[fi] = fr
@@ -639,7 +821,7 @@ def cut_scene_clip(cap, scene: Dict[str, Any], visible: pd.DataFrame, pf_pairs: 
 # --------------------------------------------------------------------------- outputs
 REVIEWER_COLS = ["verdict", "correct_type", "reviewer", "notes"]
 COLUMN_ORDER = ["sample_id", "scene_id", "clip", "thumbnail", "in_sample", "partial",
-                "pair_label", "contact_type", "contact_label",
+                "pair_label", "contact_type", "contact_label", "nc_near", "min_centroid_dist_bl",
                 "start_time", "end_time", "duration_sec", "duration_frames", "duration_tertile",
                 "clip_from", "clip_to", "peak_score", "mean_score", "secondary_type", "secondary_score"] \
     + [f"frac_{f}" for f in QUALITY_FLAGS] + ["mean_nose_nose_dist_bl", "mean_mask_contact_bl"]
@@ -671,7 +853,7 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
         ws.column_dimensions[get_column_letter(i)].width = 38 if c in ("clip", "thumbnail", "notes") else (
             22 if c == "contact_label" else 14)
     last = max(len(rows) + 1, 2)
-    for col, opts in (("verdict", VERDICTS), ("correct_type", CORRECT_TYPES)):
+    for col, opts in (("verdict", ALL_VERDICTS), ("correct_type", CORRECT_TYPES)):
         dv = DataValidation(type="list", formula1='"' + ",".join(opts) + '"', allow_blank=True)
         ws.add_data_validation(dv)
         L = get_column_letter(cols.index(col) + 1)
@@ -692,6 +874,16 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
         "wrong_type: a real interaction, but of another type; fill in 'correct_type' (N2N, N2AG, N2B, SBS, FOL or NC).",
         "tracking_error: identity swap, merged masks or keypoints on the wrong animal.",
         "unsure: cannot be decided from the clip; excluded from precision.",
+        "",
+        "NC rows (sample_id N01.1, contact_type NC) are windows in which the pipeline reported NO contact for the",
+        "pair. The clip shows only that window and the two animals of the pair are circled. Is there any contact",
+        "between them, whatever its type?",
+        "nc_correct: no contact between the two animals in the window (the empty label is right).",
+        "missed_contact: a real contact is visible although nothing was labelled; put its type in 'correct_type'",
+        "(N2N, N2AG, N2B, SBS or FOL).",
+        "unsure works for NC rows too and is excluded from the miss rate.",
+        "The 'verdict' list is the same for every row: real / flicker / wrong_type / tracking_error belong to",
+        "contact rows, nc_correct / missed_contact to NC rows.",
         "",
         "Also fill in 'reviewer' (your initials) and 'notes' (optional). Do not edit the other columns.",
     ]
@@ -771,7 +963,7 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     """Run the `sample` subcommand."""
     import cv2
     cfg = load_config(overrides)
-    for k in ("per_type", "pad_sec", "speed", "seed", "source", "types", "group_by"):
+    for k in ("per_type", "pad_sec", "speed", "seed", "source", "types", "group_by", "nc_windows"):
         v = getattr(args, k, None)
         if v is not None:
             cfg[k] = v
@@ -790,6 +982,7 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     if cfg["types"]:
         keep = {t.strip().upper() for t in str(cfg["types"]).split(",")}
         events = events[events["contact_type"].isin(keep)]
+    events_all = events  # every contact event of the run: NC windows must not overlap any of them
     events = events.reset_index(drop=True)
     events["duration_tertile"] = ""
     for t, g in events.groupby("contact_type"):
@@ -810,10 +1003,7 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
     pad = int(round(float(cfg["pad_sec"]) * fps))
     speed, crf = float(cfg["speed"]), int(cfg["crf"])
     colors = overlay_colors(run)
-    pf_pairs: Dict[str, pd.DataFrame] = {}
-    if pf is not None:
-        for k, g in pf.groupby(pf["pair_key"].astype(str)):
-            pf_pairs[k] = g.drop_duplicates("frame_idx").set_index("frame_idx")
+    pf_pairs = index_per_frame(pf)
 
     rows: List[Dict[str, Any]] = []
     n_clips = 0
@@ -851,14 +1041,52 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
                              "frames_written": n})
             logger.info("%s: %d event(s) to review (%d visible), frames %d-%d -> %d frames written",
                         sc["scene_id"], len(evs), len(vis), sc["a"], sc["b"], n)
+
+    n_nc_req, n_nc = int(cfg.get("nc_windows") or 0), 0
+    if n_nc_req > 0:
+        spans = load_nc_spans(run, cfg["source"])
+        if spans.empty:
+            logger.warning("nc_windows=%d requested but the events table has no NC rows; skipping", n_nc_req)
+        else:
+            wins = sample_nc_windows(spans, events_all, pf_pairs, fps, n_nc_req, float(cfg["nc_window_sec"]),
+                                     2 * float(cfg["pad_sec"]), int(cfg["seed"]), float(cfg["nc_near_bl"]), nframes)
+            if len(wins) < n_nc_req:
+                logger.warning("Only %d NC windows available (%d requested)", len(wins), n_nc_req)
+            for k in range(len(wins)):
+                sid = f"N{k + 1:02d}"
+                evdf = wins.iloc[[k]].copy()
+                evdf["sample_id"] = f"{sid}.1"
+                scene = {"a": int(evdf.iloc[0]["start_frame"]), "b": int(evdf.iloc[0]["end_frame"]),
+                         "events": evdf, "visible": evdf, "scene_id": sid, "kind": "nc"}
+                clip, sheet = f"clips/{sid}.mp4", f"thumbs/{sid}.png"
+                n = cut_scene_clip(cap, scene, evdf, pf_pairs, fps, out / clip, out / sheet, speed, crf, colors)
+                n_clips += 1
+                ev = evdf.iloc[0]
+                near = None if pd.isna(ev["nc_near"]) else bool(ev["nc_near"])
+                mind = None if pd.isna(ev["min_centroid_dist_bl"]) else round(float(ev["min_centroid_dist_bl"]), 3)
+                rows.append({**_event_row(ev, pf, fps), "scene_id": sid, "clip": clip, "thumbnail": sheet,
+                             "in_sample": True, "partial": False, "nc_near": near, "min_centroid_dist_bl": mind,
+                             "clip_from": fmt_time(0), "clip_to": fmt_time(n / (fps * speed)),
+                             "frames_written": n})
+                logger.info("%s NC window %s frames %d-%d (near=%s) -> %d frames", ev["sample_id"],
+                            pair_label(ev["pair_key"]), ev["start_frame"], ev["end_frame"], near, n)
+                n_nc += 1
     cap.release()
 
     write_review_xlsx(rows, out / "review.xlsx")
     write_index_html(rows, out / "index.html", f"Contact validation - {run.name}")
-    (out / "manifest.json").write_text(json.dumps({
+    manifest: Dict[str, Any] = {
         "source": src, "run_dir": str(run), "video": str(video), "fps": fps, "params": cfg,
         "seed": cfg["seed"], "available_per_type": avail, "sampled_per_type": sampled,
-        "n_samples": len(rows), "n_clips": n_clips}, indent=2, default=str))
+        "nc_windows_requested": n_nc_req, "nc_windows_sampled": n_nc,
+        "n_samples": len(rows), "n_clips": n_clips}
+    prov = run / "provenance.json"
+    if prov.exists():
+        try:
+            manifest["provenance"] = json.loads(prov.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not read %s: %s", prov, exc)
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
     logger.info("Wrote %d clips for %d events to %s", n_clips, len(rows), out)
     return 0
 
@@ -875,10 +1103,48 @@ def _prec(df: pd.DataFrame) -> Dict[str, Any]:
             "verdicts": {v: int((df["verdict"] == v).sum()) for v in VERDICTS}}
 
 
+def _recall_proxy(nc: pd.DataFrame) -> Dict[str, Any]:
+    """Miss rate over reviewed no-contact windows: missed_contact / (windows - unsure), Wilson CI.
+
+    It is a rate per sampled window (windows near another animal are drawn first), a proxy
+    for recall and not recall itself.
+    """
+    verdict = nc["verdict"]
+    n_unsure = int((verdict == "unsure").sum())
+    missed = nc[verdict == "missed_contact"]
+    n_decided = len(nc) - n_unsure
+    lo, hi = wilson_ci(len(missed), n_decided)
+    by_type: Dict[str, int] = {}
+    ctypes = missed["correct_type"] if "correct_type" in missed else pd.Series([None] * len(missed))
+    for ct in ctypes:
+        c = "UNSPECIFIED" if pd.isna(ct) or not str(ct).strip() else str(ct).strip().upper()
+        by_type[c] = by_type.get(c, 0) + 1
+    n_near = None
+    if "nc_near" in nc:
+        n_near = int(nc["nc_near"].astype(str).str.strip().str.lower().isin(["true", "1", "1.0"]).sum())
+    return {"n_nc_windows": len(nc), "n_nc_correct": int((verdict == "nc_correct").sum()),
+            "n_missed": len(missed), "n_unsure": n_unsure, "n_decided": n_decided,
+            "miss_rate": len(missed) / n_decided if n_decided else None,
+            "ci_low": None if math.isnan(lo) else lo, "ci_high": None if math.isnan(hi) else hi,
+            "missed_by_type": by_type, "n_near_windows": n_near}
+
+
 def compute_summary(df: pd.DataFrame, cfg: dict) -> Dict[str, Any]:
-    """Aggregate a filled review table into the summary dict."""
+    """Aggregate a filled review table into the summary dict.
+
+    Rows with contact_type NC (no-contact windows) feed only `recall_proxy`; every other
+    figure is computed on the contact rows.
+    """
     df = df.copy()
     df["verdict"] = df["verdict"].astype(str).str.strip().str.lower()
+    is_nc = df["contact_type"].astype(str).str.strip().str.upper() == "NC"
+    nc = df[is_nc]
+    df = df[~is_nc]
+    bad = int((~nc["verdict"].isin(NC_VERDICTS)).sum()) + int((~df["verdict"].isin(VERDICTS)).sum())
+    if bad:
+        logger.warning("%d review row(s) ignored: verdict not valid for the row type "
+                       "(contact rows: %s; NC rows: %s)", bad, ", ".join(VERDICTS), ", ".join(NC_VERDICTS))
+    nc = nc[nc["verdict"].isin(NC_VERDICTS)]
     df = df[df["verdict"].isin(VERDICTS)]
     df["duration_sec"] = pd.to_numeric(df["duration_sec"], errors="coerce")
     df["peak_score"] = pd.to_numeric(df.get("peak_score"), errors="coerce")
@@ -891,6 +1157,7 @@ def compute_summary(df: pd.DataFrame, cfg: dict) -> Dict[str, Any]:
         extras = df[~core_mask]
         df = df[core_mask]
     s: Dict[str, Any] = {"n_reviewed": len(df), "overall": _prec(df) if len(df) else {}}
+    s["recall_proxy"] = _recall_proxy(nc) if len(nc) else None
     s["per_type"] = {t: _prec(g) for t, g in df.groupby("contact_type")}
     s["extras"] = {"n_reviewed": int(len(extras)), "overall": _prec(extras) if len(extras) else {},
                    "per_type": {t: _prec(g) for t, g in extras.groupby("contact_type")}} if extras is not None else None
@@ -964,8 +1231,22 @@ def render_md(s: Dict[str, Any]) -> str:
               for t, d in s["wrong_type_confusion"].items()]
     else:
         L.append("None.")
-    L += ["", f"Tracking-error rate: {_pct(s['tracking_error_rate'])}", "",
-          "## Precision if only events with duration >= d were kept", "",
+    L += ["", f"Tracking-error rate: {_pct(s['tracking_error_rate'])}"]
+    rp = s.get("recall_proxy")
+    if rp:
+        ci = f"{_pct(rp['ci_low'])}-{_pct(rp['ci_high'])}" if rp["ci_low"] is not None else "n/a"
+        L += ["", "## Recall proxy: no-contact windows", "",
+              "Windows where the pipeline reported no contact for a pair, drawn at random from long NC spans "
+              "(pairs that come within the near-distance threshold are drawn first), reviewed for any contact. "
+              "Miss rate = missed_contact / (windows - unsure), Wilson 95% CI. It is a rate per sampled window "
+              "and over-represents close pairs, so it is a proxy for recall, not recall itself.", "",
+              "| windows | nc_correct | missed_contact | unsure | miss rate | 95% CI | near windows |",
+              "|---|---|---|---|---|---|---|",
+              f"| {rp['n_nc_windows']} | {rp['n_nc_correct']} | {rp['n_missed']} | {rp['n_unsure']} | "
+              f"{_pct(rp['miss_rate'])} | {ci} | {'n/a' if rp['n_near_windows'] is None else rp['n_near_windows']} |", ""]
+        L.append("Missed contacts by type: " + (", ".join(f"{c} x{n}" for c, n in rp["missed_by_type"].items())
+                                                 if rp["missed_by_type"] else "none") + ".")
+    L += ["", "## Precision if only events with duration >= d were kept", "",
           "| d (s) | n kept | precision | 95% CI |", "|---|---|---|---|"]
     for g in s["min_duration_grid"]:
         L.append(f"| {g['threshold']:g} | {g['n_kept']} | {_pct(g['precision'])} | "
@@ -1003,6 +1284,152 @@ def plot_precision(s: Dict[str, Any], path: Path) -> None:
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- inter-rater
+POSITIVE_VERDICTS = {"real", "nc_correct"}                                    # the label is right
+NEGATIVE_VERDICTS = {"flicker", "wrong_type", "tracking_error", "missed_contact"}  # the label is wrong
+
+
+def binary_verdict(v: Any) -> Optional[bool]:
+    """True = the label is right (real / nc_correct), False = wrong, None = unsure or blank."""
+    v = str(v).strip().lower()
+    if v in POSITIVE_VERDICTS:
+        return True
+    if v in NEGATIVE_VERDICTS:
+        return False
+    return None
+
+
+def cohen_kappa(a: Sequence[bool], b: Sequence[bool]) -> Dict[str, Any]:
+    """Cohen's kappa for two raters on a binary label, computed by hand.
+
+    kappa = (p_o - p_e) / (1 - p_e) with p_o the observed agreement and p_e the agreement
+    expected from each rater's marginal rate of True. kappa is None when it is undefined
+    (no rows, or p_e = 1 because both raters used one single class).
+    The 2x2 table has rater A in the rows and rater B in the columns, in the order
+    [True, False].
+    """
+    n = len(a)
+    tt = sum(1 for x, y in zip(a, b) if x and y)
+    tf = sum(1 for x, y in zip(a, b) if x and not y)
+    ft = sum(1 for x, y in zip(a, b) if not x and y)
+    ff = n - tt - tf - ft
+    out: Dict[str, Any] = {"n": n, "n_agree": tt + ff, "raw_agreement": None, "p_expected": None, "kappa": None,
+                           "table": [[tt, tf], [ft, ff]]}
+    if n == 0:
+        return out
+    p_o = (tt + ff) / n
+    p_a, p_b = (tt + tf) / n, (tt + ft) / n
+    p_e = p_a * p_b + (1 - p_a) * (1 - p_b)
+    out.update(raw_agreement=p_o, p_expected=p_e)
+    if p_e < 1:
+        out["kappa"] = (p_o - p_e) / (1 - p_e)
+    return out
+
+
+def _agreement(m: pd.DataFrame) -> Dict[str, Any]:
+    """Kappa statistics of the matched rows `m` (columns bin_a, bin_b, verdict_a, verdict_b)."""
+    st = cohen_kappa([bool(x) for x in m["bin_a"]], [bool(x) for x in m["bin_b"]])
+    st["raw_agreement_full_verdict"] = float((m["verdict_a"] == m["verdict_b"]).mean()) if len(m) else None
+    return st
+
+
+def compare_reviews(a: pd.DataFrame, b: pd.DataFrame) -> Dict[str, Any]:
+    """Inter-rater agreement of two filled review tables, rows matched by sample_id.
+
+    The verdict is reduced to "the label is right": real -> yes, flicker / wrong_type /
+    tracking_error -> no, unsure (or blank) -> row excluded. `overall` covers the contact
+    rows; NC-window rows (nc_correct yes, missed_contact no) are a group of their own in
+    `per_type` ("NC") and never enter `overall`.
+    """
+    def prep(d: pd.DataFrame) -> pd.DataFrame:
+        d = d[d["verdict"].notna() & d["sample_id"].notna()].copy()
+        d["sample_id"] = d["sample_id"].astype(str).str.strip()
+        d["verdict"] = d["verdict"].astype(str).str.strip().str.lower()
+        return d.drop_duplicates("sample_id")
+
+    a, b = prep(a), prep(b)
+
+    def side(d: pd.DataFrame, suf: str) -> pd.DataFrame:
+        keep = [c for c in ("sample_id", "verdict", "contact_type", "pair_label") if c in d]
+        return d[keep].rename(columns={c: f"{c}_{suf}" for c in keep if c != "sample_id"})
+
+    m = side(a, "a").merge(side(b, "b"), on="sample_id", how="inner")
+    m["contact_type"] = m["contact_type_a"].astype(str).str.strip().str.upper()
+    n_mismatch = 0
+    for c in ("contact_type", "pair_label"):
+        if f"{c}_a" in m and f"{c}_b" in m:
+            n_mismatch += int((m[f"{c}_a"].astype(str) != m[f"{c}_b"].astype(str)).sum())
+    if n_mismatch:
+        logger.warning("%d matched row(s) differ in contact_type / pair_label: are both files from the same "
+                       "`sample` run?", n_mismatch)
+    m["bin_a"], m["bin_b"] = m["verdict_a"].map(binary_verdict), m["verdict_b"].map(binary_verdict)
+    usable = m[m["bin_a"].notna() & m["bin_b"].notna()]
+    is_nc = usable["contact_type"] == "NC"
+    res: Dict[str, Any] = {
+        "n_rows_a": len(a), "n_rows_b": len(b), "n_matched": len(m),
+        "n_only_a": len(set(a["sample_id"]) - set(b["sample_id"])),
+        "n_only_b": len(set(b["sample_id"]) - set(a["sample_id"])),
+        "n_unsure_excluded": len(m) - len(usable), "n_id_mismatch": n_mismatch,
+        "overall": _agreement(usable[~is_nc]),
+        "per_type": {t: _agreement(g) for t, g in usable.groupby("contact_type")},
+        "disagreements": [
+            {"sample_id": r.sample_id, "contact_type": r.contact_type, "verdict_a": r.verdict_a,
+             "verdict_b": r.verdict_b} for r in usable[usable["bin_a"] != usable["bin_b"]].itertuples()],
+    }
+    for side, d in (("a", a), ("b", b)):
+        names = d["reviewer"].dropna().astype(str).str.strip() if "reviewer" in d else pd.Series(dtype=str)
+        res[f"reviewer_{side}"] = names.mode().iloc[0] if len(names) else None
+    return res
+
+
+def render_compare_md(r: Dict[str, Any], name_a: str, name_b: str) -> str:
+    """Markdown rendering of compare_reviews()."""
+    def k(x: Optional[float]) -> str:
+        return "undefined" if x is None else f"{x:.3f}"
+
+    ra, rb = r.get("reviewer_a") or "?", r.get("reviewer_b") or "?"
+    L = ["# Inter-rater agreement", "",
+         f"Rater A: {ra} ({name_a}); rater B: {rb} ({name_b}). Rows matched by sample_id: **{r['n_matched']}** "
+         f"({r['n_unsure_excluded']} excluded because either rater said unsure; {r['n_only_a']} only in A, "
+         f"{r['n_only_b']} only in B).", "",
+         "The verdict is reduced to *the label is right*: real = yes; flicker, wrong_type and tracking_error = no. "
+         "NC-window rows count nc_correct as yes and missed_contact as no and are reported on their own line "
+         "(`NC`), not in `overall`. Cohen's kappa = (p_o - p_e) / (1 - p_e), p_e from each rater's own rate of "
+         "*yes*; it is undefined when both raters used one class only.", "",
+         "| group | n | agree | raw agreement | kappa | same full verdict |", "|---|---|---|---|---|---|"]
+    for name, st in [("overall (contact rows)", r["overall"])] + list(r["per_type"].items()):
+        L.append(f"| {name} | {st['n']} | {st['n_agree']} | {_pct(st['raw_agreement'])} | {k(st['kappa'])} | "
+                 f"{_pct(st['raw_agreement_full_verdict'])} |")
+    t = r["overall"]["table"]
+    L += ["", "## 2x2 table, overall (contact rows)", "",
+          "| | B: real | B: not real |", "|---|---|---|",
+          f"| **A: real** | {t[0][0]} | {t[0][1]} |", f"| **A: not real** | {t[1][0]} | {t[1][1]} |", ""]
+    L += ["## Disagreements", ""]
+    if r["disagreements"]:
+        L += ["| sample | type | A | B |", "|---|---|---|---|"]
+        L += [f"| {d['sample_id']} | {d['contact_type']} | {d['verdict_a']} | {d['verdict_b']} |"
+              for d in r["disagreements"]]
+    else:
+        L.append("None.")
+    return "\n".join(L) + "\n"
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    """Run `score --compare A B`: write interrater_summary.{json,md} next to review A."""
+    pa, pb = Path(args.compare[0]), Path(args.compare[1])
+    a, b = pd.read_excel(pa, sheet_name="review"), pd.read_excel(pb, sheet_name="review")
+    r = compare_reviews(a, b)
+    if not r["n_matched"]:
+        logger.error("No sample_id with a verdict in both %s and %s", pa, pb)
+        return 1
+    (pa.parent / "interrater_summary.json").write_text(json.dumps(r, indent=2, default=str))
+    (pa.parent / "interrater_summary.md").write_text(render_compare_md(r, str(pa), str(pb)), encoding="utf-8")
+    ov = r["overall"]
+    logger.info("Compared %d matched rows: agreement %s, kappa %s -> %s", r["n_matched"],
+                _pct(ov["raw_agreement"]), "undefined" if ov["kappa"] is None else f"{ov['kappa']:.3f}", pa.parent)
+    return 0
+
+
 def cmd_score(args: argparse.Namespace, overrides: List[str]) -> int:
     """Run the `score` subcommand."""
     cfg = load_config(overrides)
@@ -1035,12 +1462,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     sp.add_argument("--source", choices=["events", "bouts"])
     sp.add_argument("--group-by", dest="group_by", choices=["scene", "event"],
                     help="scene (default): one clip per group of overlapping events; event: one clip each")
+    sp.add_argument("--nc-per-run", dest="nc_windows", type=int,
+                    help="also sample N windows where no contact was reported (recall proxy); default 0 = off")
     sp.add_argument("--out")
-    sc = sub.add_parser("score", help="score a filled review.xlsx")
-    sc.add_argument("review")
+    sc = sub.add_parser("score", help="score a filled review.xlsx, or compare two reviewers (--compare)")
+    sc.add_argument("review", nargs="?")
+    sc.add_argument("--compare", nargs=2, metavar=("REVIEW_A", "REVIEW_B"),
+                    help="inter-rater agreement (Cohen's kappa) of two filled review.xlsx files")
     args, extra = ap.parse_known_args(argv)
     overrides = [e for e in extra if "=" in e]
-    return cmd_sample(args, overrides) if args.cmd == "sample" else cmd_score(args, overrides)
+    if args.cmd == "sample":
+        return cmd_sample(args, overrides)
+    if args.compare and args.review and "=" in args.review and not Path(args.review).exists():
+        overrides.append(args.review)  # a key=value override argparse took for the positional
+        args.review = None
+    if bool(args.review) == bool(args.compare):
+        ap.error("score needs either a review.xlsx or --compare REVIEW_A REVIEW_B")
+    return cmd_compare(args) if args.compare else cmd_score(args, overrides)
 
 
 if __name__ == "__main__":
