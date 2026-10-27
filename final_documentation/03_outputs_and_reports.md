@@ -307,3 +307,47 @@ defective (pre-2026-09-30) behaviour for comparison. Old `demo_as_shipped` /
    (e.g. `outputs/2026-07-28_*`) used wrong keypoint names, could not fire SBS, and
    mixed pairs in post-processing — re-run it
    ([02 §2.6](02_contact_detection.md#26-defects-found-and-fixed-2026-09-30)).
+
+---
+
+## 3.8 Sensitivity analysis
+
+How much do the reported counts depend on the thresholds? `scripts/sensitivity_analysis.py`
+answers it offline, without a GPU, from the per-frame table of a finished run
+(`contacts_per_frame.csv`, or the `PerFrame` sheet of `results.xlsx`). The table holds the five
+scores per frame and pair, and everything after the scores is deterministic, so the script rebuilds
+the raw label (`ScoreMap.argmax_type`), the cleaned label (`compute_labels`) and the events
+(`extract_events`) for each value of one parameter at a time, the others at their baseline.
+
+```bash
+python scripts/sensitivity_analysis.py outputs/runs/<run>                     # grid in configs/sensitivity.yaml
+python scripts/sensitivity_analysis.py outputs/runs/<run> --out some/dir      # other output folder
+python scripts/sensitivity_analysis.py outputs/runs/<run> min_bout_sec=[0.3,0.5] smoothing_window=7
+```
+
+| Parameter | Default grid | Baseline |
+|-----------|--------------|----------|
+| `activation_threshold` (N2N, N2AG, SBS, N2B) | 0.40, 0.45, 0.50, 0.55, 0.60, 0.70 | 0.50 |
+| `activation_threshold_rare` (FOL) | 0.25, 0.35, 0.45 | 0.35 |
+| `smoothing_window` (frames) | 3, 5, 7 | `configs/contacts_postprocess_simple.yaml` |
+| `gap_bridging_max_gap` (frames) | 1, 3, 5 | same file |
+| `min_bout_sec` (global minimum duration) | 0.2, 0.3, 0.4, 0.5, 1.0 | same file; `min_bout.by_type` stays in force |
+
+Output in `<run>/sensitivity/` (or `--out`):
+
+- `sensitivity_long.csv`: `parameter, value, contact_type, n_events, total_sec, mean_sec`, plus
+  `n_pairs` (pairs with an event of that type), `n_pair_frames` (pair-frames carrying the type after
+  cleaning) and `is_baseline`. NC is not counted.
+- `sensitivity_summary.md`: one table per parameter (columns = types, cells = `n_events (total_sec)`,
+  baseline row in bold), the robustness paragraph, and the list of what cannot be varied offline.
+- `sensitivity_<parameter>.png`: events against value, one line per type, the baseline as a dashed line.
+
+The script also prints a one-paragraph robustness statement: for each type, the minimum and maximum
+event count over the activation-threshold grid and over the minimum-duration grid (FOL does not move
+with the first, because it uses the rare threshold). It checks the rebuilt raw labels against
+`ScoreMap` on a row sample and reports how often they equal the stored `contact_type` at the baseline
+thresholds; anything below 100 % means the stored label was not the plain argmax of the stored scores.
+
+**Not covered.** The Schmitt enter/exit distances (`contact_zone_bl_enter/_exit`,
+`sbs_contact_bl_enter/_exit`, `follow_radius_bl*`) and the per-type score internals are fixed at
+tracking time and already folded into the stored scores; varying them needs a new tracker run.

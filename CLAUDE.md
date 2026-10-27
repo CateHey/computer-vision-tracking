@@ -79,6 +79,7 @@ python scripts/postprocess_contacts_simple.py outputs/runs/<run>/contacts/ --mak
 python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 15   # one clip per scene (overlapping events), one review row per event
 # reviewer fills verdict / correct_type in <run>/validation/review.xlsx
 python scripts/validate_contacts.py score outputs/runs/<run>/validation/review.xlsx
+python scripts/sensitivity_analysis.py outputs/runs/<run>   # offline threshold sensitivity (no GPU) -> <run>/sensitivity/
 ```
 
 A scene groups events that overlap in time (`group_by: scene` in `configs/validation.yaml`; `--group-by event` for one clip each);
