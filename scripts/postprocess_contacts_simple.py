@@ -1047,9 +1047,12 @@ def write_event_log(
     real_contact_events = len(events_df[events_df["contact_type"] != "NC"]) if len(events_df) > 0 else 0
     nc_spans = len(events_df) - real_contact_events
 
-    real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC")))
+    # Contact time excludes following (a non-contact behaviour); it is reported apart.
+    real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC") & (real_types != "FOL")))
+    fol_frames = int(np.sum(real_types == "FOL"))
     raw_contact_frames = int(np.sum(raw_types != ""))
     real_contact_sec = real_contact_frames / fps
+    fol_sec = fol_frames / fps
 
     lines = []
     lines.append("=" * 60)
@@ -1070,7 +1073,7 @@ def write_event_log(
     lines.append(
         f"Contact events: {real_contact_events} (plus {nc_spans} no-contact spans) | "
         f"Contact time: {real_contact_sec:.1f} s = {contact_pct:.1f}% "
-        f"of {'pair-time' if n_pairs > 1 else 'session'}"
+        f"of {'pair-time' if n_pairs > 1 else 'session'} (following excluded: {fol_sec:.1f} s)"
     )
     lines.append("")
 
@@ -1222,6 +1225,7 @@ def write_real_summary(
     raw_dur_frames = _count_raw_duration_frames(raw_types)
     raw_contact_frames = int(np.sum(raw_types != ""))
     real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC")))
+    real_fol_frames = int(np.sum(real_types == "FOL"))
 
     # Per-type real summary
     events_by_type = {}
@@ -1286,6 +1290,9 @@ def write_real_summary(
             "contact_pct": round(real_contact_frames / pair_frames * 100, 2) if pair_frames > 0 else 0.0,
             "events_by_type": events_by_type,
             "total_contact_sec": round(real_contact_frames / fps, 2),
+            # following is a non-contact behaviour: reported apart from contact time
+            "total_contact_sec_excluding_fol": round((real_contact_frames - real_fol_frames) / fps, 2),
+            "total_fol_sec": round(real_fol_frames / fps, 2),
             "total_events": len(events_df),
         },
         "per_animal": per_animal_json,
