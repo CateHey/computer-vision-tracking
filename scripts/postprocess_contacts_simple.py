@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import logging
 import math
@@ -74,7 +75,16 @@ PER_ANIMAL_COLUMNS = (
     ["animal", "n_events_total"]
     + [f"n_events_{ct}" for ct in PER_ANIMAL_TYPES]
     + ["contact_time_sec", "time_2plus_contacts_sec",
-       "n_as_investigator", "n_as_receiver", "fol_time_sec"]
+       "n_as_investigator", "n_as_receiver", "fol_time_sec",
+       "session_min", "events_per_min", "contact_sec_per_min"]
+)
+
+# Pair view (the social-network figure): one row per unordered pair of animals.
+PAIR_MATRIX_COLUMNS = (
+    ["pair_key", "pair_label", "animal_a", "animal_b", "n_events_total"]
+    + [f"n_events_{ct}" for ct in PER_ANIMAL_TYPES]
+    + ["contact_sec", "contact_pct_of_session", "fol_sec",
+       "events_per_min", "contact_sec_per_min"]
 )
 
 # Default config (used when no --config provided)
@@ -668,6 +678,9 @@ def per_animal_summary(
       n_as_investigator/_receiver      asymmetric events (N2AG, N2B, FOL) where the animal is the
                                        investigator (the follower, for FOL) / the other animal
       fol_time_sec                     frames with FOL in any of its pairs
+      session_min                      session length in minutes (unique frames / fps / 60)
+      events_per_min, contact_sec_per_min
+                                       n_events_total and contact_time_sec per session minute
     Without a pair_key column (single-pair v1 output) the result is empty.
     """
     empty = pd.DataFrame(columns=PER_ANIMAL_COLUMNS)
@@ -683,6 +696,7 @@ def per_animal_summary(
     frames = pd.to_numeric(df["frame_idx"], errors="coerce").to_numpy(dtype=float)
     unique_frames = np.unique(frames[np.isfinite(frames)])
     n_frames = len(unique_frames)
+    session_min = n_frames / fps / 60.0
     labels = np.asarray(real_types, dtype=object)
     contact: Dict[str, np.ndarray] = {}
     follow: Dict[str, np.ndarray] = {}
@@ -721,13 +735,86 @@ def per_animal_summary(
         row: Dict[str, Any] = {"animal": f"R{s + 1}", "n_events_total": int(len(mine_ev))}
         for ct in PER_ANIMAL_TYPES:
             row[f"n_events_{ct}"] = int((mine_ev["contact_type"] == ct).sum()) if len(mine_ev) else 0
-        row["contact_time_sec"] = round(float((in_contact >= 1).sum()) / fps, 3)
+        contact_sec = float((in_contact >= 1).sum()) / fps
+        row["contact_time_sec"] = round(contact_sec, 3)
         row["time_2plus_contacts_sec"] = round(float((in_contact >= 2).sum()) / fps, 3)
         row["n_as_investigator"] = int((inv_mine == s).sum())
         row["n_as_receiver"] = int(((inv_mine != s) & inv_mine.notna()).sum())
         row["fol_time_sec"] = round(float(has_fol.sum()) / fps, 3)
+        row["session_min"] = round(session_min, 4)
+        row["events_per_min"] = round(row["n_events_total"] / session_min, 3) if session_min > 0 else 0.0
+        row["contact_sec_per_min"] = round(contact_sec / session_min, 3) if session_min > 0 else 0.0
         rows.append(row)
     return pd.DataFrame(rows, columns=PER_ANIMAL_COLUMNS)
+
+
+def n_animals_in_table(df: pd.DataFrame) -> int:
+    """Number of animals in the session: highest slot index in the pair keys + 1.
+
+    0 without a pair_key column (single-pair v1 output)."""
+    if "pair_key" not in df.columns:
+        return 0
+    slots = [s for key in df["pair_key"].dropna().astype(str).unique() for s in _pair_slots(key)]
+    return max(slots) + 1 if slots else 0
+
+
+def pair_contact_matrix(
+    events_df: pd.DataFrame, n_animals: int, fps: float, session_sec: float
+) -> pd.DataFrame:
+    """One row per unordered pair of animals, including pairs with no events.
+
+    This is the table behind the social-network figure: who touched whom, how often and for
+    how long. Built from the cleaned events (NC spans are not events). Columns:
+      pair_key, pair_label, animal_a, animal_b   "0_2", "R1-R3", "R1", "R3"
+      n_events_total, n_events_<TYPE>            events of the pair, by type
+      contact_sec                                summed duration of the pair's contact events,
+                                                 FOL excluded (events of one pair never overlap)
+      contact_pct_of_session                     contact_sec as a percentage of session_sec
+      fol_sec                                    summed duration of the pair's FOL events
+      events_per_min, contact_sec_per_min        n_events_total and contact_sec per session minute
+    Without at least two animals the result is empty.
+    """
+    pairs = list(itertools.combinations(range(max(int(n_animals), 0)), 2))
+    if not pairs:
+        return pd.DataFrame(columns=PAIR_MATRIX_COLUMNS)
+    session_min = session_sec / 60.0
+
+    by_pair: Dict[str, pd.DataFrame] = {}
+    if events_df is not None and len(events_df) and "pair_key" in events_df.columns:
+        ev = events_df[events_df["contact_type"].isin(PER_ANIMAL_TYPES)].copy()
+        if "duration_frames" in ev.columns and fps > 0:
+            ev["_dur"] = pd.to_numeric(ev["duration_frames"], errors="coerce") / fps
+        else:
+            ev["_dur"] = pd.to_numeric(ev["duration_sec"], errors="coerce")
+        by_pair = {str(k): g for k, g in ev.groupby(ev["pair_key"].astype(str))}
+
+    rows = []
+    for i, j in pairs:
+        key = f"{i}_{j}"
+        mine = by_pair.get(key)
+        counts = {ct: 0 for ct in PER_ANIMAL_TYPES}
+        contact_sec = fol_sec = 0.0
+        if mine is not None:
+            for ct, n in mine["contact_type"].value_counts().items():
+                counts[ct] = int(n)
+            is_fol = mine["contact_type"] == "FOL"
+            contact_sec = float(mine.loc[~is_fol, "_dur"].sum())
+            fol_sec = float(mine.loc[is_fol, "_dur"].sum())
+        n_total = sum(counts.values())
+        row: Dict[str, Any] = {
+            "pair_key": key, "pair_label": pair_label(key),
+            "animal_a": f"R{i + 1}", "animal_b": f"R{j + 1}",
+            "n_events_total": n_total,
+        }
+        for ct in PER_ANIMAL_TYPES:
+            row[f"n_events_{ct}"] = counts[ct]
+        row["contact_sec"] = round(contact_sec, 3)
+        row["contact_pct_of_session"] = round(contact_sec / session_sec * 100, 2) if session_sec > 0 else 0.0
+        row["fol_sec"] = round(fol_sec, 3)
+        row["events_per_min"] = round(n_total / session_min, 3) if session_min > 0 else 0.0
+        row["contact_sec_per_min"] = round(contact_sec / session_min, 3) if session_min > 0 else 0.0
+        rows.append(row)
+    return pd.DataFrame(rows, columns=PAIR_MATRIX_COLUMNS)
 
 
 def _count_raw_bouts(types: np.ndarray, groups=None) -> Dict[str, int]:
@@ -812,6 +899,16 @@ def write_per_animal_summary(per_animal: pd.DataFrame, output_dir: Path) -> Opti
     path = output_dir / "per_animal_summary.csv"
     per_animal.to_csv(path, index=False)
     logger.info("Wrote %s (%d animals)", path, len(per_animal))
+    return path
+
+
+def write_pair_contact_matrix(pair_matrix: pd.DataFrame, output_dir: Path) -> Optional[Path]:
+    """Write pair_contact_matrix.csv (None when there are fewer than two animals)."""
+    if pair_matrix is None or pair_matrix.empty:
+        return None
+    path = output_dir / "pair_contact_matrix.csv"
+    pair_matrix.to_csv(path, index=False)
+    logger.info("Wrote %s (%d pairs)", path, len(pair_matrix))
     return path
 
 
@@ -930,12 +1027,14 @@ def write_event_log(
     groups: Optional[Dict[str, np.ndarray]] = None,
     per_animal: Optional[pd.DataFrame] = None,
     calibration: Optional[Dict[str, Any]] = None,
+    pair_matrix: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Write event_log.txt — human-readable event log for validation.
 
     total_frames = frames unicos de la sesion; los tiempos de contacto se suman
     sobre pares, asi que los porcentajes se normalizan por sesion x n_pares.
     per_animal adds the "Per-animal summary" block after "Summary by type";
+    pair_matrix (see pair_contact_matrix) adds a pointer to pair_contact_matrix.csv after it;
     calibration (see load_calibration) adds the contact distance in BL and cm to the header.
     """
     total_sec = total_frames / fps
@@ -946,7 +1045,7 @@ def write_event_log(
     raw_bouts_total = sum(raw_bouts.values())
     # Exclude NC events from comparison (raw data has no NC)
     real_contact_events = len(events_df[events_df["contact_type"] != "NC"]) if len(events_df) > 0 else 0
-    real_events_total = len(events_df)
+    nc_spans = len(events_df) - real_contact_events
 
     real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC")))
     raw_contact_frames = int(np.sum(raw_types != ""))
@@ -965,11 +1064,13 @@ def write_event_log(
         lines.append(cal_line)
     contact_pct = real_contact_sec / pair_sec * 100 if pair_sec > 0 else 0.0
     if n_pairs > 1:
-        lines.append(f"Pairs: {n_pairs} (contact time is summed over pairs; % is of session x pairs)")
+        lines.append(
+            f"Pairs: {n_pairs} (contact time is summed over pairs; % is of pair-time = session x pairs)"
+        )
     lines.append(
-        f"Total events: {real_events_total} | "
-        f"Total contact time: {format_duration(real_contact_sec)} "
-        f"({contact_pct:.1f}% of {'pair-time' if n_pairs > 1 else 'session'})"
+        f"Contact events: {real_contact_events} (plus {nc_spans} no-contact spans) | "
+        f"Contact time: {real_contact_sec:.1f} s = {contact_pct:.1f}% "
+        f"of {'pair-time' if n_pairs > 1 else 'session'}"
     )
     lines.append("")
 
@@ -1049,6 +1150,9 @@ def write_event_log(
     # Per-animal summary (contact with any other animal)
     if per_animal is not None:
         lines.extend(_per_animal_log_lines(per_animal))
+        if pair_matrix is not None and not pair_matrix.empty:
+            lines.append("")
+            lines.append("Per-pair matrix: pair_contact_matrix.csv")
 
     # Filtering impact (compare contact events only — NC is not in raw data)
     lines.append("")
@@ -1098,6 +1202,7 @@ def write_real_summary(
     input_dir: Path,
     output_dir: Path,
     per_animal: Optional[pd.DataFrame] = None,
+    pair_matrix: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Write session_summary_real.json.
 
@@ -1141,6 +1246,17 @@ def write_real_summary(
         for _, r in per_animal.iterrows()
     }
 
+    if pair_matrix is None:
+        pair_matrix = pair_contact_matrix(events_df, n_animals_in_table(df), fps, total_sec)
+    pair_matrix_json = {
+        str(r["pair_label"]): {
+            k: (str(r[k]) if k in ("pair_key", "animal_a", "animal_b")
+                else int(r[k]) if k.startswith("n_events") else float(r[k]))
+            for k in PAIR_MATRIX_COLUMNS if k != "pair_label"
+        }
+        for _, r in pair_matrix.iterrows()
+    }
+
     summary = {
         "metadata": {
             "source_csv": str(input_dir / "contacts_per_frame.csv"),
@@ -1173,6 +1289,7 @@ def write_real_summary(
             "total_events": len(events_df),
         },
         "per_animal": per_animal_json,
+        "pair_matrix": pair_matrix_json,
         "filtering_impact": {
             "frames_removed": raw_contact_frames - real_contact_frames,
             "flicker_rate_pct": round(
@@ -1526,17 +1643,20 @@ def run_postprocess(
                 raw_bout_count, n_contact, len(events_df) - n_contact)
 
     per_animal = per_animal_summary(df, real_types, events_df, fps)
+    pair_matrix = pair_contact_matrix(
+        events_df, n_animals_in_table(df), fps, session_frames(df) / fps)
 
     write_real_per_frame(df, real_types, contacts_dir)
     write_real_events(events_df, contacts_dir)
     write_per_animal_summary(per_animal, contacts_dir)
+    write_pair_contact_matrix(pair_matrix, contacts_dir)
     write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
                     contacts_dir, groups=groups, per_animal=per_animal,
-                    calibration=load_calibration(contacts_dir))
+                    calibration=load_calibration(contacts_dir), pair_matrix=pair_matrix)
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, "pipeline", config, contacts_dir, contacts_dir,
-        per_animal=per_animal,
+        per_animal=per_animal, pair_matrix=pair_matrix,
     )
 
     if make_reports:
@@ -1661,17 +1781,20 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     per_animal = per_animal_summary(df, real_types, events_df, fps)
+    pair_matrix = pair_contact_matrix(
+        events_df, n_animals_in_table(df), fps, session_frames(df) / fps)
 
     write_real_per_frame(df, real_types, output_dir)
     write_real_events(events_df, output_dir)
     write_per_animal_summary(per_animal, output_dir)
+    write_pair_contact_matrix(pair_matrix, output_dir)
     write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
                     output_dir, groups=groups, per_animal=per_animal,
-                    calibration=load_calibration(input_dir))
+                    calibration=load_calibration(input_dir), pair_matrix=pair_matrix)
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, fps_source, config, input_dir, output_dir,
-        per_animal=per_animal,
+        per_animal=per_animal, pair_matrix=pair_matrix,
     )
 
     # Optional reports
