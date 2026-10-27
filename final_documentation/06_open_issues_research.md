@@ -38,7 +38,19 @@ MARS does not use fixed distances: annotators label "close investigation" by eye
 
 **Implication.** The current threshold is defensible by precedent. What is missing is the px/cm calibration of this arena to state it in cm in the paper.
 
-**Action.** Measure the arena (known side length in cm ÷ pixels) once, record `cm_per_px` in the run metadata, and report the thresholds in cm. No code change needed to keep 0.30 BL; `contact_zone_bl_enter/_exit` stay configurable. *Decision: lab.*
+**Calibration cross-check (2026-10-27).** The arena floor spans 822 px horizontally in
+`multimicevideo.avi` (columns 60–882 of the 960 px frame, found from the brightness
+profile). For a 50 × 50 cm arena (the Live Mouse Tracker standard) that gives
+1 px = 0.061 cm, so the measured body length of 164 px is 10.0 cm, which is exactly the
+JAX reference for an adult C57BL/6J. Two independent estimates agree, so the body-length
+calibration is trustworthy. Resulting thresholds: contact enters at 0.30 BL = 3.0 cm, leaves
+at 0.45 BL = 4.5 cm, proximity 1.0 BL = 10 cm; LMT's nose rule is 2.6 cm. If the arena is
+40 cm instead, every figure scales by 0.8 (BL = 8 cm, contact 2.4 cm).
+
+**Action.** Confirm the arena's physical side length and set `contacts.cm_per_px` (50 cm →
+0.061) so the reports print exact cm; otherwise the body-length estimate (`reference_body_length_cm`)
+is used. To match LMT's 26 mm exactly, set `contact_zone_bl_enter: 0.26` (and `_exit: 0.40`);
+keeping 0.30 BL means "within 3 cm", which must then be the wording in the methods. *Decision: lab.*
 
 ### A2 — several animals: per-pair counting
 
@@ -54,7 +66,11 @@ MARS does not use fixed distances: annotators label "close investigation" by eye
 
 **Implemented.** `configs/contacts_postprocess_simple.yaml` → `min_bout.by_type` (seconds per type) applied after the global minimum. Empty by default, so nothing changes; `by_type: {FOL: 0.4}` aligns the reported events with the tracker. The values applied are written to the `Parameters` sheet.
 
-**Recommendation.** Turn on `by_type: {FOL: 0.4}`, keep 0.3 s for sniffing. *Decision: lab (it removes the only FOL event of the 6-mouse 10 s run).*
+**Decision (2026-10-27).** `by_type: {FOL: 0.4}` is now the default: it makes the reported
+following events consistent with the tracker's own 12-frame bout minimum and with A-SOiD's
+400 ms default, while LMT's 7 frames would be looser. Sniffing contacts keep 0.3 s. The
+only FOL event of the 6-mouse 10 s run (10 frames) no longer counts; it was below the
+tracker's own definition anyway.
 
 ### A4 — nose-to-body almost never fires
 
@@ -62,7 +78,15 @@ MARS does not use fixed distances: annotators label "close investigation" by eye
 
 **Implemented.** `contacts: n2b_nose_mask_radius_px` (default 0 = current behaviour). With r > 0, a nose within r px of the other mask counts as touching it, LMT-style. `social_anogenital_split` is now an explicit config key (0.55).
 
-**Recommendation.** Try `n2b_nose_mask_radius_px: 6` (≈ 0.04 BL) and `social_anogenital_split: 0.75` (MARS's hips–tail-base midpoint lies at roughly 0.75–0.8 of our axis) on the 6-mouse clip, review the N2B and N2AG clips, and adopt the pair that the reviewer confirms. *Decision: lab, after one validation round.*
+**Decision (2026-10-27), pending one validation round.** Defaults set to
+`n2b_nose_mask_radius_px: 6` (0.37 cm at 0.061 cm/px, the scale of the keypoint error; LMT's
+"masks touching" criterion applied to a nose that cannot fall inside a disjoint mask) and
+`social_anogenital_split: 0.8` (MARS's genital boundary is midway between the hips and the
+tail base; on our nose→mid_body→tail_start axis the hips sit near 0.75, so that midpoint is
+about 0.85–0.9; the ramp 0.7–0.9 around 0.8 reproduces it). Both are config keys; the
+previous behaviour is `0` and `0.55`. Validate on the 6-mouse clip: N2B events should appear
+and some N2AG should move to N2B; keep the setting the reviewer confirms. The old run
+(`2026-10-23_191936`, 7 N2AG / 0 N2B) is the baseline.
 
 ### B1 — provisional body length
 
