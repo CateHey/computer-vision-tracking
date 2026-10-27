@@ -53,3 +53,5 @@ Tick items off here. Last update: 2026-10-28.
 - SAM3 initialisation is not deterministic; sessions are retried and discarded if an animal is
   missing, which is reported as a session count.
 - The first few frames use a provisional body length until three observations exist.
+- Side-by-side events are sustained by the hysteresis latch (scores ≈ 0.5): they disappear if the
+  activation threshold is raised to 0.55 (sensitivity analysis, 06). State it or adjust the latch.

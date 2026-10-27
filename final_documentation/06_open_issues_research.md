@@ -110,6 +110,15 @@ Covered by A2: `n_contacts_*` makes multi-contact frames visible, and the review
 
 ## Validation plan for the proposed values
 
+**Sensitivity found on the 6-mouse clip (2026-10-28, `scripts/sensitivity_analysis.py`).** N2N and
+N2AG counts are stable across the activation threshold 0.40–0.70 (3 and 7–9 events), but all 5
+SBS events vanish at 0.55: their scores sit at 0.50–0.57 because the side-by-side latch floors
+the score at exactly the activation threshold (`_score_sbs`: `max(score, 0.5)` while the
+Schmitt trigger is on). SBS is therefore a latch-driven label, not a score-driven one. Options:
+keep it and say so in the methods, raise the latch floor to e.g. 0.6 so SBS survives a stricter
+threshold, or lower the SBS activation. Minimum-duration sensitivity is as expected for a 10 s
+clip (N2AG 2–13 events over 0.2–1.0 s). *Decision: lab; report the table either way.*
+
 1. Re-run the 6-mouse 10 s clip with the candidate settings (`n2b_nose_mask_radius_px: 6`, `social_anogenital_split: 0.75`, `by_type: {FOL: 0.4}`) via `OVERRIDES` or a copy of the config.
 2. `validate_contacts.py sample` on both runs; review all N2B and N2AG rows.
 3. Compare per-type precision and the N2B / N2AG split; adopt the setting with the better reviewed precision and write the chosen cm thresholds into the methods.
