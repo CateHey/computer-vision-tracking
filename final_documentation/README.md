@@ -16,6 +16,9 @@ from overhead video. Written as the methods reference for the paper.
 | [03_outputs_and_reports.md](03_outputs_and_reports.md) | Every file produced, the report, the viewer, and how to run it |
 | [04_model_comparison.md](04_model_comparison.md) | Why CUTIE: what each segmentation backbone did and how it failed |
 | [05_contact_computation.md](05_contact_computation.md) | Code-level reference: the formulas and parameters behind every contact score, how frames become events, and the evidence trail (per-frame tables, run numbers, review clips) |
+| [06_open_issues_research.md](06_open_issues_research.md) | What Live Mouse Tracker, MARS, SimBA and A-SOiD do about each open point, and the decisions taken |
+| [07_methods_text.md](07_methods_text.md) | Paper-ready Methods draft with every parameter sourced; values in brackets to fill from the final runs |
+| [08_paper_readiness.md](08_paper_readiness.md) | Reviewer checklist: what is covered where, what remains before submission |
 
 ---
 
