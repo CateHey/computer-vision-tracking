@@ -20,6 +20,7 @@ device: cuda
 
 scan:
   max_frames: 900                  # 30s test clip
+  preload_all_frames: false        # false = only the SAM3 phase is held in RAM, Cutie streams the rest; true = preload every frame
 
 detection:
   max_animals: 6

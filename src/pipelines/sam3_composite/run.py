@@ -41,6 +41,11 @@ from src.common.io_video import create_video_writer
 from src.common.model_loaders import load_yolo
 from src.common.yolo_inference import detect_only
 from src.common.contacts_v2 import ContactTrackerV2
+from src.pipelines.sam3_composite.frames import (  # noqa: F401  (re-exported)
+    extract_frames_to_memory,
+    iter_frames_from_video,
+    video_frame_count,
+)
 from src.pipelines.isolated_composite.composition import (
     load_or_compute_background,
     erase_other_rat,
@@ -86,40 +91,9 @@ def load_sam3_model(device: str):
 # FRAME EXTRACTION
 # ============================================================================
 
-def extract_frames_to_memory(
-    video_path: str,
-    start_frame: int,
-    end_frame: Optional[int],
-    max_frames: Optional[int] = None,
-) -> Tuple[List[np.ndarray], float, int, int]:
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    if end_frame is None:
-        end_frame = total
-    if max_frames is not None:
-        end_frame = min(end_frame, start_frame + max_frames)
-
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
-    frames = []
-    idx = start_frame
-    while idx < end_frame:
-        ret, frame_bgr = cap.read()
-        if not ret:
-            break
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        frames.append(frame_rgb)
-        idx += 1
-
-    cap.release()
-    return frames, fps, width, height
+# extract_frames_to_memory, video_frame_count and iter_frames_from_video live in the
+# torch-free module frames.py; they are imported at the top of this file and
+# re-exported here so existing imports keep working.
 
 
 # ============================================================================

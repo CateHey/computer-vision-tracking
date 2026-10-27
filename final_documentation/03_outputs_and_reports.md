@@ -192,17 +192,18 @@ python -m src.pipelines.cutie_composite.run     --config configs/local_cutie_com
 ### HPC (UQ Bunya)
 
 ```bash
-salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=8 --mem=64G --time=24:00:00
+salloc --partition=gpu_cuda --qos=gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=24:00:00
 srun --pty bash
 
 python -m src.pipelines.cutie_composite.run     --config configs/hpc_cutie_composite.yaml video_path=data/raw/<video>
 ```
 
-One GPU, one process — this pipeline has no chunk mode. Because every frame is
-held in memory, request memory in proportion to the session length and
-resolution, and watch the `Phase 1 complete. Handoff: n/N rats` line in the log:
-if `n < N`, the missing animals were never handed to CUTIE and will be absent for
-the whole run.
+One GPU, one process — this pipeline has no chunk mode. Only the SAM3 phase (the
+first 125 frames) is held in memory and CUTIE streams the rest of the video, so
+memory does not grow with the session length and `--mem=32G` is enough; a longer
+session only needs a longer `--time`. Watch the `Phase 1 complete. Handoff: n/N rats`
+line in the log: if `n < N`, the missing animals were never handed to CUTIE and will
+be absent for the whole run.
 
 ### Re-running the post-processing on its own
 

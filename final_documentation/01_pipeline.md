@@ -139,9 +139,13 @@ keypoint was mislabelled — "nose" was really the tail tip. See §2.6.
 
 ## 1.5 Scale and known constraints
 
-- **The whole video is loaded into memory.** `extract_frames_to_memory` holds
-  every frame as an array before Phase 1 begins. Memory grows linearly with
-  duration and resolution; the local config caps the run at 900 frames.
+- **Only the SAM3 phase is held in memory.** `extract_frames_to_memory` loads the
+  first `sam3_phase_frames` frames (125 by default, about 0.35 GB at 960x960) for
+  Phase 1; Phase 2 reads the rest of the video one frame at a time
+  (`iter_frames_from_video`), so memory does not grow with the duration.
+  `scan.preload_all_frames: true` restores the old behaviour of preloading every
+  frame (54 GB for an 11-minute 960x960 video at 30 fps). The local config caps
+  the run at 900 frames.
 - **No chunking.** Unlike `centroid`, this entry point takes `--start-frame` and
   `--end-frame` but has no `--chunk-id`, so `scripts/run_parallel.sh` and
   `merge_chunks.py` do not apply to it. A long session is one process.
