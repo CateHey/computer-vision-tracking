@@ -5,7 +5,10 @@ reported. Each item says why it matters, where it lives and what we propose. Tic
 here when they are resolved (and say how). Technical background:
 [final_documentation/05_contact_computation.md](final_documentation/05_contact_computation.md).
 
-Last update: 2026-10-27. Literature check and proposed fixes per item:
+Last update: 2026-10-28. Literature check and decisions per item:
+[final_documentation/06_open_issues_research.md](final_documentation/06_open_issues_research.md);
+paper-ready Methods draft: [07_methods_text.md](final_documentation/07_methods_text.md);
+what remains before submission: [08_paper_readiness.md](final_documentation/08_paper_readiness.md).
 [final_documentation/06_open_issues_research.md](final_documentation/06_open_issues_research.md).
 
 ## A. Decisions that change the contact counts (need the lab's call)
