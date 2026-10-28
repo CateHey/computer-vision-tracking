@@ -29,6 +29,9 @@ Tick items off here. Last update: 2026-10-28.
 - [ ] **Validation run of the new defaults** on the 6-mouse clip (N2B radius 6 px, anogenital
       split 0.8, FOL 0.4 s) against the baseline run `2026-10-23_191936`; review the N2B / N2AG
       clips; keep or revert (OPEN_ISSUES A4).
+      → Run done 2026-10-28 (`2026-10-28_091052`): tracking identical, N2B appears (2 events),
+      N2AG fragments (7 → 10 events, 7.6 → 7.0 s). Count investigation bouts (06 §A4); clip
+      review of the 21 events still pending.
 - [ ] **Confirm on Bunya** that a streamed run equals a preloaded run on one short clip
       (`scan.preload_all_frames=true` vs `false`; identical `Events` sheet expected — the
       frame-level equality was verified locally on both video codecs).

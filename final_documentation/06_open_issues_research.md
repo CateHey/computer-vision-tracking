@@ -88,6 +88,23 @@ previous behaviour is `0` and `0.55`. Validate on the 6-mouse clip: N2B events s
 and some N2AG should move to N2B; keep the setting the reviewer confirms. The old run
 (`2026-10-23_191936`, 7 N2AG / 0 N2B) is the baseline.
 
+**Validation run (2026-10-28, job 30737285, run `2026-10-28_091052`).** Tracking was practically
+identical to the baseline (4 389 of 4 500 pair-frames carry the same raw label; centroid and
+nose distances agree within 0.02 BL in 90 % of the frames; the rest are the first frames, where
+the body length now warm-starts), so the differences are the configuration's. Raw labels: 42
+frames `none → N2B` and 34 `N2AG → N2B` (body sniffing moved out of the anogenital class, as
+intended), 9 `N2AG → none`, 7 `N2AG → SBS`, only 6 frames newly N2AG. Events: N2B 0 → 2
+(0.9 s), SBS 5 → 6, N2N 3 → 3, FOL 1 → 0 (the 0.4 s floor), **N2AG 7 → 10 although its time
+fell from 7.6 s to 7.0 s**: the nose sliding between flank and rear now alternates N2AG and N2B,
+which cuts one long anogenital event into two or three short ones. The new split is doing what
+MARS does, but counting sub-types as separate events inflates the count whenever the nose
+crosses the boundary. MARS avoids this by scoring one "close investigation" class and only
+then labelling frames face / body / genital. **Decision:** report *investigation bouts* (N2N,
+N2AG and N2B merged, gaps ≤ 3 frames) as the event count, with the seconds per sub-type inside
+each bout; keep the sub-type events for the duration figures. Implemented as an additional
+table (`investigation_bouts.csv`, sheet `Investigation`), so nothing existing changes.
+
+
 ### B1 — provisional body length
 
 **Finding.** LMT normalises approach distances by the animal's *mean body length* over the recording; MARS works in cm. Nobody uses a fixed fallback.
