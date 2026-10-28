@@ -46,6 +46,17 @@ min_bout:
   #   by_type: {FOL: 0.4}
   by_type: {FOL: 0.4}
 
+# --- Investigation bouts (additional output; events and tables above are unchanged) ---
+# Per pair, N2N, N2AG and N2B are merged into one "close investigation" class (MARS scores
+# it that way and names face / body / genital afterwards). A bout is a maximal run of these
+# cleaned labels; up to max_gap frames of any other label (NC, FOL, SBS) inside it are bridged.
+# Why: when the nose slides between the flank and the rear of the other animal the per-frame
+# label alternates between N2AG and N2B, which cuts one investigation into several events.
+# Written to investigation_bouts.csv (sheet Investigation), session_summary_real.json
+# ("investigation") and the "Investigation bouts" block of event_log.txt.
+investigation:
+  max_gap: 3             # frames. ~100ms at 30fps.
+
 # --- FPS fallback ---
 # Used only if no --fps flag, no session_summary.json, and no --video_path.
 fps_fallback: 30.0

@@ -254,6 +254,24 @@ over the session and ordered by start frame, then pair.
 > `configs/contacts_postprocess_simple.yaml` gives following the same 0.4 s floor as the
 > tracker, so the two definitions agree for every type (see 06 §A3).
 
+**Investigation bouts (`investigation_bouts`; `investigation_bouts.csv`, `Investigation` sheet,
+"Investigation bouts" block of `event_log.txt`, `investigation` in `session_summary_real.json`).**
+When the nose slides along the boundary between the flank and the rear of another animal, the
+per-frame label alternates between N2AG and N2B. Each run of one label is its own event, so a
+single investigation is cut into several short ones: in a validation run the N2AG events went
+from 7 to 10 while their total time fell. MARS scores one "close investigation" class and only
+afterwards names the body part (face, body, genital), and the bouts do the same with the cleaned
+labels. Per pair, a bout is a maximal run of cleaned labels in {N2N, N2AG, N2B}; up to
+`investigation.max_gap` frames (default 3) of any other label (NC, FOL, SBS) are bridged, and a
+longer stretch ends the bout, which always starts and ends on an investigation frame. Each bout
+records the seconds spent in each sub-type (`n2n_sec`, `n2ag_sec`, `n2b_sec`; `other_sec` is the
+bridged gap), the `dominant_type` (most frames; ties go N2N > N2AG > N2B), the number of switches
+between sub-types, the `investigator_slot` (majority over the N2AG / N2B frames, as for events)
+and the `peak_score` of the dominant type. This is an additional output: the events, the
+per-animal and pair tables and every count in this section are unchanged, apart from the two new
+`PerAnimal` columns `n_investigation_bouts` and `investigation_bouts_per_min`. `bout_id` is unique
+over the session and ordered by start frame, then pair.
+
 ---
 
 ## 8. Several animals: what pairwise independence means
