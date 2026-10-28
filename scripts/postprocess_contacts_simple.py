@@ -76,8 +76,21 @@ PER_ANIMAL_COLUMNS = (
     + [f"n_events_{ct}" for ct in PER_ANIMAL_TYPES]
     + ["contact_time_sec", "time_2plus_contacts_sec",
        "n_as_investigator", "n_as_receiver", "fol_time_sec",
-       "session_min", "events_per_min", "contact_sec_per_min"]
+       "n_investigation_bouts",
+       "session_min", "events_per_min", "contact_sec_per_min",
+       "investigation_bouts_per_min"]
 )
+
+# Investigation bouts (MARS-style "close investigation"): N2N, N2AG and N2B merged into one
+# class per pair, with the sub-type kept as a breakdown. See investigation_bouts().
+INVESTIGATION_TYPES = ("N2N", "N2AG", "N2B")
+INVESTIGATION_MAX_GAP_DEFAULT = 3
+INVESTIGATION_COLUMNS = [
+    "bout_id", "pair_key", "pair_label", "start_frame", "end_frame",
+    "start_time_sec", "end_time_sec", "duration_sec",
+    "n2n_sec", "n2ag_sec", "n2b_sec", "other_sec",
+    "dominant_type", "n_subtype_switches", "investigator_slot", "peak_score",
+]
 
 # Pair view (the social-network figure): one row per unordered pair of animals.
 PAIR_MATRIX_COLUMNS = (
@@ -92,6 +105,7 @@ DEFAULT_CONFIG = {
     "smoothing": {"window": 5},
     "gap_bridging": {"max_gap": 3},
     "min_bout": {"duration_sec": 0.3},
+    "investigation": {"max_gap": INVESTIGATION_MAX_GAP_DEFAULT},
     "fps_fallback": 30.0,
 }
 
@@ -569,6 +583,29 @@ def assign_event_ids(df: pd.DataFrame, real_types: np.ndarray) -> np.ndarray:
     return ids
 
 
+def _majority_investigator(rows: pd.DataFrame, pair_key) -> Optional[int]:
+    """Slot of the animal that investigates in most of `rows` (None when undecidable).
+
+    `rows` must already be restricted to frames of an asymmetric type. Uses the
+    `investigator_slot` column when the table has one, else `investigator_role` ("i" / "j" =
+    first / second animal of the pair key "i_j").
+    """
+    if "investigator_slot" in rows.columns:
+        inv_vals = pd.to_numeric(rows["investigator_slot"], errors="coerce").dropna()
+        if len(inv_vals) > 0:
+            return int(Counter(inv_vals.astype(int)).most_common(1)[0][0])
+    elif "investigator_role" in rows.columns:
+        roles = [r for r in rows["investigator_role"].fillna("").astype(str) if r in ("i", "j")]
+        slots = str(pair_key).split("_")
+        if roles and len(slots) == 2:
+            role = Counter(roles).most_common(1)[0][0]
+            try:
+                return int(slots[0] if role == "i" else slots[1])
+            except ValueError:
+                return None
+    return None
+
+
 def extract_events(
     df: pd.DataFrame, real_types: np.ndarray, fps: float
 ) -> pd.DataFrame:
@@ -593,22 +630,8 @@ def extract_events(
         raw_ct = event_slice["contact_type"].astype(str).str.strip().str.upper()
         same_type = event_slice[raw_ct == str(ct).upper()]
         asymmetric = ct not in ("NC", "N2N", "SBS")
-        if "investigator_slot" in df.columns and asymmetric:
-            inv_vals = pd.to_numeric(
-                same_type["investigator_slot"], errors="coerce"
-            ).dropna()
-            if len(inv_vals) > 0:
-                inv_slot = int(Counter(inv_vals.astype(int)).most_common(1)[0][0])
-        elif "investigator_role" in df.columns and has_pair and asymmetric:
-            roles = [r for r in same_type["investigator_role"].fillna("").astype(str)
-                     if r in ("i", "j")]
-            slots = str(key).split("_")
-            if roles and len(slots) == 2:
-                role = Counter(roles).most_common(1)[0][0]
-                try:
-                    inv_slot = int(slots[0] if role == "i" else slots[1])
-                except ValueError:
-                    inv_slot = None
+        if asymmetric:
+            inv_slot = _majority_investigator(same_type, key)
 
         def _mean_bl(col):
             v = _clean_num(event_slice[col]) if col in event_slice.columns else pd.Series(dtype=float)
@@ -652,6 +675,133 @@ def extract_events(
     return ev
 
 
+def investigation_max_gap(config: dict) -> int:
+    """investigation.max_gap (frames) from the config; INVESTIGATION_MAX_GAP_DEFAULT when absent."""
+    val = (config.get("investigation") or {}).get("max_gap", INVESTIGATION_MAX_GAP_DEFAULT)
+    return max(int(val), 0)
+
+
+def investigation_bouts(
+    df: pd.DataFrame, real_types: np.ndarray, fps: float, max_gap: int = INVESTIGATION_MAX_GAP_DEFAULT
+) -> pd.DataFrame:
+    """Investigation bouts: N2N, N2AG and N2B merged into one class, per pair.
+
+    The per-frame label changes between N2AG and N2B when the nose slides along the boundary
+    between flank and rear of the other animal, which cuts one investigation into several short
+    events. MARS scores a single "close investigation" class and only then names the part of the
+    body, so this is the same idea applied to the cleaned labels. The events and tables built
+    from them are not touched: this is an additional output.
+
+    Per pair, in the order of its frames, a bout is a maximal run of cleaned labels in
+    {N2N, N2AG, N2B}. Frames with any other label (NC, FOL, SBS, "") are not investigation; up
+    to `max_gap` of them in a row are bridged, a longer stretch ends the bout. A bout starts and
+    ends on an investigation frame, so SBS and FOL frames never join one except as bridged gap.
+    Frames are taken as consecutive rows of the pair (same as `_event_runs`).
+
+    Columns (INVESTIGATION_COLUMNS):
+      bout_id               unique over the session, ordered by start frame and then pair
+      pair_key, pair_label  "0_1", "R1-R2" ("" without a pair_key column)
+      start_frame, end_frame, start_time_sec, end_time_sec, duration_sec
+                            as in the event table: end_time_sec is the end of the last frame
+      n2n_sec, n2ag_sec, n2b_sec
+                            seconds the bout spends in each sub-type
+      other_sec             seconds of bridged gap frames
+      dominant_type         sub-type with most frames; ties go N2N > N2AG > N2B
+      n_subtype_switches    label changes among the three sub-types inside the bout (a switch
+                            across a bridged gap counts)
+      investigator_slot     majority over the N2AG/N2B frames, as in extract_events (those whose
+                            raw label equals the cleaned one); "" when the bout has none
+      peak_score            maximum of the dominant type's score column over the bout
+    `real_types` is aligned with the rows of `df` ("" or "NC" for no contact).
+    """
+    labels = np.asarray(real_types, dtype=object)
+    frames = pd.to_numeric(df["frame_idx"], errors="coerce").to_numpy(dtype=float)
+    raw_up = df["contact_type"].fillna("").astype(str).str.strip().str.upper().to_numpy()
+    max_gap = max(int(max_gap), 0)
+
+    runs = []   # (pair_key, positional row indices of the bout)
+    for key, idx in pair_groups(df).items():
+        hits = np.flatnonzero(pd.Series(labels[idx]).isin(INVESTIGATION_TYPES).to_numpy())
+        if len(hits) == 0:
+            continue
+        start = prev = int(hits[0])
+        for h in hits[1:]:
+            h = int(h)
+            if h - prev - 1 > max_gap:
+                runs.append((key, idx[start:prev + 1]))
+                start = h
+            prev = h
+        runs.append((key, idx[start:prev + 1]))
+    runs.sort(key=lambda r: (frames[r[1][0]], _pair_sort_key(r[0])))
+
+    rows = []
+    for bout_id, (key, pos) in enumerate(runs):
+        lab = labels[pos]
+        counts = {ct: int((lab == ct).sum()) for ct in INVESTIGATION_TYPES}
+        in_bout = np.isin(lab.astype(str), INVESTIGATION_TYPES)
+        seq = lab[in_bout]
+        dominant = min(INVESTIGATION_TYPES, key=lambda ct: (-counts[ct], PRIORITY_ORDER[ct]))
+
+        start_frame, end_frame = int(frames[pos[0]]), int(frames[pos[-1]])
+        start_sec = start_frame / fps
+        end_sec = (end_frame + 1) / fps
+
+        asym = np.isin(lab.astype(str), ("N2AG", "N2B")) & (raw_up[pos] == lab.astype(str))
+        inv_slot = _majority_investigator(df.iloc[pos[asym]], key) if asym.any() else None
+
+        peak = None
+        score_col = f"score_{dominant.lower()}"
+        if score_col in df.columns:
+            sc = pd.to_numeric(df[score_col].iloc[pos], errors="coerce").dropna()
+            if len(sc):
+                peak = round(float(sc.max()), 4)
+
+        rows.append({
+            "bout_id": bout_id,
+            "pair_key": key,
+            "pair_label": pair_label(key) if key != "" else "",
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "start_time_sec": round(start_sec, 4),
+            "end_time_sec": round(end_sec, 4),
+            "duration_sec": round(end_sec - start_sec, 4),
+            "n2n_sec": round(counts["N2N"] / fps, 4),
+            "n2ag_sec": round(counts["N2AG"] / fps, 4),
+            "n2b_sec": round(counts["N2B"] / fps, 4),
+            "other_sec": round(int((~in_bout).sum()) / fps, 4),
+            "dominant_type": dominant,
+            "n_subtype_switches": int(np.sum(seq[1:] != seq[:-1])),
+            "investigator_slot": inv_slot if inv_slot is not None else "",
+            "peak_score": peak,
+        })
+    return pd.DataFrame(rows, columns=INVESTIGATION_COLUMNS)
+
+
+def investigation_summary(bouts_df: Optional[pd.DataFrame], max_gap: int) -> Dict[str, Any]:
+    """Session totals of the investigation bouts (event log and session_summary_real.json)."""
+    n = 0 if bouts_df is None else len(bouts_df)
+    by_dominant = {ct: 0 for ct in INVESTIGATION_TYPES}
+    by_subtype = {ct: 0.0 for ct in INVESTIGATION_TYPES}
+    total = switches = gap = 0.0
+    if n:
+        for ct, c in bouts_df["dominant_type"].value_counts().items():
+            by_dominant[str(ct)] = int(c)
+        for ct in INVESTIGATION_TYPES:
+            by_subtype[ct] = float(bouts_df[f"{ct.lower()}_sec"].sum())
+        total = float(bouts_df["duration_sec"].sum())
+        gap = float(bouts_df["other_sec"].sum())
+        switches = float(bouts_df["n_subtype_switches"].mean())
+    return {
+        "max_gap_frames": int(max_gap),
+        "n_bouts": int(n),
+        "total_sec": round(total, 2),
+        "by_dominant_type": by_dominant,
+        "mean_subtype_switches": round(switches, 2),
+        "time_by_subtype_sec": {ct: round(v, 2) for ct, v in by_subtype.items()},
+        "bridged_gap_sec": round(gap, 2),
+    }
+
+
 def _pair_slots(pair_key) -> Tuple[int, ...]:
     """"0_2" -> (0, 2); () when the key does not parse."""
     try:
@@ -661,7 +811,8 @@ def _pair_slots(pair_key) -> Tuple[int, ...]:
 
 
 def per_animal_summary(
-    df: pd.DataFrame, real_types: np.ndarray, events_df: pd.DataFrame, fps: float
+    df: pd.DataFrame, real_types: np.ndarray, events_df: pd.DataFrame, fps: float,
+    bouts_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """One row per animal: its contacts with ANY other animal (pair events are untouched).
 
@@ -678,9 +829,13 @@ def per_animal_summary(
       n_as_investigator/_receiver      asymmetric events (N2AG, N2B, FOL) where the animal is the
                                        investigator (the follower, for FOL) / the other animal
       fol_time_sec                     frames with FOL in any of its pairs
+      n_investigation_bouts            investigation bouts (see investigation_bouts) of any pair
+                                       that includes the animal; `bouts_df` is computed with the
+                                       default max_gap when not given
       session_min                      session length in minutes (unique frames / fps / 60)
-      events_per_min, contact_sec_per_min
-                                       n_events_total and contact_time_sec per session minute
+      events_per_min, contact_sec_per_min, investigation_bouts_per_min
+                                       n_events_total, contact_time_sec and n_investigation_bouts
+                                       per session minute
     Without a pair_key column (single-pair v1 output) the result is empty.
     """
     empty = pd.DataFrame(columns=PER_ANIMAL_COLUMNS)
@@ -698,6 +853,9 @@ def per_animal_summary(
     n_frames = len(unique_frames)
     session_min = n_frames / fps / 60.0
     labels = np.asarray(real_types, dtype=object)
+    if bouts_df is None:
+        bouts_df = investigation_bouts(df, real_types, fps)
+    bout_slots = bouts_df["pair_key"].map(_pair_slots) if len(bouts_df) else pd.Series(dtype=object)
     contact: Dict[str, np.ndarray] = {}
     follow: Dict[str, np.ndarray] = {}
     for key in pair_slots:
@@ -741,9 +899,12 @@ def per_animal_summary(
         row["n_as_investigator"] = int((inv_mine == s).sum())
         row["n_as_receiver"] = int(((inv_mine != s) & inv_mine.notna()).sum())
         row["fol_time_sec"] = round(float(has_fol.sum()) / fps, 3)
+        row["n_investigation_bouts"] = int(bout_slots.map(lambda ss, s=s: s in ss).sum()) if len(bout_slots) else 0
         row["session_min"] = round(session_min, 4)
         row["events_per_min"] = round(row["n_events_total"] / session_min, 3) if session_min > 0 else 0.0
         row["contact_sec_per_min"] = round(contact_sec / session_min, 3) if session_min > 0 else 0.0
+        row["investigation_bouts_per_min"] = (
+            round(row["n_investigation_bouts"] / session_min, 3) if session_min > 0 else 0.0)
         rows.append(row)
     return pd.DataFrame(rows, columns=PER_ANIMAL_COLUMNS)
 
@@ -902,6 +1063,14 @@ def write_per_animal_summary(per_animal: pd.DataFrame, output_dir: Path) -> Opti
     return path
 
 
+def write_investigation_bouts(bouts_df: pd.DataFrame, output_dir: Path) -> Path:
+    """Write investigation_bouts.csv (header only when there are no bouts)."""
+    path = output_dir / "investigation_bouts.csv"
+    bouts_df.to_csv(path, index=False)
+    logger.info("Wrote %s (%d bouts)", path, len(bouts_df))
+    return path
+
+
 def write_pair_contact_matrix(pair_matrix: pd.DataFrame, output_dir: Path) -> Optional[Path]:
     """Write pair_contact_matrix.csv (None when there are fewer than two animals)."""
     if pair_matrix is None or pair_matrix.empty:
@@ -1017,6 +1186,30 @@ def _per_animal_log_lines(per_animal: pd.DataFrame) -> List[str]:
     return lines
 
 
+def _investigation_log_lines(bouts_df: pd.DataFrame, max_gap: int) -> List[str]:
+    """The "Investigation bouts" block of event_log.txt."""
+    summ = investigation_summary(bouts_df, max_gap)
+    lines = ["", f"--- Investigation bouts (N2N + N2AG + N2B merged, gaps <= {summ['max_gap_frames']} frames) ---"]
+    if summ["n_bouts"] == 0:
+        lines.append(f"  Bouts: 0 | total {format_duration(0.0)}")
+        return lines
+    dominant = sorted(
+        ((ct, n) for ct, n in summ["by_dominant_type"].items() if n > 0),
+        key=lambda x: (-x[1], PRIORITY_ORDER[x[0]]),
+    )
+    lines.append(
+        f"  Bouts: {summ['n_bouts']} | total {format_duration(summ['total_sec'])} | dominant: "
+        + ", ".join(f"{ct} {n}" for ct, n in dominant)
+        + f" | mean sub-type switches per bout: {summ['mean_subtype_switches']:.1f}"
+    )
+    lines.append(
+        "  Time by sub-type inside bouts: "
+        + " | ".join(f"{ct} {format_duration(summ['time_by_subtype_sec'][ct])}"
+                     for ct in INVESTIGATION_TYPES)
+    )
+    return lines
+
+
 def write_event_log(
     events_df: pd.DataFrame,
     raw_types: np.ndarray,
@@ -1028,12 +1221,16 @@ def write_event_log(
     per_animal: Optional[pd.DataFrame] = None,
     calibration: Optional[Dict[str, Any]] = None,
     pair_matrix: Optional[pd.DataFrame] = None,
+    bouts_df: Optional[pd.DataFrame] = None,
+    investigation_gap: int = INVESTIGATION_MAX_GAP_DEFAULT,
 ) -> Path:
     """Write event_log.txt — human-readable event log for validation.
 
     total_frames = frames unicos de la sesion; los tiempos de contacto se suman
     sobre pares, asi que los porcentajes se normalizan por sesion x n_pares.
-    per_animal adds the "Per-animal summary" block after "Summary by type";
+    bouts_df (see investigation_bouts, merged with gaps of up to `investigation_gap` frames)
+    adds the "Investigation bouts" block right after "Summary by type";
+    per_animal adds the "Per-animal summary" block after it;
     pair_matrix (see pair_contact_matrix) adds a pointer to pair_contact_matrix.csv after it;
     calibration (see load_calibration) adds the contact distance in BL and cm to the header.
     """
@@ -1150,6 +1347,10 @@ def write_event_log(
 
         lines.append(line)
 
+    # Investigation bouts (N2N + N2AG + N2B merged per pair)
+    if bouts_df is not None:
+        lines.extend(_investigation_log_lines(bouts_df, investigation_gap))
+
     # Per-animal summary (contact with any other animal)
     if per_animal is not None:
         lines.extend(_per_animal_log_lines(per_animal))
@@ -1206,6 +1407,7 @@ def write_real_summary(
     output_dir: Path,
     per_animal: Optional[pd.DataFrame] = None,
     pair_matrix: Optional[pd.DataFrame] = None,
+    bouts_df: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Write session_summary_real.json.
 
@@ -1240,11 +1442,14 @@ def write_real_summary(
             "pct_of_session": round(total_dur / pair_sec * 100, 2) if pair_sec > 0 else 0.0,
         }
 
+    max_gap_inv = investigation_max_gap(config)
+    if bouts_df is None:
+        bouts_df = investigation_bouts(df, real_types, fps, max_gap_inv)
     if per_animal is None:
-        per_animal = per_animal_summary(df, real_types, events_df, fps)
+        per_animal = per_animal_summary(df, real_types, events_df, fps, bouts_df=bouts_df)
     per_animal_json = {
         str(r["animal"]): {
-            k: (int(r[k]) if k.startswith(("n_events", "n_as")) else float(r[k]))
+            k: (int(r[k]) if k.startswith(("n_events", "n_as", "n_investigation")) else float(r[k]))
             for k in PER_ANIMAL_COLUMNS if k != "animal"
         }
         for _, r in per_animal.iterrows()
@@ -1278,6 +1483,7 @@ def write_real_summary(
             "min_bout_duration_sec": min_bout_sec,
             "min_bout_duration_frames": min_bout_frames,
             "min_bout_by_type_sec": config.get("min_bout", {}).get("by_type") or {},
+            "investigation_max_gap": max_gap_inv,
         },
         "raw_summary": {
             "contact_frames": raw_contact_frames,
@@ -1297,6 +1503,7 @@ def write_real_summary(
         },
         "per_animal": per_animal_json,
         "pair_matrix": pair_matrix_json,
+        "investigation": investigation_summary(bouts_df, max_gap_inv),
         "filtering_impact": {
             "frames_removed": raw_contact_frames - real_contact_frames,
             "flicker_rate_pct": round(
@@ -1649,21 +1856,25 @@ def run_postprocess(
     logger.info("Post-processing: %d raw bouts -> %d contact events (+%d no-contact spans)",
                 raw_bout_count, n_contact, len(events_df) - n_contact)
 
-    per_animal = per_animal_summary(df, real_types, events_df, fps)
+    inv_gap = investigation_max_gap(config)
+    bouts_df = investigation_bouts(df, real_types, fps, inv_gap)
+    per_animal = per_animal_summary(df, real_types, events_df, fps, bouts_df=bouts_df)
     pair_matrix = pair_contact_matrix(
         events_df, n_animals_in_table(df), fps, session_frames(df) / fps)
 
     write_real_per_frame(df, real_types, contacts_dir)
     write_real_events(events_df, contacts_dir)
+    write_investigation_bouts(bouts_df, contacts_dir)
     write_per_animal_summary(per_animal, contacts_dir)
     write_pair_contact_matrix(pair_matrix, contacts_dir)
     write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
                     contacts_dir, groups=groups, per_animal=per_animal,
-                    calibration=load_calibration(contacts_dir), pair_matrix=pair_matrix)
+                    calibration=load_calibration(contacts_dir), pair_matrix=pair_matrix,
+                    bouts_df=bouts_df, investigation_gap=inv_gap)
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, "pipeline", config, contacts_dir, contacts_dir,
-        per_animal=per_animal, pair_matrix=pair_matrix,
+        per_animal=per_animal, pair_matrix=pair_matrix, bouts_df=bouts_df,
     )
 
     if make_reports:
@@ -1787,21 +1998,26 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else input_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    per_animal = per_animal_summary(df, real_types, events_df, fps)
+    inv_gap = investigation_max_gap(config)
+    bouts_df = investigation_bouts(df, real_types, fps, inv_gap)
+    logger.info("Investigation bouts (N2N+N2AG+N2B, gaps <= %d frames): %d", inv_gap, len(bouts_df))
+    per_animal = per_animal_summary(df, real_types, events_df, fps, bouts_df=bouts_df)
     pair_matrix = pair_contact_matrix(
         events_df, n_animals_in_table(df), fps, session_frames(df) / fps)
 
     write_real_per_frame(df, real_types, output_dir)
     write_real_events(events_df, output_dir)
+    write_investigation_bouts(bouts_df, output_dir)
     write_per_animal_summary(per_animal, output_dir)
     write_pair_contact_matrix(pair_matrix, output_dir)
     write_event_log(events_df, raw_types, real_types, fps, session_frames(df),
                     output_dir, groups=groups, per_animal=per_animal,
-                    calibration=load_calibration(input_dir), pair_matrix=pair_matrix)
+                    calibration=load_calibration(input_dir), pair_matrix=pair_matrix,
+                    bouts_df=bouts_df, investigation_gap=inv_gap)
     write_real_summary(
         df, raw_types, real_types, events_df,
         fps, fps_source, config, input_dir, output_dir,
-        per_animal=per_animal, pair_matrix=pair_matrix,
+        per_animal=per_animal, pair_matrix=pair_matrix, bouts_df=bouts_df,
     )
 
     # Optional reports

@@ -9,8 +9,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.postprocess_contacts_simple import (  # noqa: E402
-    DEFAULT_CONFIG, PAIR_MATRIX_COLUMNS, assign_event_ids, calibration_line, compute_labels,
-    extract_events, load_calibration, n_animals_in_table, normalize_labels, pair_contact_matrix,
+    DEFAULT_CONFIG, INVESTIGATION_COLUMNS, PAIR_MATRIX_COLUMNS, PER_ANIMAL_COLUMNS,
+    assign_event_ids, calibration_line, compute_labels, extract_events, investigation_bouts,
+    load_calibration, n_animals_in_table, normalize_labels, pair_contact_matrix,
     per_animal_summary, run_postprocess, session_frames,
 )
 
@@ -153,11 +154,14 @@ def test_per_animal_summary_union_overlap_and_roles():
     assert r1.time_2plus_contacts_sec == pytest.approx(1.0)     # frames 80-109
     assert r1.n_as_investigator == 1 and r1.n_as_receiver == 0
     assert r1.fol_time_sec == 0.0
+    assert r1.n_investigation_bouts == 2                         # one bout in each of its two pairs
     # 200 frames at 30 fps = 6.667 s = 0.1111 min
     assert r1.session_min == pytest.approx(200 / FPS / 60, abs=1e-4)
     assert r1.events_per_min == pytest.approx(2 / (200 / FPS / 60), abs=1e-2)       # 18.0
     assert r1.contact_sec_per_min == pytest.approx(3.0 / (200 / FPS / 60), abs=1e-2)  # 27.0
+    assert r1.investigation_bouts_per_min == pytest.approx(2 / (200 / FPS / 60), abs=1e-2)   # 18.0
     assert set(pa.session_min) == {r1.session_min}     # one session length for every animal
+    assert list(pa.reset_index().columns) == PER_ANIMAL_COLUMNS
 
     r2 = pa.loc["R2"]                                            # only in the symmetric N2N
     assert r2.n_events_total == 1 and r2.contact_time_sec == pytest.approx(2.0)
@@ -165,11 +169,13 @@ def test_per_animal_summary_union_overlap_and_roles():
     assert r2.n_as_investigator == 0 and r2.n_as_receiver == 0
     assert r2.events_per_min == pytest.approx(9.0, abs=1e-2)
     assert r2.contact_sec_per_min == pytest.approx(18.0, abs=1e-2)
+    assert r2.n_investigation_bouts == 1 and r2.investigation_bouts_per_min == pytest.approx(9.0, abs=1e-2)
 
     r3 = pa.loc["R3"]
     assert r3.n_events_total == 1 and r3.n_events_N2AG == 1
     assert r3.contact_time_sec == pytest.approx(2.0)
     assert r3.n_as_investigator == 0 and r3.n_as_receiver == 1
+    assert r3.n_investigation_bouts == 1
 
 
 def test_per_animal_summary_fol_is_not_contact_time():
@@ -184,6 +190,8 @@ def test_per_animal_summary_fol_is_not_contact_time():
         assert pa.loc[animal].fol_time_sec == pytest.approx(50 / FPS, abs=1e-3)
     assert pa.loc["R3"].n_as_investigator == 1                  # role j of pair 1_2 = slot 2 follows
     assert pa.loc["R2"].n_as_receiver == 1
+    assert (pa.n_investigation_bouts == 0).all()                # FOL is not investigation
+    assert (pa.investigation_bouts_per_min == 0).all()
 
 
 def test_per_animal_summary_without_pair_key_is_empty():
@@ -220,13 +228,22 @@ def test_run_postprocess_writes_per_animal_outputs(tmp_path):
     assert pa.loc["R1", "contact_time_sec"] == pytest.approx(3.0)
     assert pa.loc["R1", "events_per_min"] == pytest.approx(18.0, abs=1e-2)
     assert {"session_min", "events_per_min", "contact_sec_per_min"} <= set(pa.columns)
+    assert pa.loc["R1", "n_investigation_bouts"] == 2 and pa.loc["R2", "n_investigation_bouts"] == 1
+    assert pa.loc["R1", "investigation_bouts_per_min"] == pytest.approx(18.0, abs=1e-2)
     log = (tmp_path / "event_log.txt").read_text(encoding="utf-8")
     assert "Contact distance: 0.30 BL (\u2248 2.7 cm; cm/px estimated from body length 164 px = 9.5 cm)" in log
-    assert log.index("--- Summary by type ---") < log.index("--- Per-animal summary ---") \
+    assert log.index("--- Summary by type ---") < log.index("--- Investigation bouts") \
+        < log.index("--- Per-animal summary ---") \
         < log.index("Per-pair matrix: pair_contact_matrix.csv") < log.index("--- Filtering impact ---")
     summary = json.loads((tmp_path / "session_summary_real.json").read_text(encoding="utf-8"))
     assert summary["per_animal"]["R1"]["n_events_total"] == 2
     assert summary["per_animal"]["R3"]["n_as_receiver"] == 1
+    assert summary["per_animal"]["R1"]["n_investigation_bouts"] == 2
+    assert summary["investigation"]["n_bouts"] == 2 and summary["investigation"]["total_sec"] == 4.0
+    assert summary["investigation"]["by_dominant_type"] == {"N2N": 1, "N2AG": 1, "N2B": 0}
+    assert summary["parameters"]["investigation_max_gap"] == 3
+    ib = pd.read_csv(tmp_path / "investigation_bouts.csv")
+    assert list(ib.columns) == INVESTIGATION_COLUMNS and list(ib.pair_label) == ["R1-R2", "R1-R3"]
     assert summary["per_animal"]["R1"]["events_per_min"] == pytest.approx(18.0, abs=1e-2)
 
     pm = pd.read_csv(tmp_path / "pair_contact_matrix.csv").set_index("pair_label")
@@ -259,6 +276,9 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
     assert "PairMatrix" in sheets and len(sheets["PairMatrix"]) == 3               # 3 animals = 3 pairs
     names = list(sheets)
     assert names.index("PairMatrix") == names.index("PerAnimal") + 1                # right after PerAnimal
+    assert names.index("Investigation") == names.index("PairMatrix") + 1            # right after PairMatrix
+    assert len(sheets["Investigation"]) == 2 and not (tmp_path / "investigation_bouts.csv").exists()
+    assert list(sheets["Investigation"].columns) == INVESTIGATION_COLUMNS
     assert list(sheets["PairMatrix"].columns) == PAIR_MATRIX_COLUMNS
     params = sheets["Parameters"]
     cal = params[params.section == "calibration"].set_index("parameter")["value"]
@@ -365,3 +385,197 @@ def test_event_log_header_two_animals_is_percent_of_session(tmp_path):
     assert "Pairs:" not in log
     pm = pd.read_csv(tmp_path / "pair_contact_matrix.csv")
     assert list(pm.pair_label) == ["R1-R2"] and pm.n_events_total.iloc[0] == 1
+
+
+# ── investigation bouts ────────────────────────────────────────────────────
+
+def _label_table(seqs, n_frames=100, role="i"):
+    """Interleaved per-frame table plus the cleaned labels, built directly (no smoothing).
+
+    seqs = {pair: [(label, n_frames), ...]} laid out from frame 0, "" = no contact; each pair
+    is padded with "" up to n_frames. Returns (df, real_types) aligned row by row; the raw
+    contact_type equals the cleaned label, N2AG / N2B frames carry investigator role `role`.
+    """
+    labels = {}
+    for pk in PAIRS:
+        seq = [lab for lab, n in seqs.get(pk, []) for _ in range(n)]
+        labels[pk] = seq + [""] * (n_frames - len(seq))
+    rows, real = [], []
+    for f in range(n_frames):
+        for pk in PAIRS:
+            lab = labels[pk][f]
+            rows.append({
+                "frame_idx": f, "time_sec": f / FPS, "zone": "independent", "pair_key": pk,
+                "contact_type": lab or "none",
+                "investigator_role": role if lab in ("N2AG", "N2B") else "",
+                "score_n2n": 0.7 if lab == "N2N" else 0.0,
+                "score_n2ag": 0.9 if lab == "N2AG" else 0.0,
+                "score_n2b": 0.5 if lab == "N2B" else 0.0,
+            })
+            real.append(lab)
+    return pd.DataFrame(rows), np.array(real, dtype=object)
+
+
+def test_investigation_bout_merges_n2ag_n2b_n2ag_into_one_bout():
+    df, real = _label_table({"0_1": [("", 10), ("N2AG", 20), ("N2B", 5), ("N2AG", 20)]})
+    ev = extract_events(df, real, FPS)
+    assert [c for c in ev.contact_type if c != "NC"] == ["N2AG", "N2B", "N2AG"]   # events are fragmented
+
+    bouts = investigation_bouts(df, real, FPS)
+    assert list(bouts.columns) == INVESTIGATION_COLUMNS
+    assert len(bouts) == 1
+    b = bouts.iloc[0]
+    assert b.bout_id == 0 and b.pair_key == "0_1" and b.pair_label == "R1-R2"
+    assert b.start_frame == 10 and b.end_frame == 54
+    assert b.start_time_sec == pytest.approx(10 / FPS, abs=1e-4)
+    assert b.end_time_sec == pytest.approx(55 / FPS, abs=1e-4)
+    assert b.duration_sec == pytest.approx(45 / FPS, abs=1e-4)
+    assert b.n2ag_sec == pytest.approx(40 / FPS, abs=1e-4)
+    assert b.n2b_sec == pytest.approx(5 / FPS, abs=1e-4)
+    assert b.n2n_sec == 0.0 and b.other_sec == 0.0
+    assert b.dominant_type == "N2AG" and b.n_subtype_switches == 2
+    assert b.investigator_slot == 0                       # role "i" of pair 0_1
+    assert b.peak_score == 0.9                            # the dominant type's score column
+
+
+def test_investigation_bout_bridges_short_gaps_only():
+    df, real = _label_table({"0_1": [("N2AG", 20), ("", 2), ("N2AG", 20)]})
+    bouts = investigation_bouts(df, real, FPS)
+    assert len(bouts) == 1
+    b = bouts.iloc[0]
+    assert b.start_frame == 0 and b.end_frame == 41
+    assert b.duration_sec == pytest.approx(42 / FPS, abs=1e-4)
+    assert b.other_sec == pytest.approx(2 / FPS, abs=1e-4)          # the bridged gap
+    assert b.n2ag_sec == pytest.approx(40 / FPS, abs=1e-4)
+    assert b.n_subtype_switches == 0
+
+    df, real = _label_table({"0_1": [("N2AG", 20), ("", 5), ("N2AG", 20)]})
+    bouts = investigation_bouts(df, real, FPS)
+    assert len(bouts) == 2
+    assert list(bouts.start_frame) == [0, 25] and list(bouts.end_frame) == [19, 44]
+    assert (bouts.other_sec == 0).all()                              # a bout never ends on a gap
+
+    # the limit itself: <= max_gap frames are bridged, one more splits
+    for gap, expected in ((3, 1), (4, 2)):
+        df, real = _label_table({"0_1": [("N2B", 10), ("", gap), ("N2B", 10)]})
+        assert len(investigation_bouts(df, real, FPS, max_gap=3)) == expected
+    df, real = _label_table({"0_1": [("N2B", 10), ("", 5), ("N2B", 10)]})
+    assert len(investigation_bouts(df, real, FPS, max_gap=5)) == 1
+    assert len(investigation_bouts(df, real, FPS, max_gap=4)) == 2
+    assert len(investigation_bouts(df, real, FPS, max_gap=0)) == 2
+
+
+def test_investigation_bout_nc_label_is_a_gap_too():
+    df, real = _label_table({"0_1": [("N2AG", 20), ("", 2), ("N2AG", 20)]})
+    real = np.where(real == "", "NC", real).astype(object)          # run_postprocess writes NC
+    bouts = investigation_bouts(df, real, FPS)
+    assert len(bouts) == 1 and bouts.iloc[0].other_sec == pytest.approx(2 / FPS, abs=1e-4)
+
+
+def test_investigation_bouts_never_include_sbs_or_fol_frames():
+    df, real = _label_table({"0_1": [("SBS", 40)], "0_2": [("FOL", 40)]})
+    bouts = investigation_bouts(df, real, FPS)
+    assert bouts.empty and list(bouts.columns) == INVESTIGATION_COLUMNS
+
+    # a long SBS stretch between two investigations separates them; none of it ends up in a bout
+    df, real = _label_table({"0_1": [("N2AG", 10), ("SBS", 30), ("N2B", 10)]})
+    bouts = investigation_bouts(df, real, FPS)
+    assert len(bouts) == 2
+    assert list(zip(bouts.start_frame, bouts.end_frame)) == [(0, 9), (40, 49)]
+    assert (bouts.other_sec == 0).all() and list(bouts.dominant_type) == ["N2AG", "N2B"]
+
+    # a short SBS stretch is only a bridged gap: counted as other_sec, not as a sub-type
+    df, real = _label_table({"0_1": [("N2AG", 10), ("SBS", 3), ("N2B", 10)]})
+    bouts = investigation_bouts(df, real, FPS)
+    assert len(bouts) == 1
+    b = bouts.iloc[0]
+    assert b.other_sec == pytest.approx(3 / FPS, abs=1e-4) and b.n_subtype_switches == 1
+    assert b.n2ag_sec + b.n2b_sec + b.n2n_sec == pytest.approx(20 / FPS, abs=1e-4)
+
+
+def test_investigation_bout_ids_are_unique_and_ordered_by_start_then_pair():
+    df, real = _label_table({
+        "0_1": [("", 40), ("N2N", 10), ("", 20), ("N2B", 10)],
+        "0_2": [("", 10), ("N2AG", 15)],
+        "1_2": [("", 10), ("N2B", 15), ("", 30), ("N2N", 10)],
+    })
+    bouts = investigation_bouts(df, real, FPS)
+    assert len(bouts) == 5
+    assert bouts.bout_id.is_unique and list(bouts.bout_id) == list(range(5))
+    keys = list(zip(bouts.start_frame, bouts.pair_key))
+    # start frame first, ties broken by pair (0_2 before 1_2), not by the order the pairs are listed
+    assert keys == [(10, "0_2"), (10, "1_2"), (40, "0_1"), (55, "1_2"), (70, "0_1")]
+
+
+def test_investigation_bout_dominant_type_ties_and_investigator():
+    # N2N > N2AG > N2B when frames tie
+    df, real = _label_table({"0_1": [("N2B", 10), ("N2N", 10)]})
+    assert investigation_bouts(df, real, FPS).iloc[0].dominant_type == "N2N"
+    df, real = _label_table({"0_1": [("N2B", 10), ("N2AG", 10)]})
+    assert investigation_bouts(df, real, FPS).iloc[0].dominant_type == "N2AG"
+    # more N2B frames than N2AG: N2B dominates and its score column gives the peak
+    df, real = _label_table({"0_1": [("N2B", 11), ("N2AG", 10)]})
+    b = investigation_bouts(df, real, FPS).iloc[0]
+    assert b.dominant_type == "N2B" and b.peak_score == 0.5
+
+    # N2N is symmetric: a pure N2N bout has no investigator; role "j" of pair 1_2 is slot 2
+    df, real = _label_table({"0_1": [("N2N", 12)], "1_2": [("N2B", 8), ("N2AG", 8)]}, role="j")
+    bouts = investigation_bouts(df, real, FPS).set_index("pair_key")
+    assert bouts.loc["0_1", "investigator_slot"] == ""
+    assert bouts.loc["1_2", "investigator_slot"] == 2
+
+
+def test_investigation_bouts_without_pair_key_and_empty_input():
+    df, real = _label_table({"0_1": [("N2AG", 15), ("N2B", 15)]})
+    keep = (df.pair_key == "0_1").to_numpy()
+    solo = df[keep].drop(columns=["pair_key"]).reset_index(drop=True)
+    bouts = investigation_bouts(solo, real[keep], FPS)
+    assert len(bouts) == 1 and bouts.iloc[0].pair_key == "" and bouts.iloc[0].pair_label == ""
+    assert bouts.iloc[0].n_subtype_switches == 1
+
+    df, real = _label_table({})
+    assert investigation_bouts(df, real, FPS).empty
+
+
+def test_run_postprocess_investigation_block_for_a_sliding_nose(tmp_path):
+    import json
+    # N2AG, then the nose slides to the flank (N2B), then back: 3 events but one investigation
+    df, _ = _label_table({"0_1": [("", 10), ("N2AG", 20), ("N2B", 12), ("N2AG", 20)]})
+    df.to_csv(tmp_path / "contacts_per_frame.csv", index=False)
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=False)
+
+    ev = pd.read_csv(tmp_path / "contacts_real_events.csv")
+    assert list(ev[ev.contact_type != "NC"].contact_type) == ["N2AG", "N2B", "N2AG"]   # unchanged
+    ib = pd.read_csv(tmp_path / "investigation_bouts.csv")
+    assert len(ib) == 1 and ib.n_subtype_switches.iloc[0] == 2 and ib.dominant_type.iloc[0] == "N2AG"
+
+    log = (tmp_path / "event_log.txt").read_text(encoding="utf-8")
+    assert "--- Investigation bouts (N2N + N2AG + N2B merged, gaps <= 3 frames) ---\n" \
+           "  Bouts: 1 | total 1.7s | dominant: N2AG 1 | mean sub-type switches per bout: 2.0\n" \
+           "  Time by sub-type inside bouts: N2N 0.0s | N2AG 1.3s | N2B 0.4s\n" in log
+    assert log.index("--- Summary by type ---") < log.index("--- Investigation bouts") \
+        < log.index("--- Per-animal summary ---")
+    summary = json.loads((tmp_path / "session_summary_real.json").read_text(encoding="utf-8"))
+    inv = summary["investigation"]
+    assert inv["n_bouts"] == 1 and inv["total_sec"] == pytest.approx(1.73, abs=1e-2)
+    assert inv["by_dominant_type"] == {"N2N": 0, "N2AG": 1, "N2B": 0}
+    assert inv["mean_subtype_switches"] == 2.0
+    assert inv["time_by_subtype_sec"]["N2B"] == pytest.approx(0.4, abs=1e-2)
+
+
+def test_investigation_max_gap_is_read_from_the_config(tmp_path):
+    import json
+    df, _ = _label_table({"0_1": [("N2AG", 15), ("", 5), ("N2AG", 15)]})
+    df.to_csv(tmp_path / "contacts_per_frame.csv", index=False)
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=False)
+    # with the default gap of 3 frames the 5-frame pause splits the investigation
+    assert len(pd.read_csv(tmp_path / "investigation_bouts.csv")) == 2
+
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=False,
+                    config_overrides={"gap_bridging": {"max_gap": 0}, "investigation": {"max_gap": 5}})
+    ib = pd.read_csv(tmp_path / "investigation_bouts.csv")
+    assert len(ib) == 1 and ib.other_sec.iloc[0] == pytest.approx(5 / FPS, abs=1e-4)
+    log = (tmp_path / "event_log.txt").read_text(encoding="utf-8")
+    assert "gaps <= 5 frames" in log
+    summary = json.loads((tmp_path / "session_summary_real.json").read_text(encoding="utf-8"))
+    assert summary["parameters"]["investigation_max_gap"] == 5
