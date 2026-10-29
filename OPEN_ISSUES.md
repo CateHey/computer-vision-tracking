@@ -42,6 +42,7 @@ what remains before submission: [08_paper_readiness.md](final_documentation/08_p
 | C5 | Background config keys (`num_samples`, `seed`) were silently ignored | `8895a27` |
 | C6 | Evidence clips: one clip per scene of overlapping events, pair circled in its colours, R-labelled file names, one review row per event | `6705a44` |
 | C7 | Colour names in clips were wrong for R4 (cyan) and R6 (yellow) | `6705a44` |
+| C8 | The report claimed what the clip review never checked: investigator, event boundaries, investigation bouts, identity persistence, the `Bouts` / `Dynamics` / `Individual` sheets, no-contact spans counted as events (`Global.real_events_total` 51 vs 21), the viewer's 140 % contact-time tile. Now `results.xlsx` holds only validated tables (`diagnostics.xlsx` keeps the rest, not for reporting), `Summary` has the `ANY` row (union of contact time), and `validate_contacts.py` scores investigator and boundary accuracy, bout precision, recall (NC windows in every Bunya run) and identity (`identity` subcommand, one labelled frame per minute). Evidence pages show the clip position first with the 0.5× speed. | `ee702b0`, `793a67e` |
 
 ## D. Operational
 
