@@ -77,16 +77,19 @@ python scripts/postprocess_contacts_simple.py outputs/runs/<run>/contacts/ --mak
 
 ```bash
 python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 15   # one clip per scene (overlapping events), one review row per event
-# reviewer fills verdict / correct_type in <run>/validation/review.xlsx
+# reviewer fills verdict / correct_type / investigator_ok / boundaries_ok in <run>/validation/review.xlsx
 python scripts/validate_contacts.py score outputs/runs/<run>/validation/review.xlsx
 python scripts/validate_contacts.py sample outputs/runs/<run> --nc-per-run 20   # + 20 no-contact (NC) windows, verdicts nc_correct / missed_contact -> `recall_proxy` in score
 python scripts/validate_contacts.py score --compare <review_A.xlsx> <review_B.xlsx>   # two reviewers -> Cohen's kappa in interrater_summary.{md,json}
+python scripts/validate_contacts.py identity outputs/runs/<run> --every 60   # labelled checkpoint frames -> <run>/validation/identity/{identity.html,identity.xlsx}; fill identity_ok, `score` reads it
 python scripts/sensitivity_analysis.py outputs/runs/<run>   # offline threshold sensitivity (no GPU) -> <run>/sensitivity/
 ```
 
 A scene groups events that overlap in time (`group_by: scene` in `configs/validation.yaml`; `--group-by event` for one clip each);
-every event of the run inside a scene is listed (`in_sample` false for the extras). Verdicts: real, flicker, wrong_type, tracking_error, unsure. `score` writes precision with Wilson CIs per type,
-flicker rate by duration, and min-duration / min-score threshold tables. Tests: `pytest tests/`.
+every event of the run inside a scene is listed (`in_sample` false for the extras). Verdicts: real, flicker, wrong_type, tracking_error, unsure; every row also gets
+`investigator_ok` (the named animal is the one sniffing / following) and `boundaries_ok` (start and end within ~0.2 s), each yes / no / na, and `investigator_label` is prefilled.
+`score` writes precision with Wilson CIs per type, flicker rate by duration, min-duration / min-score threshold tables, investigator and boundary accuracy,
+investigation-bout precision (from `contacts/investigation_bouts.csv`) and identity persistence. `slurm/run_cutie.sbatch` samples 20 NC windows in every run. Tests: `pytest tests/`.
 
 ## Documentation
 

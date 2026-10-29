@@ -12,7 +12,11 @@ Tick items off here. Last update: 2026-10-28.
 | Calibration to cm and body-length normalisation | 06 §A1, `Parameters` sheet (`calibration` rows), `event_log.txt` header |
 | How frames become events; per-pair, per-animal and group counts | 05 §6–§8, `Events`, `PerAnimal`, `PairMatrix` sheets |
 | Precision per behaviour with confidence intervals, blinded review clips | `validate_contacts.py sample` / `score`, 05 §9 |
-| Recall proxy (no-contact windows), inter-rater κ | `validate_contacts.py --nc-per-run`, `score --compare` (05 §9) |
+| Recall proxy (no-contact windows), inter-rater κ | `validate_contacts.py --nc-per-run` (20 per run in `slurm/run_cutie.sbatch`), `score --compare` (05 §9) |
+| Investigator (who sniffs / follows) accuracy | `investigator_label` / `investigator_ok` in `review.xlsx`, `investigator_accuracy` in `score` (05 §9) |
+| Event boundaries (start / end within ≈ 0.2 s) | `boundaries_ok` in `review.xlsx`, `boundary_accuracy` in `score` (05 §9) |
+| Investigation-bout precision | `bout_precision` in `score`, from the event verdicts and `investigation_bouts.csv` (05 §9) |
+| Identity persistence over a long session | `validate_contacts.py identity` (checkpoint every 60 s), `identity_check` in `score` (05 §9, 03 §3.7) |
 | Sensitivity of counts to thresholds | `scripts/sensitivity_analysis.py` (03, last section) |
 | Session quality metrics (handoff, detection, carry-over, nose-off-mask) | `logs/run.log`, `Parameters` sheet (`quality_flags`) |
 | Reproducibility: versions, commits, weights hash per run | `provenance.json` in every run |
@@ -37,8 +41,9 @@ Tick items off here. Last update: 2026-10-28.
       (`scan.preload_all_frames=true` vs `false`; identical `Events` sheet expected — the
       frame-level equality was verified locally on both video codecs).
 - [ ] **Full-length sessions** on Bunya (10:50 and 20:00 videos), `--time` raised.
-- [ ] **Review protocol**: two raters, ≥ 15 events per behaviour per session plus the
-      no-contact windows; report precision ± CI, miss rate, κ.
+- [ ] **Review protocol**: two raters, ≥ 15 events per behaviour per session, 20 no-contact
+      windows and the identity check every 60 s (`identity`); report precision ± CI, miss rate,
+      investigator and boundary accuracy, bout precision, identity persistence, κ.
 - [ ] **Sensitivity tables** from the final runs (one command per run).
 - [ ] **Provenance**: record the repository commit hash and weights MD5 in the paper.
 - [ ] **YOLO training details** for the pose paragraph: number of labelled frames, validation

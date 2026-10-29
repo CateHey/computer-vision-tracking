@@ -9,15 +9,22 @@ sample : stratified sample of events -> evidence clips, contact sheets,
          review.xlsx keeps one row per event and says where to look in the clip.
          With --nc-per-run N it also samples N windows from the spans where the pipeline
          reported NO contact (recall proxy: a reviewer says whether a contact was missed).
+         Every row also asks whether the named investigator and the event boundaries are right.
 score  : read a filled review.xlsx -> validation_summary.{md,json,png}
-         (precision per type; recall_proxy when NC windows were reviewed).
+         (precision per type; recall_proxy when NC windows were reviewed; investigator and
+         boundary accuracy; investigation-bout precision from <run>/contacts/investigation_bouts.csv;
+         identity persistence when <run>/validation/identity/identity.xlsx is filled).
          `score --compare A.xlsx B.xlsx` -> interrater_summary.{md,json} (Cohen's kappa).
+identity : checkpoint frames every N seconds with each animal's label drawn from the per-frame
+         centroids -> <run>/validation/identity/ (PNGs, identity.html, identity.xlsx), to check that
+         the labels stay on the same individual over a long session.
 
 Usage
 -----
     python scripts/validate_contacts.py sample <run_dir> [--per-type 15] [--nc-per-run 20] [key=value ...]
-    python scripts/validate_contacts.py score <validation_dir>/review.xlsx
+    python scripts/validate_contacts.py score <validation_dir>/review.xlsx [--run <run_dir>]
     python scripts/validate_contacts.py score --compare review_A.xlsx review_B.xlsx
+    python scripts/validate_contacts.py identity <run_dir> [--every 60] [--max 40]
 """
 from __future__ import annotations
 
@@ -49,6 +56,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "duration_bins": [0.3, 0.5, 1.0, 2.0],
     "score_grid": [0.0, 0.5, 0.6, 0.7, 0.8, 0.9],
     "duration_grid": [0.0, 0.2, 0.3, 0.5, 1.0, 2.0],
+    "identity": {"every_sec": 60, "max_frames": 40},
 }
 TYPE_NAMES = {
     "N2N": "Nose-to-Nose", "N2AG": "Nose-to-Anogenital", "N2B": "Nose-to-Body",
@@ -59,6 +67,10 @@ NC_VERDICTS = ["nc_correct", "missed_contact", "unsure"]  # verdicts that apply 
 # One dropdown for every row of review.xlsx: contact rows use VERDICTS, NC rows use NC_VERDICTS.
 ALL_VERDICTS = ["real", "flicker", "wrong_type", "tracking_error", "nc_correct", "missed_contact", "unsure"]
 CORRECT_TYPES = ["N2N", "N2AG", "N2B", "SBS", "FOL", "NC"]
+INVESTIGATOR_TYPES = ("N2AG", "N2B", "FOL")      # asymmetric types: one animal investigates / follows
+INVESTIGATION_TYPES = ("N2N", "N2AG", "N2B")     # the types merged into investigation bouts
+YES_NO_NA = ["yes", "no", "na"]                  # investigator_ok / boundaries_ok
+IDENTITY_VERDICTS = ["yes", "no", "unsure"]      # identity.xlsx
 QUALITY_FLAGS = ["stale_keypoints", "missing_keypoints", "single_detection",
                  "high_mask_overlap", "fol_used_centroid", "nose_off_mask"]
 TERTILES = ["short", "medium", "long"]
@@ -102,7 +114,11 @@ def load_config(overrides: List[str]) -> dict:
     path = _PROJECT_ROOT / "configs" / "validation.yaml"
     if path.exists():
         import yaml
-        cfg.update(yaml.safe_load(path.read_text()) or {})
+        for k, v in (yaml.safe_load(path.read_text()) or {}).items():
+            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                cfg[k].update(v)         # a partial section (identity.every_sec only) keeps the other defaults
+            else:
+                cfg[k] = v
     for ov in overrides:
         if "=" not in ov:
             logger.warning("Ignoring invalid override (no '='): %s", ov)
@@ -126,6 +142,52 @@ def fmt_time(sec: float) -> str:
     """Seconds -> mm:ss.s."""
     m, s = divmod(float(sec), 60)
     return f"{int(m):02d}:{s:04.1f}"
+
+
+def parse_time(value: Any) -> Optional[float]:
+    """'mm:ss.s' (the review.xlsx / identity.xlsx time format, minutes may exceed 59) -> seconds; None if unreadable."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    if hasattr(value, "hour") and hasattr(value, "minute"):          # a cell Excel turned into a time
+        return value.hour * 3600 + value.minute * 60 + value.second + getattr(value, "microsecond", 0) / 1e6
+    try:
+        m, s = str(value).strip().split(":")
+        return int(m) * 60 + float(s)
+    except ValueError:
+        return None
+
+
+def slot_label(slot: Any) -> str:
+    """'R<n>' of a 0-based animal slot ('' when the slot is missing or not a number)."""
+    try:
+        v = float(slot)
+    except (TypeError, ValueError):
+        return ""
+    return "" if math.isnan(v) or v < 0 else f"R{int(v) + 1}"
+
+
+def investigator_of(ev: Any) -> Optional[int]:
+    """Slot of the investigating animal of an event row (investigator_slot), None for symmetric or
+    unknown. The slot must be one of the two animals of the pair."""
+    if str(ev.get("contact_type", "")).strip().upper() not in INVESTIGATOR_TYPES:
+        return None
+    label = slot_label(ev.get("investigator_slot"))
+    slot = int(label[1:]) - 1 if label else None
+    return slot if slot in _pair_slots(str(ev.get("pair_key", ""))) else None
+
+
+def investigator_arrow(ev: Any, sep: str = "->") -> str:
+    """'R2->R3' (investigator -> the other animal of the pair), '' when the event has none."""
+    inv = investigator_of(ev)
+    if inv is None:
+        return ""
+    si, sj = _pair_slots(str(ev["pair_key"]))
+    return f"{slot_label(inv)}{sep}{slot_label(sj if inv == si else si)}"
+
+
+def speed_note(speed: float) -> str:
+    """'0.5x speed' for the clip playback speed, '' at normal speed."""
+    return "" if abs(float(speed) - 1.0) < 1e-9 else f"{float(speed):g}× speed"
 
 
 def wilson_ci(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
@@ -169,7 +231,12 @@ def _load_events_table(run: Path, source: Optional[str] = None) -> Tuple[pd.Data
     if source in (None, "bouts"):
         bt = pd.read_csv(cdir / "contact_bouts.csv") if (cdir / "contact_bouts.csv").exists() else None
         if bt is None and xlsx:
-            bt = _read_xlsx_sheet(xlsx, "Bouts")
+            # contact_bouts.csv, else the Bouts sheet of diagnostics.xlsx (next to results.xlsx), else the
+            # Bouts sheet of results.xlsx itself (runs from before the sheet moved to diagnostics.xlsx)
+            for book in (xlsx.parent / "diagnostics.xlsx", xlsx):
+                bt = _read_xlsx_sheet(book, "Bouts") if book.exists() else None
+                if bt is not None:
+                    break
         cands.append(("bouts", bt))
     for name, df in cands:
         if df is not None and len(df) and "pair_key" in df.columns:
@@ -729,6 +796,7 @@ def annotate_scene(frame: np.ndarray, scene_id: str, events: pd.DataFrame, n_lis
     _put(frame, f"{scene_id} | {n_listed} event(s) to review in this clip | t={fmt_time(fidx / fps)} f={fidx} "
                 f"[{'LABEL ACTIVE' if inside else 'context'}]", (8, 22), 0.6)
     labels = [f"{ev['sample_id']} {pair_label(ev['pair_key'])} {ev['contact_type']}"
+              f"{' ' + investigator_arrow(ev) if investigator_arrow(ev) else ''}"
               f"{pair_colour_hint(ev['pair_key'], colors)}" for _, ev in active.iterrows()]
     _put(frame, "  |  ".join(labels[:2]) if labels else "no contact active", (8, 48), 0.5,
          (200, 200, 255) if inside else (200, 200, 200))
@@ -819,16 +887,33 @@ def cut_scene_clip(cap, scene: Dict[str, Any], visible: pd.DataFrame, pf_pairs: 
 
 
 # --------------------------------------------------------------------------- outputs
-REVIEWER_COLS = ["verdict", "correct_type", "reviewer", "notes"]
+REVIEWER_COLS = ["verdict", "correct_type", "investigator_label", "investigator_ok", "boundaries_ok",
+                 "reviewer", "notes"]
 COLUMN_ORDER = ["sample_id", "scene_id", "clip", "thumbnail", "in_sample", "partial",
                 "pair_label", "contact_type", "contact_label", "nc_near", "min_centroid_dist_bl",
-                "start_time", "end_time", "duration_sec", "duration_frames", "duration_tertile",
+                "start_time", "end_time", "start_frame", "end_frame",
+                "duration_sec", "duration_frames", "duration_tertile",
                 "clip_from", "clip_to", "peak_score", "mean_score", "secondary_type", "secondary_score"] \
     + [f"frac_{f}" for f in QUALITY_FLAGS] + ["mean_nose_nose_dist_bl", "mean_mask_contact_bl"]
 
 
-def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
-    """review.xlsx with dropdowns + an Instructions sheet."""
+def review_prefill(ev: Any) -> Dict[str, Any]:
+    """Pipeline claims pre-filled in the reviewer columns of one row.
+
+    investigator_label: the animal the pipeline names as investigator (N2AG / N2B / FOL events).
+    investigator_ok: left empty for the reviewer when there is an investigator to judge, 'na'
+    otherwise (N2N, SBS, NC windows, or an event whose investigator is unknown).
+    boundaries_ok: left empty for events, 'na' for NC windows (they have no event boundaries).
+    """
+    if str(ev["contact_type"]).strip().upper() == "NC":
+        return {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na"}
+    inv = investigator_of(ev)
+    return {"investigator_label": slot_label(inv) if inv is not None else None,
+            "investigator_ok": None if inv is not None else "na", "boundaries_ok": None}
+
+
+def write_review_xlsx(rows: List[Dict[str, Any]], path: Path, speed: float = 1.0) -> None:
+    """review.xlsx with dropdowns + an Instructions sheet (`speed`: playback speed of the clips)."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -853,7 +938,8 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
         ws.column_dimensions[get_column_letter(i)].width = 38 if c in ("clip", "thumbnail", "notes") else (
             22 if c == "contact_label" else 14)
     last = max(len(rows) + 1, 2)
-    for col, opts in (("verdict", ALL_VERDICTS), ("correct_type", CORRECT_TYPES)):
+    for col, opts in (("verdict", ALL_VERDICTS), ("correct_type", CORRECT_TYPES),
+                      ("investigator_ok", YES_NO_NA), ("boundaries_ok", YES_NO_NA)):
         dv = DataValidation(type="list", formula1='"' + ",".join(opts) + '"', allow_blank=True)
         ws.add_data_validation(dv)
         L = get_column_letter(cols.index(col) + 1)
@@ -868,6 +954,9 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
         "R5 magenta, R6 yellow) and named in the banner while the event is active (RED border = some label active).",
         "in_sample = FALSE marks events listed only because they overlap a sampled one; partial = TRUE means",
         "the event continues in the previous or next clip (clips never repeat footage).",
+        "start_time / end_time are recording times; clip_from / clip_to are positions inside the clip"
+        + (f", which plays at {speed_note(speed)}" if speed_note(speed) else "")
+        + " — scrub the player to clip_from.",
         "",
         "real: the physical/social contact of the given type is clearly visible for most of the event interval.",
         "flicker: label active but no real contact, a momentary brush (< ~0.3 s) or keypoint jitter.",
@@ -885,6 +974,16 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
         "The 'verdict' list is the same for every row: real / flicker / wrong_type / tracking_error belong to",
         "contact rows, nc_correct / missed_contact to NC rows.",
         "",
+        "Investigator and boundaries (answer for every row whose verdict is 'real'; both lists are yes / no / na):",
+        "investigator_label is the animal the pipeline names as the one doing the sniffing (N2AG, N2B) or the",
+        "following (FOL); index.html and the clip banner show it as R2 -> R3 (investigator -> other animal).",
+        "investigator_ok: yes = the highlighted animal doing the sniffing / following is the one named in",
+        "investigator_label; no = it is the other animal (write that in 'notes'); na = nothing to judge.",
+        "Rows without an investigator (N2N, SBS, NC windows) are pre-filled with na.",
+        "boundaries_ok: yes = the event starts and ends within about 0.2 s of where you would put them;",
+        "no = clearly too early / late / long / short (say which in 'notes'); na = cannot be judged.",
+        "NC windows have no boundaries and are pre-filled with na.",
+        "",
         "Also fill in 'reviewer' (your initials) and 'notes' (optional). Do not edit the other columns.",
     ]
     for t in text:
@@ -894,8 +993,30 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path) -> None:
     wb.save(path)
 
 
-def write_index_html(rows: List[Dict[str, Any]], path: Path, title: str) -> None:
-    """Self-contained gallery: one card per clip (scene) listing its events, with type filters."""
+def _event_line(r: Dict[str, Any], speed: float) -> str:
+    """One <li> of index.html: clip position first (what the player shows), then the recording time."""
+    esc = html.escape
+    peak = "n/a" if r["peak_score"] is None else f'{r["peak_score"]:.2f}'
+    inv = r.get("investigator_label")
+    other = [s for s in str(r["pair_label"]).split("-") if s != inv]
+    arrow = f' ({esc(str(inv))} &rarr; {esc(other[0])})' if inv and len(other) == 1 else ""
+    note = speed_note(speed)
+    clip_pos = (f'clip {esc(r["clip_from"])}&ndash;{esc(r["clip_to"])}' + (f" ({note})" if note else "")
+                + " &middot; ") if r.get("clip_from") else ""
+    tertile = f', {esc(str(r["duration_tertile"]))}' if r.get("duration_tertile") else ""
+    flag = "" if r.get("in_sample", True) else " <i>(extra)</i>"
+    return (f'<li><b>{esc(r["sample_id"])}</b> <span class="t">{esc(r["contact_type"])}</span> '
+            f'{esc(r["pair_label"])}{arrow} &middot; {clip_pos}'
+            f'video {esc(r["start_time"])}&ndash;{esc(r["end_time"])} &middot; '
+            f'{r["duration_sec"]:.2f} s{tertile} &middot; peak {peak}{flag}</li>')
+
+
+def write_index_html(rows: List[Dict[str, Any]], path: Path, title: str, speed: float = 1.0) -> None:
+    """Self-contained gallery: one card per clip (scene) listing its events, with type filters.
+
+    Each event line gives the clip position first (what the player shows) and then the recording
+    ("video") time; `speed` is the clip playback speed.
+    """
     esc = html.escape
     types = sorted({r["contact_type"] for r in rows})
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -904,19 +1025,14 @@ def write_index_html(rows: List[Dict[str, Any]], path: Path, title: str) -> None
     cards = []
     for clip, rs in groups.items():
         head = rs[0].get("scene_id") or rs[0]["sample_id"]
-        items = []
-        for r in rs:
-            peak = "n/a" if r["peak_score"] is None else f'{r["peak_score"]:.2f}'
-            where = f' &middot; in clip {esc(r["clip_from"])}-{esc(r["clip_to"])}' if "clip_from" in r else ""
-            flag = "" if r.get("in_sample", True) else " <i>(extra)</i>"
-            items.append(f'<li><b>{esc(r["sample_id"])}</b> <span class="t">{esc(r["contact_type"])}</span> '
-                         f'{esc(r["pair_label"])} &middot; {esc(r["start_time"])}-{esc(r["end_time"])} '
-                         f'({r["duration_sec"]:.2f} s, {esc(str(r["duration_tertile"]))}){where} &middot; peak {peak}{flag}</li>')
+        items = [_event_line(r, speed) for r in rs]
         tset = " ".join(sorted({r["contact_type"] for r in rs}))
         cards.append(f'<div class="card" data-type="{esc(tset)}"><h3>{esc(head)} '
                      f'<span class="n">{len(rs)} event(s)</span></h3>'
                      f'<video controls loop muted preload="metadata" src="{esc(clip)}"></video>'
                      f'<ul>{"".join(items)}</ul></div>')
+    time_note = ((f"Clips play at {speed_note(speed)}: " if speed_note(speed) else "")
+                 + "'clip' times are what the player shows, 'video' times are the original recording times.")
     btns = '<button data-f="all" class="on">all</button>' + "".join(
         f'<button data-f="{esc(t)}">{esc(t)}</button>' for t in types)
     doc = f"""<!doctype html><html><head><meta charset="utf-8"><title>{esc(title)}</title>
@@ -931,7 +1047,8 @@ ul{{margin:6px 0 0;padding-left:18px;font-size:13px}}li{{margin:2px 0}}
 button{{margin:0 6px 10px 0;padding:6px 12px;border:1px solid var(--acc);background:none;color:var(--fg);border-radius:6px;cursor:pointer}}
 button.on{{background:var(--acc);color:var(--bg)}}</style></head><body>
 <h1>{esc(title)}</h1><p>{len(rows)} events in {len(groups)} clips. Red border = a label is active, grey = context.
-Each listed event is circled in its animals' colours while active.</p>
+Each listed event is circled in its animals' colours while active. <b>R2 &rarr; R3</b> = R2 is the investigator
+(the animal sniffing or following).</p><p>{html.escape(time_note, quote=False)}</p>
 <div>{btns}</div><div id="g">{''.join(cards)}</div><script>
 document.querySelectorAll('button').forEach(b=>b.onclick=()=>{{
 document.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
@@ -949,8 +1066,10 @@ def _event_row(ev: pd.Series, pf: Optional[pd.DataFrame], fps: float) -> Dict[st
         "sample_id": ev["sample_id"], "pair_label": pair_label(ev["pair_key"]),
         "contact_type": ev["contact_type"], "contact_label": TYPE_NAMES.get(ev["contact_type"], ev["contact_type"]),
         "start_time": fmt_time(ev["start_frame"] / fps), "end_time": fmt_time((ev["end_frame"] + 1) / fps),
+        "start_frame": int(ev["start_frame"]), "end_frame": int(ev["end_frame"]),
         "duration_sec": round(float(dur), 3), "duration_frames": int(ev["n_frames"]),
         "duration_tertile": ev["duration_tertile"], "peak_score": peak,
+        **review_prefill(ev),
         "mean_score": st.get("mean_score"), "secondary_type": st.get("secondary_type"),
         "secondary_score": st.get("secondary_score"),
         **{f"frac_{f}": st.get(f"frac_{f}") for f in QUALITY_FLAGS},
@@ -1015,7 +1134,11 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
             clip, sheet = f"clips/{sid}_{ev['contact_type']}_{pair_label(ev['pair_key'])}.mp4", f"thumbs/{sid}.png"
             n = cut_clip(cap, sid, ev, pf_pairs.get(str(ev["pair_key"])), fps, pad, nframes,
                          out / clip, out / sheet, speed, crf, colors)
-            rows.append({**_event_row(ev, pf, fps), "clip": clip, "thumbnail": sheet, "frames_written": n})
+            a = max(0, int(ev["start_frame"]) - pad)             # first frame of the clip (see cut_clip)
+            rows.append({**_event_row(ev, pf, fps), "clip": clip, "thumbnail": sheet,
+                         "clip_from": fmt_time((int(ev["start_frame"]) - a) / (fps * speed)),
+                         "clip_to": fmt_time((int(ev["end_frame"]) + 1 - a) / (fps * speed)),
+                         "frames_written": n})
             n_clips += 1
             logger.info("%s %s %s -> %d frames", sid, ev["contact_type"], pair_label(ev["pair_key"]), n)
     else:
@@ -1073,8 +1196,8 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
                 n_nc += 1
     cap.release()
 
-    write_review_xlsx(rows, out / "review.xlsx")
-    write_index_html(rows, out / "index.html", f"Contact validation - {run.name}")
+    write_review_xlsx(rows, out / "review.xlsx", speed)
+    write_index_html(rows, out / "index.html", f"Contact validation - {run.name}", speed)
     manifest: Dict[str, Any] = {
         "source": src, "run_dir": str(run), "video": str(video), "fps": fps, "params": cfg,
         "seed": cfg["seed"], "available_per_type": avail, "sampled_per_type": sampled,
@@ -1129,6 +1252,169 @@ def _recall_proxy(nc: pd.DataFrame) -> Dict[str, Any]:
             "missed_by_type": by_type, "n_near_windows": n_near}
 
 
+def _yes_no_stats(sub: pd.DataFrame, col: str) -> Dict[str, Any]:
+    """yes / (yes + no) of column `col` with a Wilson CI; 'na' and blank rows are counted apart."""
+    v = sub[col].astype(str).str.strip().str.lower()
+    n_yes, n_no, n_na = int((v == "yes").sum()), int((v == "no").sum()), int((v == "na").sum())
+    n = n_yes + n_no
+    lo, hi = wilson_ci(n_yes, n)
+    return {"n_scored": n, "n_yes": n_yes, "n_no": n_no, "n_na": n_na,
+            "accuracy": n_yes / n if n else None,
+            "ci_low": None if math.isnan(lo) else lo, "ci_high": None if math.isnan(hi) else hi}
+
+
+def review_accuracy(df: pd.DataFrame, col: str, types: Optional[Sequence[str]] = None) -> Optional[Dict[str, Any]]:
+    """Accuracy of a yes/no/na review column (investigator_ok, boundaries_ok), overall and per type.
+
+    Only rows with verdict `real` count (a flicker has no investigator or boundaries to judge) and
+    only the answers yes and no: accuracy = yes / (yes + no), Wilson 95% CI. `types` restricts the
+    rows (investigator: N2AG, N2B, FOL). None when the column is missing (an older review.xlsx) or
+    holds no yes / no.
+    """
+    if col not in df.columns:
+        return None
+    real = df[df["verdict"] == "real"]
+    if types is not None:
+        real = real[real["contact_type"].isin(list(types))]
+    overall = _yes_no_stats(real, col)
+    if overall["n_scored"] == 0:
+        return None
+    per_type = {t: _yes_no_stats(g, col) for t, g in real.groupby("contact_type")}
+    return {"overall": overall, "per_type": {t: st for t, st in per_type.items() if st["n_scored"]}}
+
+
+def pair_key_of_label(label: Any) -> Optional[str]:
+    """'R2-R3' -> '1_2' (the inverse of pair_label); None if it does not parse."""
+    try:
+        a, b = str(label).split("-")
+        return f"{int(a.strip().lstrip('Rr')) - 1}_{int(b.strip().lstrip('Rr')) - 1}"
+    except ValueError:
+        return None
+
+
+def _num(x: Any) -> float:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _row_frames(r: pd.Series, fps: float) -> Optional[Tuple[int, int]]:
+    """First and last frame of a review row: start_frame / end_frame when the file has them, else
+    derived from start_time (0.1 s resolution) and duration_frames (older review files)."""
+    a, b = _num(r.get("start_frame")), _num(r.get("end_frame"))
+    if not (math.isnan(a) or math.isnan(b)):
+        return int(a), int(b)
+    t0, n = parse_time(r.get("start_time")), _num(r.get("duration_frames"))
+    if t0 is None or math.isnan(n):
+        return None
+    a0 = int(round(t0 * fps))
+    return a0, a0 + int(n) - 1
+
+
+def _bout_status(rows: List[pd.Series]) -> str:
+    """'real' / 'false' / 'incomplete' from the review rows mapped to one investigation bout.
+
+    false: any event is flicker or tracking_error, or wrong_type with a correct_type outside
+    N2N / N2AG / N2B (SBS, FOL, NC). real: every event is real, or wrong_type with a correct_type
+    inside N2N / N2AG / N2B (a sub-type confusion does not make the investigation false).
+    incomplete: no event fails but one lacks a verdict (blank, unsure, wrong_type without a
+    correct_type, or a verdict that does not fit a contact row).
+    """
+    incomplete = False
+    for r in rows:
+        v = "" if pd.isna(r.get("verdict")) else str(r["verdict"]).strip().lower()
+        ct = "" if pd.isna(r.get("correct_type")) else str(r["correct_type"]).strip().upper()
+        if v in ("flicker", "tracking_error"):
+            return "false"
+        if v == "wrong_type":
+            if ct in ("SBS", "FOL", "NC"):
+                return "false"
+            incomplete = incomplete or ct not in INVESTIGATION_TYPES
+        elif v != "real":
+            incomplete = True
+    return "incomplete" if incomplete else "real"
+
+
+def bout_precision(review: pd.DataFrame, bouts: pd.DataFrame, fps: float) -> Dict[str, Any]:
+    """Precision of the investigation bouts from the event-level verdicts.
+
+    Every N2N / N2AG / N2B row of the review table (all rows, with or without a verdict, sampled or
+    extra) is mapped to the bout of the same pair whose frame range overlaps it most; a bout's
+    status comes from its rows (see _bout_status). Bouts without any review row were not sampled
+    and are not counted. precision = real / (real + false), Wilson 95% CI; incomplete bouts are
+    excluded.
+    """
+    ct = review["contact_type"].astype(str).str.strip().str.upper()
+    rows = review[ct.isin(INVESTIGATION_TYPES)]
+    by_pair = {str(k): g.reset_index(drop=True) for k, g in bouts.groupby(bouts["pair_key"].astype(str))}
+    mapped: Dict[Any, List[pd.Series]] = {}
+    meta: Dict[Any, pd.Series] = {}
+    n_unmapped = 0
+    for _, r in rows.iterrows():
+        pk, fr = pair_key_of_label(r.get("pair_label")), _row_frames(r, fps)
+        g = by_pair.get(pk) if pk is not None else None
+        if g is None or fr is None:
+            n_unmapped += 1
+            continue
+        ov = (np.minimum(g["end_frame"].to_numpy(dtype=float), fr[1])
+              - np.maximum(g["start_frame"].to_numpy(dtype=float), fr[0]) + 1)
+        k = int(np.argmax(ov))
+        if ov[k] <= 0:
+            n_unmapped += 1
+            continue
+        bid = (str(pk), int(g.iloc[k]["start_frame"]))
+        mapped.setdefault(bid, []).append(r)
+        meta[bid] = g.iloc[k]
+    if n_unmapped:
+        logger.warning("%d N2N/N2AG/N2B review row(s) overlap no investigation bout of their pair; "
+                       "are the review file and investigation_bouts.csv from the same run?", n_unmapped)
+    out_bouts = []
+    for bid in sorted(mapped, key=lambda b: (b[1], b[0])):
+        m = meta[bid]
+        out_bouts.append({
+            "bout_id": None if "bout_id" not in m or pd.isna(m["bout_id"]) else int(m["bout_id"]),
+            "pair_label": pair_label(bid[0]), "start_frame": int(m["start_frame"]),
+            "end_frame": int(m["end_frame"]), "status": _bout_status(mapped[bid]),
+            "sample_ids": [str(r["sample_id"]) for r in mapped[bid]]})
+    n_real = sum(b["status"] == "real" for b in out_bouts)
+    n_false = sum(b["status"] == "false" for b in out_bouts)
+    lo, hi = wilson_ci(n_real, n_real + n_false)
+    return {"n_bouts_total": int(len(bouts)), "n_bouts_with_events": len(out_bouts),
+            "n_bouts_scored": n_real + n_false, "n_real": n_real, "n_false": n_false,
+            "n_incomplete": len(out_bouts) - n_real - n_false,
+            "precision": n_real / (n_real + n_false) if n_real + n_false else None,
+            "ci_low": None if math.isnan(lo) else lo, "ci_high": None if math.isnan(hi) else hi,
+            "n_rows_mapped": int(sum(len(v) for v in mapped.values())), "n_rows_unmapped": n_unmapped,
+            "bouts": out_bouts}
+
+
+def identity_check(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    """Summary of a filled identity table (columns time, animal, identity_ok); None without verdicts.
+
+    A checkpoint (one timestamp) is ok when every reviewed animal at it is `yes`. The animal
+    figures count (checkpoint, animal) rows. first_failure_time_per_animal is the first `no`.
+    """
+    if not {"time", "animal", "identity_ok"} <= set(df.columns):
+        return None
+    d = df.copy()
+    d["identity_ok"] = d["identity_ok"].astype(str).str.strip().str.lower()
+    d = d[d["identity_ok"].isin(IDENTITY_VERDICTS)]
+    if d.empty:
+        return None
+    d["time"] = d["time"].astype(str).str.strip()
+    d["sec"] = d["time"].map(parse_time)
+    ok_by_time = d.groupby("time")["identity_ok"].apply(lambda v: bool((v == "yes").all()))
+    first_fail: Dict[str, str] = {}
+    for animal, g in d[d["identity_ok"] == "no"].groupby("animal"):
+        first_fail[str(animal)] = str(g.sort_values("sec").iloc[0]["time"])
+    return {"n_checkpoints": int(len(ok_by_time)), "n_checkpoints_ok": int(ok_by_time.sum()),
+            "n_animals": int(d["animal"].nunique()), "n_checked": int(len(d)),
+            "n_ok": int((d["identity_ok"] == "yes").sum()), "n_no": int((d["identity_ok"] == "no").sum()),
+            "n_unsure": int((d["identity_ok"] == "unsure").sum()),
+            "first_failure_time_per_animal": dict(sorted(first_fail.items()))}
+
+
 def compute_summary(df: pd.DataFrame, cfg: dict) -> Dict[str, Any]:
     """Aggregate a filled review table into the summary dict.
 
@@ -1158,6 +1444,13 @@ def compute_summary(df: pd.DataFrame, cfg: dict) -> Dict[str, Any]:
         df = df[core_mask]
     s: Dict[str, Any] = {"n_reviewed": len(df), "overall": _prec(df) if len(df) else {}}
     s["recall_proxy"] = _recall_proxy(nc) if len(nc) else None
+    # Who investigates and where the events start / end, judged on the real events of the sample
+    # (None for an older review.xlsx without the columns). bout_precision and identity_check need
+    # files next to the review and are added by cmd_score.
+    s["investigator_accuracy"] = review_accuracy(df, "investigator_ok", INVESTIGATOR_TYPES)
+    s["boundary_accuracy"] = review_accuracy(df, "boundaries_ok")
+    s["bout_precision"] = None
+    s["identity_check"] = None
     s["per_type"] = {t: _prec(g) for t, g in df.groupby("contact_type")}
     s["extras"] = {"n_reviewed": int(len(extras)), "overall": _prec(extras) if len(extras) else {},
                    "per_type": {t: _prec(g) for t, g in extras.groupby("contact_type")}} if extras is not None else None
@@ -1206,6 +1499,27 @@ def _pct(x: Optional[float]) -> str:
     return "n/a" if x is None else f"{100 * x:.0f}%"
 
 
+def _render_accuracy_md(s: Dict[str, Any]) -> List[str]:
+    """Markdown block for investigator and boundary accuracy ([] when neither was reviewed)."""
+    blocks = [(name, s.get(key)) for name, key in (("investigator", "investigator_accuracy"),
+                                                    ("boundaries", "boundary_accuracy"))]
+    blocks = [(n, b) for n, b in blocks if b]
+    if not blocks:
+        return []
+    L = ["", "## Investigator and event boundaries", "",
+         "Judged on events with verdict `real` only, answers yes / no (na and blanks excluded). "
+         "Investigator: the animal named in `investigator_label` is the one sniffing (N2AG, N2B) or following (FOL). "
+         "Boundaries: start and end within about 0.2 s of where the reviewer would put them. "
+         "Accuracy = yes / (yes + no), Wilson 95% CI.", "",
+         "| check | type | n scored | yes | no | accuracy | 95% CI |", "|---|---|---|---|---|---|---|"]
+    for name, b in blocks:
+        for t, st in [("all", b["overall"])] + list(b["per_type"].items()):
+            ci = f"{_pct(st['ci_low'])}-{_pct(st['ci_high'])}" if st["ci_low"] is not None else "n/a"
+            L.append(f"| {name} | {t} | {st['n_scored']} | {st['n_yes']} | {st['n_no']} | "
+                     f"{_pct(st['accuracy'])} | {ci} |")
+    return L
+
+
 def render_md(s: Dict[str, Any]) -> str:
     """Markdown rendering of the summary."""
     L = ["# Validation summary", "",
@@ -1246,6 +1560,31 @@ def render_md(s: Dict[str, Any]) -> str:
               f"{_pct(rp['miss_rate'])} | {ci} | {'n/a' if rp['n_near_windows'] is None else rp['n_near_windows']} |", ""]
         L.append("Missed contacts by type: " + (", ".join(f"{c} x{n}" for c, n in rp["missed_by_type"].items())
                                                  if rp["missed_by_type"] else "none") + ".")
+    L += _render_accuracy_md(s)
+    bp = s.get("bout_precision")
+    if bp and bp["n_bouts_with_events"]:
+        ci = f"{_pct(bp['ci_low'])}-{_pct(bp['ci_high'])}" if bp["ci_low"] is not None else "n/a"
+        L += ["", "## Investigation-bout precision", "",
+              "N2N, N2AG and N2B events merged per pair (`investigation_bouts.csv`). Every reviewed event is "
+              "mapped to the bout of its pair that overlaps it. A bout is *real* when each of its reviewed events "
+              "is real, or a type confusion inside N2N / N2AG / N2B; *false* when one is a flicker, a tracking "
+              "error or really SBS / FOL / NC; *incomplete* (an event without a usable verdict) is excluded. "
+              "Precision = real / (real + false), Wilson 95% CI. Bouts without a reviewed event were not sampled.", "",
+              "| bouts with reviewed events | scored | real | false | incomplete | precision | 95% CI |",
+              "|---|---|---|---|---|---|---|",
+              f"| {bp['n_bouts_with_events']} of {bp['n_bouts_total']} | {bp['n_bouts_scored']} | {bp['n_real']} | "
+              f"{bp['n_false']} | {bp['n_incomplete']} | {_pct(bp['precision'])} | {ci} |", ""]
+        false = [b for b in bp["bouts"] if b["status"] == "false"]
+        L.append("False bouts: " + (", ".join(f"{b['pair_label']} frames {b['start_frame']}-{b['end_frame']} "
+                                              f"({'/'.join(b['sample_ids'])})" for b in false) if false else "none") + ".")
+    ic = s.get("identity_check")
+    if ic:
+        L += ["", "## Identity persistence", "",
+              f"Identity persistence: {ic['n_checkpoints_ok']}/{ic['n_checkpoints']} checkpoints ok "
+              f"(every animal `yes`); {ic['n_ok']}/{ic['n_checked']} animal checks ok, {ic['n_no']} no, "
+              f"{ic['n_unsure']} unsure; {ic['n_animals']} animals. "
+              + ("; ".join(f"{a} swapped or lost at {t}" for a, t in ic["first_failure_time_per_animal"].items())
+                 if ic["first_failure_time_per_animal"] else "No swap or loss reported") + "."]
     L += ["", "## Precision if only events with duration >= d were kept", "",
           "| d (s) | n kept | precision | 95% CI |", "|---|---|---|---|"]
     for g in s["min_duration_grid"]:
@@ -1430,20 +1769,291 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def resolve_run(review: Path, run_arg: Optional[str] = None) -> Tuple[Path, Dict[str, Any]]:
+    """Run directory a review.xlsx belongs to, plus the manifest.json next to it ({} if none).
+
+    Order: --run, the manifest's run_dir when it exists on this machine (a manifest written on
+    Bunya names a path that is not there after the download), else the folder above the review's.
+    """
+    manifest: Dict[str, Any] = {}
+    mp = review.parent / "manifest.json"
+    if mp.exists():
+        try:
+            manifest = json.loads(mp.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not read %s: %s", mp, exc)
+    if run_arg:
+        return Path(run_arg).resolve(), manifest
+    rd = manifest.get("run_dir")
+    if rd and Path(str(rd)).is_dir():
+        return Path(str(rd)), manifest
+    return review.parent.parent, manifest
+
+
+def load_bout_precision(run: Path, manifest: Dict[str, Any], review: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    """bout_precision of a review table against <run>/contacts/investigation_bouts.csv (None, with a
+    warning, when the file is missing or unusable)."""
+    p = run / "contacts" / "investigation_bouts.csv"
+    if not p.exists():
+        logger.warning("%s not found: investigation-bout precision not computed "
+                       "(re-run postprocess_contacts_simple.py, or pass --run <run_dir>)", p)
+        return None
+    bouts = pd.read_csv(p)
+    if not {"pair_key", "start_frame", "end_frame"} <= set(bouts.columns):
+        logger.warning("%s lacks pair_key / start_frame / end_frame: investigation-bout precision not computed", p)
+        return None
+    fps = float(manifest["fps"]) if isinstance(manifest.get("fps"), (int, float)) else find_fps(run, None)
+    return bout_precision(review, bouts, fps)
+
+
+def find_identity_xlsx(review: Path, run: Path) -> Optional[Path]:
+    """identity.xlsx written by `identity`: next to the review (validation/identity/) or under the run."""
+    for p in (review.parent / "identity" / "identity.xlsx", run / "validation" / "identity" / "identity.xlsx"):
+        if p.exists():
+            return p
+    return None
+
+
 def cmd_score(args: argparse.Namespace, overrides: List[str]) -> int:
     """Run the `score` subcommand."""
     cfg = load_config(overrides)
-    path = Path(args.review)
-    df = pd.read_excel(path, sheet_name="review")
-    df = df[df["verdict"].notna()]
-    if df.empty:
+    path = Path(args.review).resolve()
+    full = pd.read_excel(path, sheet_name="review")
+    df = full[full["verdict"].notna()]
+    run, manifest = resolve_run(path, getattr(args, "run", None))
+    ident = None
+    ip = find_identity_xlsx(path, run)
+    if ip is not None:
+        ident = identity_check(pd.read_excel(ip, sheet_name="identity"))
+    if df.empty and ident is None:
         logger.error("No verdicts filled in %s", path)
         return 1
     s = compute_summary(df, cfg)
+    s["bout_precision"] = load_bout_precision(run, manifest, full) if len(df) else None
+    s["identity_check"] = ident
     (path.parent / "validation_summary.json").write_text(json.dumps(s, indent=2, default=str))
     (path.parent / "validation_summary.md").write_text(render_md(s), encoding="utf-8")
     plot_precision(s, path.parent / "validation_precision.png")
     logger.info("Scored %d reviewed samples -> %s", s["n_reviewed"], path.parent)
+    return 0
+
+
+# --------------------------------------------------------------------------- identity persistence
+def identity_checkpoints(nframes: int, fps: float, every_sec: float, max_n: int) -> List[int]:
+    """Checkpoint frames at 0, every_sec, 2 * every_sec, ... (< nframes), at most max_n of them.
+
+    A session with more checkpoints than max_n keeps max_n of them spread evenly over the
+    session (always the first and the last one); max_n <= 0 means no cap.
+    """
+    step = max(float(every_sec) * fps, 1.0)
+    frames: List[int] = []
+    k = 0
+    while int(round(k * step)) < nframes:
+        frames.append(int(round(k * step)))
+        k += 1
+    if max_n and max_n > 0 and len(frames) > max_n:
+        pick = np.unique(np.round(np.linspace(0, len(frames) - 1, int(max_n))).astype(int))
+        frames = [frames[i] for i in pick]
+    return frames
+
+
+def find_raw_video(run: Path) -> Optional[Path]:
+    """Raw video named by video_path in config_used.yaml (as is, then relative to the repository, then
+    under data/raw/); None if it is not on this machine."""
+    try:
+        import yaml
+        vp = (yaml.safe_load((run / "config_used.yaml").read_text(encoding="utf-8")) or {}).get("video_path")
+    except Exception:  # noqa: BLE001  missing file or bad yaml
+        return None
+    if not vp:
+        return None
+    for p in (Path(str(vp)), _PROJECT_ROOT / str(vp), _PROJECT_ROOT / "data" / "raw" / Path(str(vp)).name):
+        if p.is_file():
+            return p
+    return None
+
+
+def animal_centroids(rows: pd.DataFrame) -> Dict[int, Tuple[int, int]]:
+    """{animal slot: (x, y) centroid pixel} of one frame from its per-pair rows.
+
+    Every pair row carries the centroids of both animals, so any pair that includes an animal
+    gives its centroid; animals without a valid centroid in the frame are left out.
+    """
+    out: Dict[int, Tuple[int, int]] = {}
+    for _, row in rows.iterrows():
+        si, sj = _pair_slots(row["pair_key"])
+        for slot, kx, ky in ((si, "centroid_i_x", "centroid_i_y"), (sj, "centroid_j_x", "centroid_j_y")):
+            if slot is not None and slot not in out:
+                p = _px(row, kx, ky)
+                if p is not None:
+                    out[slot] = p
+    return out
+
+
+def draw_identity(frame: np.ndarray, centroids: Dict[int, Tuple[int, int]],
+                  colors: List[Tuple[int, int, int]], t: float, fidx: int) -> np.ndarray:
+    """Dot and large R<n> label at each animal's centroid, plus a time stamp (in place).
+
+    Independent of the labels the overlay video burns in: they come from the per-frame table.
+    """
+    import cv2
+    h = frame.shape[0]
+    scale = max(1.0, h / 640.0)
+    r = int(round(9 * scale))
+    for slot, (x, y) in sorted(centroids.items()):
+        col = tuple(int(c) for c in colors[slot % len(colors)])
+        cv2.circle(frame, (x, y), r + 2, (0, 0, 0), -1, cv2.LINE_AA)
+        cv2.circle(frame, (x, y), r, col, -1, cv2.LINE_AA)
+        _put(frame, slot_label(slot), (x + r + 4, y - r - 4), 0.9 * scale, col, max(2, int(round(2 * scale))))
+    _put(frame, f"identity check  t={fmt_time(t)}  frame {fidx}", (8, h - 10), 0.6 * scale, (255, 255, 255),
+         max(1, int(round(scale))))
+    return frame
+
+
+def write_identity_xlsx(records: List[Dict[str, Any]], slots: List[int], path: Path) -> None:
+    """identity.xlsx: one row per (checkpoint, animal) with a yes / no / unsure dropdown, plus Instructions."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    cols = ["time", "frame", "image", "animal", "identity_ok", "notes"]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "identity"
+    ws.append(cols)
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="305496")
+    for rec in records:
+        for slot in slots:
+            ws.append([rec["time"], rec["frame"], rec["image"], slot_label(slot), None,
+                       None if slot in rec["drawn"] else "not drawn: no centroid for this animal in this frame"])
+            cell = ws.cell(row=ws.max_row, column=cols.index("image") + 1)
+            cell.hyperlink = rec["image"]
+            cell.font = Font(color="0563C1", underline="single")
+    ws.freeze_panes = "A2"
+    for letter, width in (("A", 10), ("B", 9), ("C", 28), ("D", 8), ("E", 13), ("F", 60)):
+        ws.column_dimensions[letter].width = width
+    dv = DataValidation(type="list", formula1='"' + ",".join(IDENTITY_VERDICTS) + '"', allow_blank=True)
+    ws.add_data_validation(dv)
+    dv.add(f"E2:E{max(ws.max_row, 2)}")
+    ins = wb.create_sheet("Instructions")
+    text = [
+        "Identity check instructions",
+        "Each row is ONE animal at ONE checkpoint. Open the image of the row (or identity.html): every animal",
+        "carries a large label R1..R6 drawn from the tracker's own centroid, in its overlay colour.",
+        "Fill in identity_ok for every row, including the first checkpoint (time 00:00.0), which is the reference.",
+        "",
+        "yes: the label on this animal is the same individual as at time 0. Compare with the previous checkpoint:",
+        "     same coat marks, size, scars or tail, and the animal has not changed places with another one.",
+        "no: swapped or lost - the label sits on another individual, or on nothing. Write in 'notes' which",
+        "     animal it is now (for example 'R3 is now on the animal that was R5').",
+        "unsure: cannot be decided from the image; excluded from the counts of yes / no.",
+        "A row 'not drawn' in notes means the tracker had no centroid for the animal in that frame: answer no",
+        "if the animal is visible in the image, unsure otherwise.",
+        "After the first no for an animal, judge the later checkpoints against time 0 as well, not against the",
+        "swapped label.",
+        "",
+        "Do not edit time, frame, image or animal. 'notes' is optional except for a no.",
+    ]
+    for t in text:
+        ins.append([t])
+    ins["A1"].font = Font(bold=True, size=13)
+    ins.column_dimensions["A"].width = 120
+    wb.save(path)
+
+
+def write_identity_html(records: List[Dict[str, Any]], slots: List[int],
+                        colors: List[Tuple[int, int, int]], path: Path, title: str) -> None:
+    """identity.html: a contact sheet, one card per checkpoint (image, time, row of animal labels)."""
+    esc = html.escape
+    cards = []
+    for k, rec in enumerate(records, 1):
+        chips = []
+        for slot in slots:
+            b, g, r = (int(c) for c in colors[slot % len(colors)])
+            miss = slot not in rec["drawn"]
+            chips.append(f'<span class="chip{" miss" if miss else ""}" style="--c:rgb({r},{g},{b})">'
+                         f'{esc(slot_label(slot))}{" (not drawn)" if miss else ""}</span>')
+        cards.append(f'<div class="card"><h3>{esc(rec["time"])} <span class="n">frame {rec["frame"]} &middot; '
+                     f'checkpoint {k} of {len(records)}</span></h3>'
+                     f'<a href="{esc(rec["image"])}"><img loading="lazy" src="{esc(rec["image"])}" '
+                     f'alt="identity check at {esc(rec["time"])}"></a><div>{"".join(chips)}</div></div>')
+    doc = f"""<!doctype html><html><head><meta charset="utf-8"><title>{esc(title)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{{--bg:#fff;--fg:#1a1a1a;--card:#f3f4f6;--acc:#305496}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#151515;--fg:#eee;--card:#242424;--acc:#8fb0ee}}}}
+body{{background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;margin:16px}}
+#g{{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px}}
+.card{{background:var(--card);border-radius:8px;padding:10px}}.card img{{width:100%;display:block}}
+.card h3{{margin:0 0 6px}}.n{{font-weight:normal;font-size:13px;opacity:.7}}
+.chip{{display:inline-block;margin:6px 6px 0 0;padding:2px 10px;border-radius:12px;font-weight:600;
+border:3px solid var(--c);color:var(--fg)}}.chip.miss{{border-style:dashed;opacity:.6}}</style></head><body>
+<h1>{esc(title)}</h1><p>{len(records)} checkpoints. Each animal carries its tracker label (R1..R6) at its centroid.
+For every animal ask: is this the same individual as at time 0 (compare with the previous checkpoint)?
+Record the answer per animal in <code>identity.xlsx</code>: yes, no (swapped or lost; note who it is now) or unsure.</p>
+<div id="g">{''.join(cards)}</div></body></html>"""
+    path.write_text(doc, encoding="utf-8")
+
+
+def cmd_identity(args: argparse.Namespace, overrides: List[str]) -> int:
+    """Run the `identity` subcommand: checkpoint images with per-animal labels + identity.xlsx / .html."""
+    import cv2
+    cfg = load_config(overrides)
+    ic = cfg.get("identity") or {}
+    every = float(args.every if args.every is not None else ic.get("every_sec", 60))
+    max_n = int(args.max if args.max is not None else ic.get("max_frames", 40))
+    if every <= 0:
+        logger.error("--every must be > 0 (got %s)", every)
+        return 1
+    run = Path(args.run_dir).resolve()
+    out = Path(args.out) if args.out else run / "validation" / "identity"
+    pf = load_per_frame(run)
+    if pf is None or "pair_key" not in pf.columns:
+        logger.error("No per-frame table (contacts_per_frame.csv or the PerFrame sheet of results.xlsx) under %s", run)
+        return 1
+    try:
+        video = find_overlay(run)
+    except FileNotFoundError:
+        video = find_raw_video(run)
+        if video is None:
+            logger.error("No overlay video in %s/overlays and no raw video from config_used.yaml", run)
+            return 1
+        logger.warning("No overlay video; using the raw video %s", video)
+    fps = find_fps(run, video)
+    cap = cv2.VideoCapture(str(video))
+    nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames = identity_checkpoints(nframes, fps, every, max_n)
+    if not frames:
+        logger.error("Video %s has no frames", video)
+        return 1
+    out.mkdir(parents=True, exist_ok=True)
+    colors = overlay_colors(run)
+    pf = pf.assign(frame_idx=pd.to_numeric(pf["frame_idx"], errors="coerce"))
+    slots = sorted({s for k in pf["pair_key"].astype(str).unique() for s in _pair_slots(k) if s is not None})
+    sel = pf[pf["frame_idx"].isin(frames)]
+    by_frame = {int(f): g for f, g in sel.groupby("frame_idx")}
+    records: List[Dict[str, Any]] = []
+    for f in frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+        ok, fr = cap.read()
+        if not ok:
+            logger.warning("Could not read frame %d of %s; checkpoint skipped", f, video.name)
+            continue
+        t = f / fps
+        cen = animal_centroids(by_frame[f]) if f in by_frame else {}
+        name = f"identity_{t:07.2f}s.png"
+        cv2.imwrite(str(out / name), draw_identity(fr, cen, colors, t, f))
+        records.append({"time": fmt_time(t), "frame": f, "image": name, "drawn": sorted(cen)})
+        logger.info("t=%s frame %d: %d of %d animals drawn", fmt_time(t), f, len(cen), len(slots))
+    cap.release()
+    if not records:
+        logger.error("No checkpoint frame could be read")
+        return 1
+    write_identity_xlsx(records, slots, out / "identity.xlsx")
+    write_identity_html(records, slots, colors, out / "identity.html", f"Identity check - {run.name}")
+    logger.info("Wrote %d checkpoints (every %g s, max %d) for %d animals to %s",
+                len(records), every, max_n, len(slots), out)
     return 0
 
 
@@ -1469,10 +2079,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     sc.add_argument("review", nargs="?")
     sc.add_argument("--compare", nargs=2, metavar=("REVIEW_A", "REVIEW_B"),
                     help="inter-rater agreement (Cohen's kappa) of two filled review.xlsx files")
+    sc.add_argument("--run", help="run directory holding contacts/investigation_bouts.csv (default: from "
+                                  "manifest.json next to the review, else the folder above it)")
+    idp = sub.add_parser("identity", help="checkpoint images with per-animal labels, to check that identities persist")
+    idp.add_argument("run_dir")
+    idp.add_argument("--every", type=float, help="seconds between checkpoints (default identity.every_sec = 60)")
+    idp.add_argument("--max", type=int, help="most checkpoints, spread evenly (default identity.max_frames = 40)")
+    idp.add_argument("--out", help="output folder (default <run>/validation/identity)")
     args, extra = ap.parse_known_args(argv)
     overrides = [e for e in extra if "=" in e]
     if args.cmd == "sample":
         return cmd_sample(args, overrides)
+    if args.cmd == "identity":
+        return cmd_identity(args, overrides)
     if args.compare and args.review and "=" in args.review and not Path(args.review).exists():
         overrides.append(args.review)  # a key=value override argparse took for the positional
         args.review = None

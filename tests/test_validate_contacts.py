@@ -369,3 +369,409 @@ def test_score_needs_exactly_one_of_review_and_compare(tmp_path):
         vc.main(["score"])
     with pytest.raises(SystemExit):
         vc.main(["score", str(tmp_path / "a.xlsx"), "--compare", "x.xlsx", "y.xlsx"])
+
+# ------------------------------------------------------------------ investigator, boundaries, bouts, identity
+def _ev_series(sid, pk, ct, a, b, inv=np.nan):
+    """An event row as `sample` hands it to _event_row (investigator_slot is the pair slot, 0-based)."""
+    return pd.Series({"sample_id": sid, "pair_key": pk, "contact_type": ct, "start_frame": a, "end_frame": b,
+                      "n_frames": b - a + 1, "duration_sec": (b - a + 1) / FPS, "peak_score": 0.9,
+                      "duration_tertile": "short", "investigator_slot": inv})
+
+
+def test_review_prefill_names_the_investigator_and_marks_the_rest_na():
+    n2ag = vc.review_prefill(_ev_series("S01.1", "1_2", "N2AG", 10, 40, inv=2))
+    assert n2ag == {"investigator_label": "R3", "investigator_ok": None, "boundaries_ok": None}
+    assert vc.review_prefill(_ev_series("S01.2", "1_2", "FOL", 10, 40, inv=1.0))["investigator_label"] == "R2"
+    n2n = vc.review_prefill(_ev_series("S01.3", "0_1", "N2N", 10, 40))
+    assert n2n == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": None}
+    assert vc.review_prefill(_ev_series("S01.4", "0_1", "SBS", 10, 40, inv=0))["investigator_ok"] == "na"
+    unknown = vc.review_prefill(_ev_series("S01.5", "0_1", "N2B", 10, 40, inv=np.nan))
+    assert unknown["investigator_label"] is None and unknown["investigator_ok"] == "na"
+    stray = vc.review_prefill(_ev_series("S01.6", "0_1", "N2B", 10, 40, inv=4))      # not one of the pair
+    assert stray["investigator_label"] is None and stray["investigator_ok"] == "na"
+    nc = vc.review_prefill(_ev_series("N01.1", "0_1", "NC", 10, 40))
+    assert nc == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na"}
+    assert vc.investigator_arrow(_ev_series("x", "1_2", "N2AG", 1, 2, inv=2)) == "R3->R2"
+    assert vc.investigator_arrow(_ev_series("x", "1_2", "N2N", 1, 2)) == ""
+
+
+def test_review_workbook_has_the_investigator_and_boundary_columns(tmp_path):
+    from openpyxl import load_workbook
+    evs = [_ev_series("S01.1", "1_2", "N2AG", 10, 40, inv=2), _ev_series("S01.2", "0_1", "N2N", 50, 80),
+           _ev_series("N01.1", "0_1", "NC", 100, 189)]
+    rows = [{**vc._event_row(e, None, FPS), "clip": "clips/S01.mp4", "thumbnail": "t.png", "in_sample": True}
+            for e in evs]
+    p = tmp_path / "review.xlsx"
+    vc.write_review_xlsx(rows, p, speed=0.5)
+    wb = load_workbook(p)
+    ws = wb["review"]
+    head = [c.value for c in ws[1]]
+    i = head.index("correct_type")
+    assert head[i:i + 5] == ["correct_type", "investigator_label", "investigator_ok", "boundaries_ok", "reviewer"]
+    assert head[-1] == "notes" and {"start_frame", "end_frame"} <= set(head)
+    got = {r[head.index("sample_id")].value: {c: r[head.index(c)].value for c in
+                                              ("investigator_label", "investigator_ok", "boundaries_ok")}
+           for r in ws.iter_rows(min_row=2)}
+    assert got["S01.1"] == {"investigator_label": "R3", "investigator_ok": None, "boundaries_ok": None}
+    assert got["S01.2"] == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": None}
+    assert got["N01.1"] == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na"}
+    lists = [dv.formula1 for dv in ws.data_validations.dataValidation]
+    assert lists.count('"yes,no,na"') == 2
+    text = "\n".join(str(c.value) for c in wb["Instructions"]["A"])
+    assert "investigator_ok" in text and "boundaries_ok" in text and "0.2 s" in text
+    assert "recording times" in text and "0.5× speed" in text and "scrub the player to clip_from" in text
+    back = pd.read_excel(p, sheet_name="review")           # what `score` reads: 'na' must survive pandas
+    assert list(back.loc[back["sample_id"] == "S01.2", "investigator_ok"]) == ["na"]
+
+
+def _accuracy_rows():
+    """Real events with investigator / boundary answers, plus rows that must not count."""
+    def r(sid, ct, v, inv, bnd, in_sample=True):
+        return {"sample_id": sid, "contact_type": ct, "verdict": v, "investigator_ok": inv, "boundaries_ok": bnd,
+                "in_sample": in_sample, "duration_sec": 0.5, "peak_score": 0.9, "duration_tertile": "short"}
+    return [r("S01.1", "N2AG", "real", "yes", "yes"), r("S01.2", "N2AG", "real", "yes", "no"),
+            r("S01.3", "N2AG", "real", "no", "yes"), r("S01.4", "N2B", "real", "yes", "yes"),
+            r("S01.5", "FOL", "real", "yes", "yes"), r("S01.6", "FOL", "real", "no", "no"),
+            r("S01.7", "N2N", "real", "na", "yes"), r("S01.8", "SBS", "real", "na", "no"),
+            r("S01.9", "N2AG", "flicker", "no", "no"),              # not real: ignored
+            r("S01.10", "N2AG", "real", None, None),                # not answered: ignored
+            r("S01.11", "N2AG", "real", "no", "no", in_sample=False)]  # extra: stays out, like precision
+
+
+def test_investigator_and_boundary_accuracy():
+    s = vc.compute_summary(pd.DataFrame(_accuracy_rows()), vc.DEFAULT_CONFIG)
+    inv, bnd = s["investigator_accuracy"], s["boundary_accuracy"]
+    assert (inv["overall"]["n_scored"], inv["overall"]["n_yes"], inv["overall"]["n_no"]) == (6, 4, 2)
+    assert inv["overall"]["accuracy"] == pytest.approx(4 / 6)
+    lo, hi = vc.wilson_ci(4, 6)
+    assert inv["overall"]["ci_low"] == pytest.approx(lo) and inv["overall"]["ci_high"] == pytest.approx(hi)
+    assert set(inv["per_type"]) == {"N2AG", "N2B", "FOL"}              # N2N / SBS have no investigator
+    assert inv["per_type"]["N2AG"]["accuracy"] == pytest.approx(2 / 3) and inv["per_type"]["N2B"]["accuracy"] == 1.0
+    assert inv["per_type"]["FOL"]["accuracy"] == 0.5
+    assert (bnd["overall"]["n_scored"], bnd["overall"]["n_yes"]) == (8, 5)
+    assert bnd["overall"]["accuracy"] == pytest.approx(5 / 8)
+    assert set(bnd["per_type"]) == {"N2AG", "N2B", "FOL", "N2N", "SBS"}
+    assert bnd["per_type"]["N2AG"]["accuracy"] == pytest.approx(2 / 3) and bnd["per_type"]["SBS"]["accuracy"] == 0.0
+    md = vc.render_md(s)
+    assert "## Investigator and event boundaries" in md and "| investigator | N2AG | 3 | 2 | 1 | 67% |" in md
+    assert "| boundaries | all | 8 | 5 | 3 | 62% |" in md
+
+
+def test_accuracy_is_none_without_answers():
+    rows = [{k: v for k, v in r.items() if k not in ("investigator_ok", "boundaries_ok")}
+            for r in _accuracy_rows()]
+    s = vc.compute_summary(pd.DataFrame(rows), vc.DEFAULT_CONFIG)           # an older review file
+    assert s["investigator_accuracy"] is None and s["boundary_accuracy"] is None
+    assert "Investigator and event boundaries" not in vc.render_md(s)
+    blank = pd.DataFrame([{**r, "investigator_ok": None, "boundaries_ok": None} for r in _accuracy_rows()])
+    assert vc.compute_summary(blank, vc.DEFAULT_CONFIG)["boundary_accuracy"] is None
+
+
+def test_bout_status_rules():
+    def rows(*vc_pairs):
+        return [pd.Series({"verdict": v, "correct_type": c}) for v, c in vc_pairs]
+    assert vc._bout_status(rows(("real", None), ("real", None))) == "real"
+    assert vc._bout_status(rows(("real", None), ("wrong_type", "N2B"))) == "real"        # sub-type confusion
+    assert vc._bout_status(rows(("real", None), ("flicker", None))) == "false"
+    assert vc._bout_status(rows(("real", None), ("tracking_error", None))) == "false"
+    for ct in ("SBS", "FOL", "NC"):
+        assert vc._bout_status(rows(("real", None), ("wrong_type", ct))) == "false"
+    assert vc._bout_status(rows(("real", None), (None, None))) == "incomplete"
+    assert vc._bout_status(rows(("real", None), ("unsure", None))) == "incomplete"
+    assert vc._bout_status(rows(("real", None), ("wrong_type", None))) == "incomplete"
+    assert vc._bout_status(rows((None, None), ("flicker", None))) == "false"             # a failure wins
+
+
+def _bout_run(tmp_path, with_frames=True, with_csv=True, hpc_manifest=True):
+    """A run folder with investigation_bouts.csv, a manifest naming a path that does not exist (as after a
+    download from Bunya) and a filled review: one real bout, one false, one incomplete, one not sampled."""
+    run = tmp_path / "run"
+    (run / "contacts").mkdir(parents=True)
+    (run / "validation").mkdir()
+    if with_csv:
+        pd.DataFrame([
+            {"bout_id": 0, "pair_key": "0_1", "pair_label": "R1-R2", "start_frame": 10, "end_frame": 60},
+            {"bout_id": 1, "pair_key": "0_1", "pair_label": "R1-R2", "start_frame": 100, "end_frame": 140},
+            {"bout_id": 2, "pair_key": "0_1", "pair_label": "R1-R2", "start_frame": 200, "end_frame": 230},
+            {"bout_id": 3, "pair_key": "0_2", "pair_label": "R1-R3", "start_frame": 10, "end_frame": 60},
+        ]).to_csv(run / "contacts" / "investigation_bouts.csv", index=False)
+    if hpc_manifest:
+        (run / "validation" / "manifest.json").write_text(
+            json.dumps({"run_dir": "/home/uqcvaras/computer-vision-tracking/outputs/runs/x", "fps": 30.0}))
+    spec = [  # sample_id, type, pair, first frame, last frame, verdict, correct_type
+        ("S01.1", "N2AG", "R1-R2", 10, 30, "real", None), ("S01.2", "N2B", "R1-R2", 31, 60, "wrong_type", "N2AG"),
+        ("S02.1", "N2N", "R1-R2", 100, 120, "real", None), ("S02.2", "N2AG", "R1-R2", 121, 140, "flicker", None),
+        ("S03.1", "N2AG", "R1-R2", 200, 215, "real", None), ("S03.2", "N2B", "R1-R2", 216, 230, None, None),
+        ("S04.1", "SBS", "R1-R2", 61, 99, "real", None),            # not investigation: never mapped to a bout
+        ("S05.1", "N2N", "R2-R3", 10, 60, "real", None),            # no bout of the pair 1_2: unmapped
+        ("N01.1", "NC", "R1-R2", 300, 389, "nc_correct", None)]
+    recs = []
+    for sid, ct, pl, a, b, v, c in spec:
+        rec = {"sample_id": sid, "clip": "clips/x.mp4", "pair_label": pl, "contact_type": ct, "in_sample": True,
+               "start_time": vc.fmt_time(a / FPS), "end_time": vc.fmt_time((b + 1) / FPS),
+               "duration_sec": (b - a + 1) / FPS, "duration_frames": b - a + 1, "duration_tertile": "short",
+               "peak_score": 0.9}
+        if with_frames:
+            rec.update(start_frame=a, end_frame=b)
+        recs.append(rec)
+    p = run / "validation" / "review.xlsx"
+    vc.write_review_xlsx(recs, p)
+    df = pd.read_excel(p, sheet_name="review")
+    df["verdict"] = [r[5] for r in spec]
+    df["correct_type"] = [r[6] for r in spec]
+    with pd.ExcelWriter(p) as w:
+        df.to_excel(w, sheet_name="review", index=False)
+    return run, p
+
+
+@pytest.mark.parametrize("with_frames", [True, False])
+def test_bout_precision_from_the_run_next_to_the_review(tmp_path, with_frames):
+    run, p = _bout_run(tmp_path, with_frames=with_frames)       # False: an older file, frames from the times
+    assert vc.main(["score", str(p)]) == 0
+    s = json.loads((run / "validation" / "validation_summary.json").read_text())
+    bp = s["bout_precision"]
+    assert (bp["n_bouts_scored"], bp["n_real"], bp["n_false"], bp["n_incomplete"]) == (2, 1, 1, 1)
+    assert bp["precision"] == pytest.approx(0.5)
+    lo, hi = vc.wilson_ci(1, 2)
+    assert bp["ci_low"] == pytest.approx(lo) and bp["ci_high"] == pytest.approx(hi)
+    assert (bp["n_bouts_total"], bp["n_bouts_with_events"], bp["n_rows_unmapped"]) == (4, 3, 1)
+    status = {b["start_frame"]: b["status"] for b in bp["bouts"]}
+    assert status == {10: "real", 100: "false", 200: "incomplete"}
+    md = (run / "validation" / "validation_summary.md").read_text()
+    assert "## Investigation-bout precision" in md and "| 3 of 4 | 2 | 1 | 1 | 1 | 50% |" in md
+    assert "S02.1/S02.2" in md                                   # the false bout is named
+
+
+def test_bout_precision_with_run_override_and_missing_csv(tmp_path, caplog):
+    run, p = _bout_run(tmp_path, with_csv=False, hpc_manifest=False)
+    with caplog.at_level("WARNING"):
+        assert vc.main(["score", str(p)]) == 0
+    s = json.loads((run / "validation" / "validation_summary.json").read_text())
+    assert s["bout_precision"] is None and "Investigation-bout" not in (run / "validation" / "validation_summary.md").read_text()
+    assert any("investigation_bouts.csv" in m for m in caplog.messages)
+    assert s["per_type"]["N2AG"]["n_reviewed"] == 3              # everything else scored as before
+    other, _ = _bout_run(tmp_path / "elsewhere")                 # a run that has the csv; the review is elsewhere
+    moved = tmp_path / "moved" / "review.xlsx"
+    moved.parent.mkdir()
+    moved.write_bytes(p.read_bytes())
+    assert vc.main(["score", str(moved), "--run", str(other)]) == 0
+    assert json.loads((moved.parent / "validation_summary.json").read_text())["bout_precision"]["n_real"] == 1
+
+
+def test_resolve_run_prefers_an_existing_manifest_dir(tmp_path):
+    review = tmp_path / "run" / "validation" / "review.xlsx"
+    review.parent.mkdir(parents=True)
+    assert vc.resolve_run(review)[0] == tmp_path / "run"
+    (review.parent / "manifest.json").write_text(json.dumps({"run_dir": "/no/such/run", "fps": 25.0}))
+    run, manifest = vc.resolve_run(review)
+    assert run == tmp_path / "run" and manifest["fps"] == 25.0
+    other = tmp_path / "other"
+    other.mkdir()
+    (review.parent / "manifest.json").write_text(json.dumps({"run_dir": str(other)}))
+    assert vc.resolve_run(review)[0] == other
+    assert vc.resolve_run(review, str(tmp_path / "run"))[0] == (tmp_path / "run").resolve()
+
+
+def test_score_still_works_on_a_review_without_the_new_columns(tmp_path):
+    """An older review.xlsx has neither the new columns nor start_frame / end_frame."""
+    verdicts = ["real", "real", "flicker", "unsure"]
+    rows = [{"sample_id": f"V{i + 1:03d}", "clip": "c.mp4", "pair_label": "R1-R2", "contact_type": "N2AG",
+             "start_time": "00:00.0", "end_time": "00:01.0", "duration_sec": 0.5, "duration_frames": 15,
+             "duration_tertile": "short", "peak_score": 0.8, "in_sample": True} for i in range(4)]
+    run = tmp_path / "run"
+    (run / "validation").mkdir(parents=True)
+    p = run / "validation" / "review.xlsx"
+    vc.write_review_xlsx(rows, p)
+    df = pd.read_excel(p, sheet_name="review").drop(columns=["investigator_label", "investigator_ok",
+                                                             "boundaries_ok", "start_frame", "end_frame"],
+                                                    errors="ignore")
+    df["verdict"] = verdicts
+    with pd.ExcelWriter(p) as w:
+        df.to_excel(w, sheet_name="review", index=False)
+    assert "investigator_ok" not in pd.read_excel(p, sheet_name="review").columns
+    assert vc.main(["score", str(p)]) == 0
+    s = json.loads((run / "validation" / "validation_summary.json").read_text())
+    assert s["per_type"]["N2AG"]["n_real"] == 2 and s["per_type"]["N2AG"]["precision"] == pytest.approx(2 / 3)
+    assert s["investigator_accuracy"] is None and s["boundary_accuracy"] is None
+    assert s["bout_precision"] is None and s["identity_check"] is None
+
+
+def test_index_html_puts_the_clip_position_before_the_video_time(tmp_path):
+    rows = [{"sample_id": "S01.11", "scene_id": "S01", "clip": "clips/S01.mp4", "contact_type": "N2AG",
+             "pair_label": "R4-R6", "investigator_label": "R6", "start_time": "00:04.9", "end_time": "00:05.3",
+             "clip_from": "00:09.8", "clip_to": "00:10.5", "duration_sec": 0.37, "duration_tertile": "short",
+             "peak_score": 0.94, "in_sample": True},
+            {"sample_id": "S01.12", "scene_id": "S01", "clip": "clips/S01.mp4", "contact_type": "SBS",
+             "pair_label": "R1-R2", "start_time": "00:06.1", "end_time": "00:06.5", "clip_from": "00:12.1",
+             "clip_to": "00:12.9", "duration_sec": 0.4, "duration_tertile": "short", "peak_score": 0.6,
+             "in_sample": True}]
+    p = tmp_path / "index.html"
+    vc.write_index_html(rows, p, "t", speed=0.5)
+    doc = p.read_text(encoding="utf-8")
+    line = next(x for x in doc.split("<li>") if x.startswith("<b>S01.11"))
+    assert line.index("clip ") < line.index("video ")
+    assert "R4-R6 (R6 &rarr; R4)" in line
+    assert "clip 00:09.8&ndash;00:10.5 (0.5× speed)" in line and "video 00:04.9&ndash;00:05.3" in line
+    assert "0.37 s, short" in line and "peak 0.94" in line
+    sbs = next(x for x in doc.split("<li>") if x.startswith("<b>S01.12"))
+    assert "&rarr;" not in sbs                                           # symmetric type: no investigator
+    assert ("Clips play at 0.5× speed: 'clip' times are what the player shows, "
+            "'video' times are the original recording times.") in doc
+    vc.write_index_html(rows, p, "t")                                    # normal speed: no speed claim
+    doc1 = p.read_text(encoding="utf-8")
+    assert "×" not in doc1 and "clip times" not in doc1 and "'clip' times are what the player shows" in doc1
+
+
+def test_identity_checkpoints():
+    assert vc.identity_checkpoints(3600, 30.0, 60, 40) == [0, 1800]
+    assert vc.identity_checkpoints(3601, 30.0, 60, 40) == [0, 1800, 3600]
+    assert vc.identity_checkpoints(10, 5.0, 0.2, 40) == list(range(10))
+    long = vc.identity_checkpoints(30 * 60 * 120, 30.0, 60, 40)           # 2 h every minute = 120 > 40
+    assert len(long) == 40 and long[0] == 0 and long[-1] == 30 * 60 * 119
+    assert all(b > a for a, b in zip(long, long[1:]))
+    assert len(vc.identity_checkpoints(30 * 60 * 120, 30.0, 60, 0)) == 120    # no cap
+    assert vc.identity_checkpoints(0, 30.0, 60, 40) == []
+
+
+def test_identity_config_merges_partial_sections():
+    cfg = vc.load_config([])
+    assert cfg["identity"] == {"every_sec": 60, "max_frames": 40}
+    cfg = vc.load_config(["identity.every_sec=30"])
+    assert cfg["identity"] == {"every_sec": 30, "max_frames": 40}
+
+
+def _identity_run(tmp_path, n=10, fps=5):
+    """Run folder with an overlay video (n gray 128x128 frames) and a results.xlsx PerFrame sheet of 3 animals;
+    in frame 5 animal 3 (R3) has no centroid."""
+    cv2 = pytest.importorskip("cv2")
+    run = tmp_path / "run"
+    (run / "overlays").mkdir(parents=True)
+    (run / "contacts").mkdir()
+    wr = cv2.VideoWriter(str(run / "overlays" / "cutie_composite_test.avi"), cv2.VideoWriter_fourcc(*"MJPG"),
+                         fps, (128, 128))
+    assert wr.isOpened()
+    for _ in range(n):
+        wr.write(np.full((128, 128, 3), 128, np.uint8))
+    wr.release()
+    cen = {0: (30, 30), 1: (98, 30), 2: (64, 80)}
+    recs = []
+    for f in range(n):
+        for pk, (i, j) in (("0_1", (0, 1)), ("0_2", (0, 2)), ("1_2", (1, 2))):
+            ci, cj = cen[i], cen[j]
+            if f == 5 and 2 in (i, j):
+                if i == 2:
+                    ci = (-1, -1)
+                if j == 2:
+                    cj = (-1, -1)
+            recs.append({"frame_idx": f, "pair_key": pk, "contact_type": "NC", "centroid_i_x": ci[0],
+                         "centroid_i_y": ci[1], "centroid_j_x": cj[0], "centroid_j_y": cj[1]})
+    with pd.ExcelWriter(run / "contacts" / "results.xlsx") as w:
+        pd.DataFrame(recs).to_excel(w, sheet_name="PerFrame", index=False)
+    return run, cen
+
+
+def test_identity_writes_checkpoint_images_html_and_workbook(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    run, cen = _identity_run(tmp_path)
+    assert vc.main(["identity", str(run), "--every", "1"]) == 0           # 5 fps, 10 frames: frames 0 and 5
+    d = run / "validation" / "identity"
+    pngs = sorted(p.name for p in d.glob("identity_*.png"))
+    assert pngs == ["identity_0000.00s.png", "identity_0001.00s.png"]
+    img = cv2.imread(str(d / pngs[0]))
+    assert img.shape == (128, 128, 3)
+    red, green, blue = (0, 0, 255), (0, 255, 0), (255, 0, 0)               # BGR overlay colours of R1..R3
+    for slot, col in enumerate((red, green, blue)):
+        x, y = cen[slot]
+        assert tuple(int(c) for c in img[y, x]) == col                     # the dot sits on the centroid
+    img5 = cv2.imread(str(d / pngs[1]))
+    assert max(abs(int(c) - 128) for c in img5[80, 64]) <= 3               # R3 has no centroid in frame 5: skipped
+    assert tuple(int(c) for c in img5[30, 30]) == red
+    page = (d / "identity.html").read_text(encoding="utf-8")
+    assert all(n in page for n in pngs) and "R1" in page and "R3 (not drawn)" in page
+    from openpyxl import load_workbook
+    wb = load_workbook(d / "identity.xlsx")
+    ws = wb["identity"]
+    assert [c.value for c in ws[1]] == ["time", "frame", "image", "animal", "identity_ok", "notes"]
+    rows = [[c.value for c in r] for r in ws.iter_rows(min_row=2)]
+    assert len(rows) == 2 * 3                                              # checkpoints x animals
+    assert [r[3] for r in rows[:3]] == ["R1", "R2", "R3"] and [r[0] for r in rows[::3]] == ["00:00.0", "00:01.0"]
+    assert [r[1] for r in rows[::3]] == [0, 5] and all(r[4] is None for r in rows)
+    assert "not drawn" in rows[5][5] and rows[2][5] is None
+    assert any(dv.formula1 == '"yes,no,unsure"' for dv in ws.data_validations.dataValidation)
+    assert "same individual as at time 0" in "\n".join(str(c.value) for c in wb["Instructions"]["A"])
+    assert vc.main(["identity", str(run), "--every", "0.2", "--max", "3", "--out", str(tmp_path / "o")]) == 0
+    assert len(list((tmp_path / "o").glob("*.png"))) == 3
+
+
+def test_identity_falls_back_to_the_raw_video(tmp_path):
+    run, _ = _identity_run(tmp_path)
+    (run / "overlays" / "cutie_composite_test.avi").rename(tmp_path / "raw.avi")
+    assert vc.main(["identity", str(run), "--every", "1"]) == 1             # no overlay, no usable video_path
+    (run / "config_used.yaml").write_text(f"video_path: {(tmp_path / 'raw.avi').as_posix()}\n")
+    assert vc.main(["identity", str(run), "--every", "1"]) == 0
+    assert len(list((run / "validation" / "identity").glob("*.png"))) == 2
+
+
+def _identity_table(verdicts):
+    """(time, animal) -> verdict rows for 3 checkpoints x 2 animals."""
+    times = ["00:00.0", "01:00.0", "02:00.0"]
+    return pd.DataFrame([{"time": t, "frame": k, "image": f"i{k}.png", "animal": a, "identity_ok": verdicts.get((t, a)),
+                          "notes": None} for k, t in enumerate(times) for a in ("R1", "R2")])
+
+
+def test_identity_check_summary():
+    assert vc.identity_check(_identity_table({})) is None                   # nothing filled in yet
+    ok = {(t, a): "yes" for t in ("00:00.0", "01:00.0", "02:00.0") for a in ("R1", "R2")}
+    ok[("01:00.0", "R2")] = "no"
+    ok[("02:00.0", "R2")] = "no"
+    ok[("02:00.0", "R1")] = "unsure"
+    ic = vc.identity_check(_identity_table(ok))
+    assert (ic["n_checkpoints"], ic["n_checkpoints_ok"], ic["n_animals"]) == (3, 1, 2)
+    assert (ic["n_checked"], ic["n_ok"], ic["n_no"], ic["n_unsure"]) == (6, 3, 2, 1)
+    assert ic["first_failure_time_per_animal"] == {"R2": "01:00.0"}
+    partial = vc.identity_check(_identity_table({("00:00.0", "R1"): "yes", ("00:00.0", "R2"): "yes"}))
+    assert (partial["n_checkpoints"], partial["n_checkpoints_ok"]) == (1, 1)    # unfilled rows are not counted
+
+
+def test_score_reports_identity_persistence(tmp_path):
+    run, p = _bout_run(tmp_path)
+    d = run / "validation" / "identity"
+    d.mkdir()
+    tbl = _identity_table({(t, a): "yes" for t in ("00:00.0", "01:00.0", "02:00.0") for a in ("R1", "R2")})
+    tbl.loc[(tbl["time"] == "02:00.0") & (tbl["animal"] == "R2"), "identity_ok"] = "no"
+    with pd.ExcelWriter(d / "identity.xlsx") as w:
+        tbl.to_excel(w, sheet_name="identity", index=False)
+    assert vc.main(["score", str(p)]) == 0
+    s = json.loads((run / "validation" / "validation_summary.json").read_text())
+    ic = s["identity_check"]
+    assert (ic["n_checkpoints"], ic["n_checkpoints_ok"], ic["n_no"]) == (3, 2, 1)
+    assert ic["first_failure_time_per_animal"] == {"R2": "02:00.0"}
+    md = (run / "validation" / "validation_summary.md").read_text()
+    assert "Identity persistence: 2/3 checkpoints ok" in md and "R2 swapped or lost at 02:00.0" in md
+
+
+def test_bouts_source_falls_back_to_diagnostics_xlsx(tmp_path):
+    """--source bouts: contact_bouts.csv, else Bouts of diagnostics.xlsx, else Bouts of results.xlsx (old runs)."""
+    def bouts(tag):
+        return pd.DataFrame([{"pair_key": "0_1", "contact_type": "N2N", "start_frame": 10, "end_frame": 40,
+                              "duration_sec": 1.0, "peak_score": 0.9, "tag": tag}])
+
+    def book(path, **sheets):
+        with pd.ExcelWriter(path) as w:
+            for name, df in sheets.items():
+                df.to_excel(w, sheet_name=name, index=False)
+
+    cdir = tmp_path / "contacts"
+    cdir.mkdir()
+    book(cdir / "results.xlsx", Summary=pd.DataFrame({"a": [1]}))            # consolidated: no Bouts sheet
+    with pytest.raises(FileNotFoundError):
+        vc.load_events(tmp_path, source="bouts")
+    book(cdir / "diagnostics.xlsx", Bouts=bouts("diagnostics"), Dynamics=pd.DataFrame({"a": [1]}))
+    ev, src = vc.load_events(tmp_path, source="bouts")
+    assert src == "bouts" and list(ev["tag"]) == ["diagnostics"] and list(ev["contact_type"]) == ["N2N"]
+    bouts("csv").to_csv(cdir / "contact_bouts.csv", index=False)               # the csv still wins
+    assert list(vc.load_events(tmp_path, source="bouts")[0]["tag"]) == ["csv"]
+    old = tmp_path / "old"                                                    # a run from before the split
+    (old / "contacts").mkdir(parents=True)
+    book(old / "contacts" / "results.xlsx", Bouts=bouts("results"))
+    assert list(vc.load_events(old, source="bouts")[0]["tag"]) == ["results"]
