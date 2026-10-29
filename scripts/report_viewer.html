@@ -565,7 +565,6 @@ details.params[open] summary::before { transform: rotate(90deg); }
       perFrame: perFrame,
       isV2: isV2,
       byType: sheet(wb, "ByType"),
-      dynamics: sheet(wb, "Dynamics"),
       summary: sheet(wb, "Summary"),
       global: sheet(wb, "Global"),
       params: params,
@@ -575,13 +574,40 @@ details.params[open] summary::before { transform: rotate(90deg); }
   }
 
   // ── stat tiles ──────────────────────────────────────────────────────────
+  // Time with at least one pair in contact: the frames in which any pair carries a contact
+  // type other than NC and FOL (union over pairs), from PerFrame. Uses the post-processed
+  // real_type column when present, else contact_type; the same rule as the ANY row of Summary.
+  function anyContact(d) {
+    var pf = d.perFrame;
+    if (!pf || !pf.length || !(d.duration > 0)) return null;
+    var col = pf[0].hasOwnProperty("real_type") ? "real_type"
+            : pf[0].hasOwnProperty("contact_type") ? "contact_type" : null;
+    if (!col || !pf[0].hasOwnProperty("frame_idx")) return null;
+    var frames = {}, n = 0;
+    pf.forEach(function (r) {
+      var t = String(r[col] == null ? "" : r[col]).trim().toUpperCase();
+      if (t === "" || t === "NC" || t === "NONE" || t === "NAN" || t === "FOL") return;
+      if (!frames[r.frame_idx]) { frames[r.frame_idx] = true; n++; }
+    });
+    var sec = n / d.fps;
+    return { sec: sec, pct: sec / d.duration * 100 };
+  }
+
   function renderStats(d) {
     var contact = d.events.filter(function (e) { return e.type !== "NC"; });
     var contactSec = contact.reduce(function (a, e) { return a + e.dur; }, 0);
-    var pct = d.duration > 0 ? (contactSec / d.duration * 100) : 0;
 
     var g = {};
     (d.global || []).forEach(function (r) { if (has(r.metric)) g[r.metric] = r.value; });
+
+    // Contact time is summed over pairs (one event row per pair), so its share is of pair-time
+    // (session x pairs): the TOTAL row of Summary. Without that row, derive it from n_pairs.
+    var total = (d.summary || []).filter(function (r) {
+      return String(r.contact_type == null ? "" : r.contact_type).toUpperCase() === "TOTAL"; })[0];
+    var pctPair = total && has(total.pct_of_session) ? num(total.pct_of_session)
+                : (has(g.n_pairs) && num(g.n_pairs) > 0 && d.duration > 0
+                   ? contactSec / (d.duration * num(g.n_pairs)) * 100 : null);
+    var any = anyContact(d);
 
     var flicker = null;
     if (has(g.raw_bouts_total) && has(g.real_events_total)) {
@@ -591,7 +617,8 @@ details.params[open] summary::before { transform: rotate(90deg); }
 
     var tiles = [
       { k: "Session duration", v: fmtTime(d.duration), sub: d.fps.toFixed(0) + " fps" },
-      { k: "Contact time",     v: fmtDur(contactSec),  sub: pct.toFixed(1) + "% of session" },
+      { k: "Contact time",     v: fmtDur(contactSec),
+        sub: "pair-seconds (summed over pairs)" + (pctPair === null ? "" : " · " + pctPair.toFixed(1) + "% of pair-time") },
       { k: "Contact events",   v: String(contact.length), sub: ORDER.filter(function (t) {
           return contact.some(function (e) { return e.type === t; }); }).length + " types present" },
       { k: "Longest event",    v: contact.length ? fmtDur(Math.max.apply(null, contact.map(function (e) { return e.dur; }))) : "—",
@@ -599,12 +626,12 @@ details.params[open] summary::before { transform: rotate(90deg); }
           var m = contact.reduce(function (a, b) { return b.dur > a.dur ? b : a; });
           return m.type + " at " + fmtTime(m.start); })() : "no contact detected" }
     ];
+    if (any !== null) {
+      tiles.splice(2, 0, { k: "Time with any contact", v: fmtDur(any.sec),
+                           sub: any.pct.toFixed(1) + "% of session · at least one pair, FOL excluded" });
+    }
     if (flicker !== null) {
       tiles.push({ k: "Raw bouts removed", v: flicker.toFixed(0) + "%", sub: g.raw_bouts_total + " raw → " + contact.length + " clean", flag: flicker > 60 });
-    }
-    if (d.dynamics && d.dynamics.length) {
-      tiles.push({ k: "Approach / avoid", v: String(d.dynamics.length),
-                   sub: "episodes without contact" });
     }
 
     $("stats").innerHTML = "";
@@ -831,7 +858,7 @@ details.params[open] summary::before { transform: rotate(90deg); }
     var tb = document.createElement("tbody");
     d.byType.forEach(function (r) {
       var t = String(r.contact_type || "").toUpperCase();
-      if (t === "NC" && !state.showNC) return;
+      if (t === "NC") return;   // older workbooks listed no-contact here; it has no raw bouts to compare
       var tr = document.createElement("tr");
       var c1 = document.createElement("td");
       var sp = document.createElement("span"); sp.className = "typecell";
@@ -1043,7 +1070,7 @@ details.params[open] summary::before { transform: rotate(90deg); }
   });
   $("show-nc").addEventListener("change", function (e) {
     state.showNC = e.target.checked;
-    if (current) { renderEthogram(current); renderLegend(current); renderImpact(current); renderEvents(current); }
+    if (current) { renderEthogram(current); renderLegend(current); renderEvents(current); }
   });
 
   var resizeTimer;

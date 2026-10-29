@@ -405,7 +405,7 @@ scores while the tracker ran is fixed in this table. Varying these needs a new t
 - **Score internals**: the per-type ramps and weights, the orientation and alignment factors,
   `follow_min_speed_bls`, `follow_alignment_cos`, `sbs_latch_min_dist_score`, `mask_contact_dilate_px`.
 - **The tracker's own bout filter** (`bout_max_gap_frames`, `bout_min_frames_*`): it only feeds the
-  `Bouts` sheet, a diagnostic view; reported events come from the post-processing rules varied here.
+  `Bouts` sheet of `diagnostics.xlsx`, a diagnostic view; reported events come from the post-processing rules varied here.
 - **Upstream of the table**: keypoint model, masks and identity tracking.
 - `secondary_threshold` does not change any count (it only annotates ambiguous frames).
 """

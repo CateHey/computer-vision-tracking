@@ -16,8 +16,9 @@ outputs/runs/<YYYY-MM-DD_HHMMSS>_cutie_composite/
 ├── logs/
 │   └── run.log
 └── contacts/                     # only when contacts.enabled=true
-    ├── results.xlsx              # every table, one workbook  <-- the file to keep
-    ├── report.pdf                # 8-page PDF
+    ├── results.xlsx              # the reported tables, one workbook  <-- the file to keep
+    ├── diagnostics.xlsx          # tracker diagnostics: not validated, not for reporting
+    ├── report.pdf                # 8-page PDF (the tracker's own diagnostic output)
     ├── event_log.txt             # human-readable event list
     └── reports/
         ├── timeline_comparison.png
@@ -27,8 +28,9 @@ outputs/runs/<YYYY-MM-DD_HHMMSS>_cutie_composite/
 ```
 
 The per-run tables used to be six separate CSV and two JSON files. They are now
-consolidated into a single `results.xlsx` at the end of the run, and the source files
-are removed. Pass `--no_consolidate` to
+consolidated into `results.xlsx` (the reported tables) and `diagnostics.xlsx` (the
+tracker diagnostics) at the end of the run, and the source files are removed. Pass
+`--no_consolidate` to
 [scripts/postprocess_contacts_simple.py](../scripts/postprocess_contacts_simple.py) to
 keep them instead.
 
@@ -50,22 +52,45 @@ Two kinds, both for visual validation:
 
 ## 3.2 The data tables
 
-Everything lives in `results.xlsx`, one table per sheet.
+The tables are split over two workbooks by one rule: `results.xlsx` holds only tables whose
+numbers the clip-review validation (`scripts/validate_contacts.py`) can check, and
+`diagnostics.xlsx` holds the raw tracker tables that it does not. Both are written by the same
+call (`build_excel_report`).
+
+### `results.xlsx` (reported, every table is covered by the validation)
+
+One table per sheet, in this order:
 
 | Sheet | Rows | What it holds |
 |-------|------|---------------|
-| `Summary` | 6 | Headline numbers per contact type, plus a total row |
+| `Summary` | 7 | Headline numbers per contact type, a `TOTAL` row and an `ANY` row. For the type rows and `TOTAL`, `total_sec` is summed over pairs (pair-seconds) and `pct_of_session` is a share of pair-time (session x number of pairs). `ANY` ("Any contact (union over pairs)") is the time with at least one pair in contact, FOL excluded, with `events` blank and `pct_of_session` a share of the session; it needs the per-frame table |
 | `Events` | one per event | The cleaned behavioural events — **the reportable result** |
 | `PerAnimal` | one per animal | Events and contact time per animal against any partner, plus the same per session minute (`session_min`, `events_per_min`, `contact_sec_per_min`), and the investigation bouts of the animal's pairs (`n_investigation_bouts`, `investigation_bouts_per_min`); `per_animal_summary.csv`, see 05 §9) |
 | `PairMatrix` | one per pair of animals | Events by type, contact time (FOL excluded), `fol_sec`, `contact_pct_of_session` and rates per minute for every pair, including pairs with no events: the table behind the social-network figure (`pair_contact_matrix.csv`) |
 | `Investigation` | one per investigation bout | N2N, N2AG and N2B merged into one bout per pair (gaps of up to `investigation.max_gap` frames bridged), with `n2n_sec` / `n2ag_sec` / `n2b_sec` / `other_sec`, `dominant_type`, `n_subtype_switches`, `investigator_slot` and `peak_score` (`investigation_bouts.csv`, see 05 §7). Additional to `Events`, which is unchanged |
-| `PerFrame` | one per frame | Complete geometry with both raw and cleaned labels |
-| `Bouts` | one per bout | Bouts from `contacts_v2` (diagnostic) |
-| `Dynamics` | one per episode | Approach / avoid episodes **without** contact ("Hoja B") |
-| `Individual` | one per animal | Per-animal metrics — fixed, see 02 §2.6 C |
-| `ByType` | 7 | Raw versus cleaned, per contact type |
-| `Global` | 11 | Raw versus cleaned, session totals |
+| `PerFrame` | one per frame | Complete geometry with both raw and cleaned labels (raw per-frame data, not a claim) |
+| `ByType` | 5 | Raw versus cleaned, per contact type (N2N, N2AG, N2B, FOL, SBS). No `NC` row: no-contact spans are not events and have no raw bouts to compare |
+| `Global` | 13 | Raw versus cleaned, session totals. `raw_bouts_total` and `real_events_total` count contact types only, so `real_events_total` equals the `events` total of `Summary` and the contact rows of `Events`. `no_contact_sec` is the no-contact time, summed over pairs |
 | `Parameters` | varies | Every parameter actually applied, plus video provenance |
+
+### `diagnostics.xlsx` (tracker diagnostics, not validated, not for reporting)
+
+Written next to `results.xlsx`, only when at least one of these tables exists. Its first
+sheet, `README`, says so in one cell. The other sheets keep the content and columns they had
+when they were still in `results.xlsx`:
+
+| Sheet | Rows | What it holds |
+|-------|------|---------------|
+| `README` | 1 | "Diagnostic tables from the tracker (raw bouts, approach/avoid episodes, per-animal initiator statistics). Not validated by the clip review — not for reporting. The reported tables are in results.xlsx." |
+| `Bouts` | one per bout | Bouts straight from `contacts_v2`, with the voted `initiator` |
+| `Dynamics` | one per episode | Approach / avoid episodes **without** contact ("Hoja B"), with `mover` |
+| `Individual` | varies | Per-animal initiator statistics flattened from `individual_summary.json`; built from the tracker bouts and their `initiator`, a different basis from the validated `PerAnimal` sheet |
+
+Why they are apart: none of the three is a cleaned event table, so a clip review of `Events`
+says nothing about them (`PerAnimal` and `Individual` can disagree for the same animal because
+they count different things). Re-running the post-processing on a run that is already
+consolidated keeps them: they are read back from `diagnostics.xlsx`, or from the `Bouts`,
+`Dynamics` and `Individual` sheets of a `results.xlsx` written before the split.
 
 ### `PerFrame` — one row per frame per pair
 
@@ -94,7 +119,8 @@ unique `frame_idx`, never from row count.
 
 ### `Events` — the behavioural event table
 
-One row per cleaned event, covering the whole session including `NC` intervals:
+One row per cleaned event, covering the whole session including `NC` intervals (the validation
+samples its no-contact windows from them; count events with `contact_type != "NC"`):
 
 `event_id`, `start_time_sec`, `end_time_sec`, `duration_sec`, `start_time`, `end_time`,
 `duration` (all three human-readable as `MM:SS.d`), `contact_type`, `contact_label`
@@ -109,7 +135,10 @@ the event.
 The same events as plain text with timestamps — built for scrubbing to a time in the
 overlay video and confirming the label by eye. The header gives the contact distance in BL
 and cm, and an "Investigation bouts" block and a "Per-animal summary" block follow the summary
-by type.
+by type. The summary by type lists the no-contact intervals as `NC ... spans`, not as events,
+and "Raw bouts -> Real contact events" counts contact events only. The log is built from the
+cleaned events and carries none of the tracker diagnostics (approach/avoid episodes, initiator
+statistics): those are in `diagnostics.xlsx`.
 
 ### `Parameters` and the session-level numbers
 
@@ -143,6 +172,10 @@ Two report generators run, both with matplotlib. Neither requires a separate com
 both are invoked automatically at the end of a run.
 
 ### `report.pdf` — from `ContactTrackerV2.finalize()`
+
+`report.pdf` is the tracker's own diagnostic output. It is drawn from the raw tracker bouts
+and per-frame table, before the post-processing cleans them, so its counts are not the
+reported numbers and the clip review does not validate it. Report from `results.xlsx`.
 
 | Page | Figure | Reads |
 |------|--------|-------|
@@ -232,7 +265,8 @@ from the configured fallback of 30 — and which source was used is recorded in 
 
 Re-running works whether or not the run has already been consolidated: the per-frame table
 is read from `contacts_per_frame.csv` when it is there, and from the `PerFrame` sheet of
-`results.xlsx` when it is not.
+`results.xlsx` when it is not. The diagnostic tables of a consolidated run survive the re-run
+(see §3.2).
 
 ---
 
@@ -241,14 +275,20 @@ is read from `contacts_per_frame.csv` when it is there, and from the `PerFrame` 
 [scripts/report_viewer.html](../scripts/report_viewer.html) reads a `results.xlsx` and
 renders the session as a page. Open it, drop the workbook in, and it shows:
 
-- **Stat tiles** — session duration, total contact time and its share of the session,
-  event count, longest event, and the percentage of raw bouts removed by filtering
+- **Stat tiles** — session duration, contact time as pair-seconds summed over pairs with its
+  share of pair-time (the `TOTAL` row of `Summary`), time with any contact (the `ANY` row: frames
+  in which at least one pair is in contact, as seconds and as a share of the session), event
+  count, longest event, and the percentage of raw bouts removed by filtering
 - **Ethogram** — every event on a time axis, with the inter-rat distance trace underneath
   so it is visible *why* an event fired. Hovering gives the type and timecode; clicking
   jumps to that row in the event table
 - **Time by type** and **filtering impact** — the `ByType` and `Global` sheets as charts
 - **Event table** — searchable and filterable by type, with timecodes for scrubbing
 - **Parameters** — the full provenance, collapsed by default
+
+It reads `results.xlsx` only and needs just the `Events` sheet; a missing sheet only drops
+the part that needs it, it does not fail. It does not open `diagnostics.xlsx`, so approach/avoid
+episodes are not shown (there is no dynamics panel).
 
 The file is parsed in the browser and never uploaded anywhere. Contact-type colours match
 `contacts.py` and the PDF exactly, and every colour is paired with its label, so identity

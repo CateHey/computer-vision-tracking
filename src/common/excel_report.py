@@ -1,29 +1,38 @@
 """
-Consolidate the contact analysis outputs into a single Excel workbook.
+Consolidate the contact analysis outputs into two Excel workbooks.
 
-Replaces the scattered per-run CSV/JSON files with one results.xlsx holding
-every table as a separate sheet. This is the file the HTML report viewer reads
-and the file to archive for a session.
+Replaces the scattered per-run CSV/JSON files with results.xlsx (the reported
+tables, every one of them covered by the clip-review validation) and
+diagnostics.xlsx (raw tracker tables that the validation does not check). The
+HTML report viewer reads results.xlsx, which is also the file to archive for a
+session.
 
 Handles both contact modules: `contacts.py` (v1, 6 types incl. T2T) and
 `contacts_v2.py` (v2, 5 types, families, dynamics, individual metrics). The
 contact types are read from the data rather than assumed, and the v2-only
 sheets are added when their source files are present.
 
-Sheets (in order):
-    Summary     — headline session numbers, one row per contact type
-    Events      — cleaned behavioural events (the reportable result)
+results.xlsx sheets (in order):
+    Summary     — headline session numbers, one row per contact type, a TOTAL row
+                  (summed over pairs) and an ANY row (time with any contact, union
+                  over pairs)
+    Events      — cleaned behavioural events (the reportable result; keeps the
+                  no-contact rows the validation samples its NC windows from)
     PerAnimal   — events and contact time per animal, any partner     (v2 only)
     PairMatrix  — events and contact time per pair of animals, incl. empty pairs (v2 only)
     Investigation — N2N + N2AG + N2B merged into investigation bouts per pair (v2 only)
     PerFrame    — full per-frame geometry with raw + cleaned labels
-    Bouts       — inline bouts (diagnostic)
-    Dynamics    — approach / avoid episodes without contact   (v2 only)
-    Individual  — per-animal locomotion metrics               (v2 only)
-    ByType      — raw vs cleaned comparison per contact type
-    Global      — raw vs cleaned comparison, session totals
+    ByType      — raw vs cleaned comparison per contact type (contact types only)
+    Global      — raw vs cleaned comparison, session totals (contact types only)
     Parameters  — every parameter actually applied, flattened (incl. the
                   cm calibration of the contact thresholds)
+
+diagnostics.xlsx sheets (written only when at least one of them has data; not
+validated, not for reporting):
+    README      — one cell saying exactly that
+    Bouts       — tracker bouts, with the voted `initiator`
+    Dynamics    — approach / avoid episodes without contact, with `mover` (v2 only)
+    Individual  — per-animal initiator statistics from individual_summary.json (v2 only)
 
 Usage:
     from src.common.excel_report import build_excel_report
@@ -42,6 +51,16 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 WORKBOOK_NAME = "results.xlsx"
+DIAGNOSTICS_NAME = "diagnostics.xlsx"
+
+# Tables built from the raw tracker output. The clip-review validation checks the
+# cleaned events, not these, so they live apart from the reported workbook.
+DIAGNOSTIC_SHEETS = ("Bouts", "Dynamics", "Individual")
+DIAGNOSTICS_README = (
+    "Diagnostic tables from the tracker (raw bouts, approach/avoid episodes, "
+    "per-animal initiator statistics). Not validated by the clip review \u2014 not for "
+    "reporting. The reported tables are in results.xlsx."
+)
 
 # Excel hard limit is 1,048,576 rows. Stay clear of it.
 MAX_SHEET_ROWS = 1_000_000
@@ -107,6 +126,40 @@ def _read_json(path: Path) -> Dict[str, Any]:
     except Exception as e:
         logger.warning("Could not read %s: %s", path.name, e)
         return {}
+
+
+def _read_existing_sheets(path: Path, names) -> Dict[str, pd.DataFrame]:
+    """Read the named sheets of an existing workbook; {} if the file, or a sheet, is missing."""
+    if not path.exists():
+        return {}
+    try:
+        with pd.ExcelFile(path) as xl:
+            return {n: xl.parse(n) for n in names if n in xl.sheet_names}
+    except Exception as e:
+        logger.warning("Could not read %s from %s: %s", ", ".join(names), path.name, e)
+        return {}
+
+
+def _carry_diagnostics(
+    contacts_dir: Path, tables: Dict[str, Optional[pd.DataFrame]],
+) -> Dict[str, Optional[pd.DataFrame]]:
+    """Fill the diagnostic tables whose source files are gone from an earlier pass.
+
+    A previous consolidation deleted the source CSV/JSON. Recover those tables from
+    diagnostics.xlsx, or from the Bouts / Dynamics / Individual sheets that results.xlsx
+    carried before the two workbooks were split, so re-running the post-processing on a
+    consolidated run does not lose them. Must run before results.xlsx is rewritten.
+    """
+    missing = [n for n in DIAGNOSTIC_SHEETS if tables.get(n) is None]
+    for source in (DIAGNOSTICS_NAME, WORKBOOK_NAME):
+        if not missing:
+            break
+        found = _read_existing_sheets(contacts_dir / source, missing)
+        for name, df in found.items():
+            logger.info("Carrying forward the %s sheet from the existing %s", name, source)
+            tables[name] = df
+        missing = [n for n in missing if n not in found]
+    return tables
 
 
 def _flatten(obj: Any, prefix: str = "") -> List[Dict[str, Any]]:
@@ -250,17 +303,66 @@ def _resolve_types(
     return list(CONTACT_TYPES_V2)
 
 
+# Labels that are not a contact in the per-frame table ("none" is contacts_v2's raw label,
+# NC the post-processed one). FOL is a non-contact behaviour, so it is left out of ANY too.
+_NOT_CONTACT = {"", "NC", "NONE", "NAN", "FOL"}
+
+
+def _any_contact_row(
+    per_frame: Optional[pd.DataFrame],
+    summary: Dict[str, Any],
+    summary_real: Dict[str, Any],
+    total_sec: float,
+) -> Optional[Dict[str, Any]]:
+    """The ANY row of Summary: time with at least one pair in contact (union over pairs).
+
+    Counts the frames in which any pair carries a contact type other than NC and FOL, using
+    the post-processed `real_type` column when the table has it, else the raw `contact_type`.
+    None when the per-frame table, its columns or the session length are missing.
+    """
+    if per_frame is None or "frame_idx" not in per_frame.columns or not total_sec:
+        return None
+    col = "real_type" if "real_type" in per_frame.columns else "contact_type"
+    if col not in per_frame.columns:
+        return None
+
+    labels = per_frame[col].fillna("").astype(str).str.strip().str.upper()
+    in_contact = ~labels.isin(_NOT_CONTACT)
+    union_frames = int(per_frame.loc[in_contact, "frame_idx"].nunique())
+    session_frames = int(per_frame["frame_idx"].nunique())
+    if session_frames == 0:
+        return None
+
+    fps = (summary_real.get("metadata", {}).get("fps")
+           or summary.get("metadata", {}).get("fps")
+           or session_frames / total_sec)
+    union_sec = union_frames / float(fps)
+    return {
+        "contact_type": "ANY",
+        "contact_label": "Any contact (union over pairs)",
+        "events": "",
+        "total_sec": round(union_sec, 2),
+        "mean_duration_sec": "",
+        "pct_of_session": round(union_sec / total_sec * 100, 2),
+    }
+
+
 def _summary_sheet(
     summary: Dict[str, Any],
     summary_real: Dict[str, Any],
     events: Optional[pd.DataFrame],
     types: List[str],
+    per_frame: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Build the headline Summary sheet: one row per contact type.
+    """Build the headline Summary sheet: one row per contact type, TOTAL and ANY.
 
     Numbers come from the post-processed (cleaned) results, which are the
     reportable ones. Falls back to the events table if the summary JSON is
     missing.
+
+    The type rows and TOTAL are summed over pairs, and their pct_of_session is a share of
+    pair-time (session x number of pairs). ANY is the time with at least one pair in contact
+    (union over pairs, FOL excluded), and its pct_of_session is a share of the session.
     """
     events_by_type = summary_real.get("real_summary", {}).get("events_by_type", {})
     total_sec = summary_real.get("metadata", {}).get("total_duration_sec")
@@ -309,6 +411,10 @@ def _summary_sheet(
         "pct_of_session": round(sum(float(r["pct_of_session"] or 0) for r in rows), 2),
     })
 
+    any_row = _any_contact_row(per_frame, summary, summary_real, float(total_sec or 0))
+    if any_row is not None:
+        rows.append(any_row)
+
     return pd.DataFrame(rows)
 
 
@@ -329,15 +435,19 @@ def build_excel_report(
     contacts_dir: Path,
     replace_sources: bool = True,
 ) -> Optional[Path]:
-    """Consolidate a contacts directory into a single results.xlsx.
+    """Consolidate a contacts directory into results.xlsx and diagnostics.xlsx.
+
+    results.xlsx holds the reported tables; diagnostics.xlsx (README, Bouts,
+    Dynamics, Individual) holds the unvalidated tracker diagnostics and is written
+    in the same call, only when at least one of those tables has data.
 
     Args:
         contacts_dir: Directory holding the contact analysis outputs.
-        replace_sources: Delete the source CSV/JSON files once the workbook has
+        replace_sources: Delete the source CSV/JSON files once the workbooks have
             been written successfully. Set False to keep them alongside.
 
     Returns:
-        Path to the workbook, or None if it could not be built.
+        Path to results.xlsx, or None if it could not be built.
     """
     contacts_dir = Path(contacts_dir)
     reports_dir = contacts_dir / "reports"
@@ -365,14 +475,18 @@ def build_excel_report(
     per_animal = _read_csv(contacts_dir / "per_animal_summary.csv")   # v2 only
     pair_matrix = _read_csv(contacts_dir / "pair_contact_matrix.csv")   # v2 only
     investigation = _read_csv(contacts_dir / "investigation_bouts.csv")   # v2 only
-    bouts = _read_csv(contacts_dir / "contact_bouts.csv")
-    dynamics = _read_csv(contacts_dir / "dynamics_no_contact.csv")   # v2 only
+    diagnostics: Dict[str, Optional[pd.DataFrame]] = {
+        "Bouts": _read_csv(contacts_dir / "contact_bouts.csv"),
+        "Dynamics": _read_csv(contacts_dir / "dynamics_no_contact.csv"),   # v2 only
+        "Individual": None,   # filled below from individual_summary.json (v2 only)
+    }
     by_type = _read_csv(reports_dir / "comparison_by_type.csv")
     global_cmp = _read_csv(reports_dir / "comparison_global.csv")
 
     summary = _read_json(contacts_dir / "session_summary.json")
     summary_real = _read_json(contacts_dir / "session_summary_real.json")
-    individual = _individual_sheet(_read_json(contacts_dir / "individual_summary.json"))
+    diagnostics["Individual"] = _individual_sheet(
+        _read_json(contacts_dir / "individual_summary.json"))
 
     # A previous consolidation removed session_summary.json, so recover the
     # run-provenance rows from the workbook it wrote.
@@ -388,46 +502,85 @@ def build_excel_report(
         logger.warning("No contact tables found in %s — skipping Excel report", contacts_dir)
         return None
 
+    diagnostics = _carry_diagnostics(contacts_dir, diagnostics)
+
     types = _resolve_types(per_frame, events)
     logger.info("Contact taxonomy: %s (%d types)", ", ".join(types), len(types))
 
     sheets: List[tuple] = [
-        ("Summary", _summary_sheet(summary, summary_real, events, types)),
+        ("Summary", _summary_sheet(summary, summary_real, events, types, per_frame)),
         ("Events", events),
         ("PerAnimal", per_animal),
         ("PairMatrix", pair_matrix),
         ("Investigation", investigation),
         ("PerFrame", per_frame),
-        ("Bouts", bouts),
-        ("Dynamics", dynamics),
-        ("Individual", individual),
         ("ByType", by_type),
         ("Global", global_cmp),
         ("Parameters", _params_sheet(summary, summary_real, carried)),
     ]
 
     xlsx_path = contacts_dir / WORKBOOK_NAME
-    written: List[str] = []
+    written = _write_workbook(xlsx_path, sheets)
+    if written is None:
+        return None
+    logger.info("Excel report: %s — sheets: %s", xlsx_path, ", ".join(written))
 
+    # Diagnostics go to their own file, next to results.xlsx.
+    diagnostics_ok = True
+    if any(df is not None for df in diagnostics.values()):
+        diag_path = contacts_dir / DIAGNOSTICS_NAME
+        diag_written = _write_workbook(diag_path, [
+            ("README", pd.DataFrame({"README": [DIAGNOSTICS_README]})),
+            *[(name, diagnostics[name]) for name in DIAGNOSTIC_SHEETS],
+        ])
+        diagnostics_ok = diag_written is not None
+        if diagnostics_ok:
+            logger.info("Diagnostics: %s — sheets: %s", diag_path, ", ".join(diag_written))
+
+    if replace_sources:
+        if diagnostics_ok:
+            _remove_sources(contacts_dir, reports_dir)
+        else:
+            logger.warning("%s was not written — keeping the source files", DIAGNOSTICS_NAME)
+
+    return xlsx_path
+
+
+def _write_workbook(path: Path, sheets: List[tuple]) -> Optional[List[str]]:
+    """Write the non-None (name, DataFrame) sheets to one workbook.
+
+    Returns "name (rows)" for every sheet written, or None if the file could not be written.
+    """
+    written: List[str] = []
     try:
-        with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
             for name, df in sheets:
                 if df is None:
                     continue
                 df = _truncate(df, name)
                 df.to_excel(writer, sheet_name=name, index=False)
-                _autosize(writer.sheets[name], df)
+                ws = writer.sheets[name]
+                if name == "README":
+                    _format_readme(ws)
+                else:
+                    _autosize(ws, df)
                 written.append(f"{name} ({len(df)})")
     except Exception as e:
-        logger.warning("Could not write %s: %s", WORKBOOK_NAME, e)
+        logger.warning("Could not write %s: %s", path.name, e)
         return None
+    return written
 
-    logger.info("Excel report: %s — sheets: %s", xlsx_path, ", ".join(written))
 
-    if replace_sources:
-        _remove_sources(contacts_dir, reports_dir)
-
-    return xlsx_path
+def _format_readme(worksheet, width: int = 110) -> None:
+    """Wide, wrapped single column for the README sheet of diagnostics.xlsx."""
+    try:
+        from openpyxl.styles import Alignment
+    except ImportError:
+        return
+    worksheet.column_dimensions["A"].width = width
+    for row in worksheet.iter_rows(min_row=1, max_row=worksheet.max_row, max_col=1):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
 
 
 def _autosize(worksheet, df: pd.DataFrame, max_width: int = 42) -> None:
