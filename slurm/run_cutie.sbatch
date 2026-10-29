@@ -70,7 +70,7 @@ echo "Run: $RUN"
 grep -h -E "Handoff|carry-over|Total bouts" "$RUN"/logs/*.log || true
 
 # 2. Validation sample -> $RUN/validation/ (review.xlsx, index.html, clips/)
-python scripts/validate_contacts.py sample "$RUN" --per-type 15 || echo "No events to sample."
+python scripts/validate_contacts.py sample "$RUN" --per-type 15 --nc-per-run 20 || echo "No events to sample."
 
 # 3. Zip the whole run
 cd outputs/runs

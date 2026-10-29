@@ -224,7 +224,8 @@ gap of up to 3 frames of another label (`bout_max_gap_frames`) and is kept when 
 it has at least `bout_min_frames_<type>` frames: 6 for N2N, N2AG, SBS, N2B and 12 for FOL
 (`_close_bout`, line 1775). The bout's **initiator** is the majority of the frame-level
 investigator roles (`Bout.finalize_metrics`, line 452). Bouts go to `contact_bouts.csv`
-(`Bouts` sheet). They are a diagnostic view; the reportable events come from section 7.
+and to `diagnostics.xlsx` (sheet `Bouts`: tracker diagnostics, not validated). They are a diagnostic view; the
+reportable events come from section 7.
 
 ---
 
@@ -324,6 +325,48 @@ has one row per event with `clip_from` / `clip_to`. A reviewer marks each row `r
 precision that minimum-duration or minimum-score thresholds would give. Only the rows of
 the stratified sample enter those figures; events listed because they overlap a sampled
 one (`in_sample = FALSE`) are summarised apart, since they over-represent busy moments.
+The clips play at half speed, so every event is given two times: `start_time` / `end_time` are
+recording ("video") times, `clip_from` / `clip_to` are positions inside the clip. `index.html`
+lists the clip position first (`clip 00:09.8-00:10.5 (0.5x speed) · video 00:04.9-00:05.3`) and says so at the top of the page.
+
+**What the validation covers (updated 2026-10-29).** Each claim of the contact report is checked by a
+reviewer against the footage, and `score` turns the answers into one `validation_summary.{md,json}`:
+
+| Claim in the report | How it is checked | Figure in `score` |
+|---------------------|-------------------|-------------------|
+| An event of type T happened | verdict on a stratified sample (15 per type): `real`, `flicker`, `wrong_type` (+ `correct_type`), `tracking_error`, `unsure` | `per_type`: precision, Wilson 95 % CI; flicker rate by duration |
+| No contact where none is reported | 20 no-contact (NC) windows per run (`--nc-per-run 20`, set in `slurm/run_cutie.sbatch`): `nc_correct` / `missed_contact` | `recall_proxy`: miss rate with CI, missed types |
+| Who investigates (N2AG, N2B; the follower for FOL) | `investigator_label` is prefilled from `investigator_slot` and shown as `R2 → R3` in `index.html` and the clip banner; the reviewer answers `investigator_ok` yes / no on real events (`na` is prefilled where there is no investigator) | `investigator_accuracy`, overall and per type: yes / (yes + no), Wilson CI |
+| When an event starts and ends | `boundaries_ok` yes / no: start and end within about 0.2 s of where the reviewer would put them | `boundary_accuracy`, overall and per type |
+| Investigation bouts (N2N + N2AG + N2B merged per pair, §7) | no extra review: every reviewed N2N / N2AG / N2B event is mapped to the bout of its pair that overlaps its frames (`investigation_bouts.csv`) | `bout_precision` |
+| The labels stay on the same animal over a long session | `identity` subcommand: a labelled frame every 60 s, `identity_ok` yes / no / unsure per animal and checkpoint | `identity_check` |
+| Two people reach the same verdict | `score --compare` on two filled `review.xlsx` | Cohen's kappa |
+
+- *Investigator and boundaries.* Both are answered per row, but only the rows with verdict `real` count
+  (a flicker has no investigator or boundaries to judge) and only yes / no (`na` and blanks are left out);
+  like precision they use the stratified sample, not the `in_sample = FALSE` extras. The accuracy is yes / (yes + no)
+  with a Wilson 95 % interval, over all events (boundaries) or the asymmetric types (investigator) and per type.
+  A review file from before 2026-10-29 has neither column and scores as it always did (both figures null).
+- *Investigation-bout precision.* `score` finds the run from `manifest.json` (`run_dir`, if that folder exists on
+  the machine, else the folder above `validation/`; `--run` overrides) and reads `contacts/investigation_bouts.csv`.
+  A bout is **real** when every reviewed event in it is `real`, or `wrong_type` with `correct_type` N2N / N2AG / N2B
+  (a sub-type confusion inside an investigation does not make it false); **false** when one is `flicker`,
+  `tracking_error`, or `wrong_type` with `correct_type` SBS / FOL / NC; **incomplete** when none fails but one has no
+  verdict (blank, `unsure`, `wrong_type` without `correct_type`) and is left out. `bout_precision` = real / (real +
+  false) with a Wilson interval; bouts none of whose events was sampled are not counted (`n_bouts_with_events` of
+  `n_bouts_total`). If the file is missing, `bout_precision` is null and a warning is logged.
+- *Identity persistence.* A swap is the one error that invalidates every per-animal figure, and the event clips
+  (a few seconds each) cannot show it, so `validate_contacts.py identity <run> [--every 60] [--max 40]`
+  (`identity.every_sec`, `identity.max_frames` in `configs/validation.yaml`) writes
+  `<run>/validation/identity/`: `identity_<t>.png` for t = 0, 60 s, 120 s ... (at most 40, spread evenly over a
+  longer session), taken from the overlay video (the raw video if there is none), with each animal's label `R<n>`
+  drawn large at its centroid from the `PerFrame` sheet (independent of the small labels the overlay burns in;
+  animals without a centroid in that frame are skipped and flagged); `identity.html`, a contact sheet; and
+  `identity.xlsx` with one row per checkpoint and animal. The reviewer answers `identity_ok` = `yes` (same
+  individual as at time 0), `no` (swapped or lost; note who it is now) or `unsure`. `score` reads the file when it
+  exists and reports `identity_check`: checkpoints ok (every animal `yes`), animal checks yes / no / unsure and the
+  first `no` per animal ("R3 swapped or lost at 12:00.0"). One check per minute is a sample, not proof: a swap that
+  is undone within a minute is not seen.
 
 **Recall, inter-rater agreement and provenance (added 2026-10-28).**
 

@@ -310,6 +310,22 @@ defective (pre-2026-09-30) behaviour for comparison. Old `demo_as_shipped` /
    (e.g. `outputs/2026-07-28_*`) used wrong keypoint names, could not fire SBS, and
    mixed pairs in post-processing — re-run it
    ([02 §2.6](02_contact_detection.md#26-defects-found-and-fixed-2026-09-30)).
+10. **Run the identity check** for any session longer than a few minutes
+    (`python scripts/validate_contacts.py identity outputs/runs/<run> --every 60`). It writes
+    `validation/identity/identity.html` (one labelled frame per minute, at most 40, each mouse
+    carrying a large `R<n>` drawn from the tracker's centroids) and `identity.xlsx`. For every
+    mouse and checkpoint fill `identity_ok`: `yes` = same individual as at time 0, `no` = swapped
+    or lost (note who it is now), `unsure`. `score` reports the checkpoints that passed and the
+    first swap per mouse. This replaces the eyeball check of item 1 for long sessions.
+11. **Review the sampled events** (`validate_contacts.py sample`, which the Bunya job runs with 20
+    no-contact windows) and fill, per row of `validation/review.xlsx`: `verdict` (and
+    `correct_type`), `investigator_ok` (`yes` / `no` / `na`: the mouse named in `investigator_label`
+    is the one sniffing or following; prefilled `na` where there is no investigator) and
+    `boundaries_ok` (`yes` / `no` / `na`: the event starts and ends within about 0.2 s of where you
+    would put it; prefilled `na` for no-contact windows). `start_time` / `end_time` are recording
+    times, `clip_from` / `clip_to` positions inside the half-speed clip. `score` turns them into
+    precision, miss rate, investigator and boundary accuracy and investigation-bout precision
+    ([05 §9](05_contact_computation.md#9-evidence-that-the-computation-did-what-this-says)).
 
 ---
 

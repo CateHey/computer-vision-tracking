@@ -14,3 +14,6 @@ nc_near_bl: 1.0         # windows where the pair's centroid distance drops below
 duration_bins: [0.3, 0.5, 1.0, 2.0]        # seconds; edges for flicker-rate bins
 score_grid: [0.0, 0.5, 0.6, 0.7, 0.8, 0.9]  # peak_score thresholds for precision table
 duration_grid: [0.0, 0.2, 0.3, 0.5, 1.0, 2.0]  # minimum-duration thresholds (s)
+identity:               # `validate_contacts.py identity <run>`: do the labels stay on the same animal over a long session?
+  every_sec: 60         # seconds between checkpoint frames (CLI --every, or identity.every_sec=30)
+  max_frames: 40        # most checkpoints; a longer session is sampled evenly (CLI --max)
