@@ -996,6 +996,13 @@ def _count_raw_bouts(types: np.ndarray, groups=None) -> Dict[str, int]:
     return counts
 
 
+def count_contact_events(events_df: pd.DataFrame) -> int:
+    """Number of contact events: NC rows are the absence of contact, not events."""
+    if events_df is None or len(events_df) == 0:
+        return 0
+    return int((events_df["contact_type"] != "NC").sum())
+
+
 def _count_raw_duration_frames(types: np.ndarray) -> Dict[str, int]:
     """Total de pares-frame por tipo de contacto."""
     counts = {ct: 0 for ct in CONTACT_TYPES}
@@ -1241,7 +1248,7 @@ def write_event_log(
     raw_bouts = _count_raw_bouts(raw_types, groups)
     raw_bouts_total = sum(raw_bouts.values())
     # Exclude NC events from comparison (raw data has no NC)
-    real_contact_events = len(events_df[events_df["contact_type"] != "NC"]) if len(events_df) > 0 else 0
+    real_contact_events = count_contact_events(events_df)
     nc_spans = len(events_df) - real_contact_events
 
     # Contact time excludes following (a non-contact behaviour); it is reported apart.
@@ -1320,8 +1327,9 @@ def write_event_log(
         ct_events = events_df[events_df["contact_type"] == ct] if len(events_df) > 0 else pd.DataFrame()
         n_events = len(ct_events)
         label = TYPE_LABELS.get(ct, ct)
+        noun = "spans" if ct == "NC" else "events"   # NC is the gap between events, not an event
         if n_events == 0:
-            lines.append(f"  {ct:<4} ({label}): {n_events:>2} events")
+            lines.append(f"  {ct:<4} ({label}): {n_events:>2} {noun}")
             continue
 
         total_dur = ct_events["duration_sec"].sum()
@@ -1329,7 +1337,7 @@ def write_event_log(
         pct = total_dur / pair_sec * 100 if pair_sec > 0 else 0
 
         line = (
-            f"  {ct:<4} ({label}): {n_events:>2} events, "
+            f"  {ct:<4} ({label}): {n_events:>2} {noun}, "
             f"{format_duration(total_dur):>6} total ({pct:.1f}%), "
             f"mean {format_duration(mean_dur)}"
         )
@@ -1424,14 +1432,17 @@ def write_real_summary(
     min_bout_frames = max(1, round(min_bout_sec * fps))
 
     raw_bouts = _count_raw_bouts(raw_types, groups)
+    raw_bouts_total = sum(raw_bouts.values())
     raw_dur_frames = _count_raw_duration_frames(raw_types)
     raw_contact_frames = int(np.sum(raw_types != ""))
     real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC")))
     real_fol_frames = int(np.sum(real_types == "FOL"))
+    n_contact_events = count_contact_events(events_df)
+    nc_spans = events_df[events_df["contact_type"] == "NC"] if len(events_df) > 0 else pd.DataFrame()
 
-    # Per-type real summary
+    # Per-type real summary (contact types only: NC spans are not events)
     events_by_type = {}
-    for ct in ALL_EVENT_TYPES:
+    for ct in CONTACT_TYPES:
         ct_events = events_df[events_df["contact_type"] == ct] if len(events_df) > 0 else pd.DataFrame()
         n = len(ct_events)
         total_dur = float(ct_events["duration_sec"].sum()) if n > 0 else 0.0
@@ -1499,7 +1510,12 @@ def write_real_summary(
             # following is a non-contact behaviour: reported apart from contact time
             "total_contact_sec_excluding_fol": round((real_contact_frames - real_fol_frames) / fps, 2),
             "total_fol_sec": round(real_fol_frames / fps, 2),
-            "total_events": len(events_df),
+            "total_events": n_contact_events,
+            # the gaps between events, kept apart from the event counts above
+            "no_contact": {
+                "spans": len(nc_spans),
+                "total_sec": round(float(nc_spans["duration_sec"].sum()), 2) if len(nc_spans) else 0.0,
+            },
         },
         "per_animal": per_animal_json,
         "pair_matrix": pair_matrix_json,
@@ -1510,14 +1526,10 @@ def write_real_summary(
                 (raw_contact_frames - real_contact_frames) / raw_contact_frames * 100, 2
             ) if raw_contact_frames > 0 else 0.0,
             # Compare contact events only (NC is not in raw data)
-            "bouts_removed": sum(raw_bouts.values()) - (
-                len(events_df[events_df["contact_type"] != "NC"]) if len(events_df) > 0 else 0
-            ),
+            "bouts_removed": raw_bouts_total - n_contact_events,
             "bout_removal_rate_pct": round(
-                (sum(raw_bouts.values()) - (
-                    len(events_df[events_df["contact_type"] != "NC"]) if len(events_df) > 0 else 0
-                )) / sum(raw_bouts.values()) * 100, 2
-            ) if sum(raw_bouts.values()) > 0 else 0.0,
+                (raw_bouts_total - n_contact_events) / raw_bouts_total * 100, 2
+            ) if raw_bouts_total > 0 else 0.0,
         },
     }
 
@@ -1675,14 +1687,17 @@ def generate_reports(
     plt.close(fig)
     logger.info("Wrote events_by_type.png")
 
-    # ── Chart 4: Event duration distribution ──
-    n_types = len(ALL_EVENT_TYPES)
+    # ── Chart 4: Event duration distribution (contact events only) ──
+    contact_events_df = (
+        events_df[events_df["contact_type"] != "NC"] if len(events_df) > 0 else events_df
+    )
+    n_types = len(CONTACT_TYPES)
     n_cols = 3
     n_rows = math.ceil((n_types + 1) / n_cols)  # +1 for "All types"
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4 * n_rows), squeeze=False)
     fig.suptitle("Real Event Duration Distribution", fontsize=13)
 
-    for idx, ct in enumerate(ALL_EVENT_TYPES):
+    for idx, ct in enumerate(CONTACT_TYPES):
         row, col = divmod(idx, n_cols)
         ax = axes[row][col]
         ct_ev = events_df[events_df["contact_type"] == ct] if len(events_df) > 0 else pd.DataFrame()
@@ -1698,7 +1713,7 @@ def generate_reports(
     # "All types" in next available cell
     all_row, all_col = divmod(n_types, n_cols)
     ax = axes[all_row][all_col]
-    all_durations = events_df["duration_sec"].values if len(events_df) > 0 else []
+    all_durations = contact_events_df["duration_sec"].values if len(contact_events_df) > 0 else []
     if len(all_durations) > 0:
         n_bins = min(20, max(5, len(all_durations)))
         ax.hist(all_durations, bins=n_bins, color="#555555", edgecolor="black", alpha=0.8)
@@ -1716,9 +1731,9 @@ def generate_reports(
     plt.close(fig)
     logger.info("Wrote event_duration_distribution.png")
 
-    # ── Table: comparison_by_type.csv ──
+    # ── Table: comparison_by_type.csv (contact types only; NC has no raw bouts to compare) ──
     rows = []
-    for ct in ALL_EVENT_TYPES:
+    for ct in CONTACT_TYPES:
         ct_ev = events_df[events_df["contact_type"] == ct] if len(events_df) > 0 else pd.DataFrame()
         n_real = len(ct_ev)
         n_raw = raw_bouts.get(ct, 0)
@@ -1748,6 +1763,10 @@ def generate_reports(
     # ── Table: comparison_global.csv ──
     raw_contact_frames = int(np.sum(raw_types != ""))
     real_contact_frames = int(np.sum((real_types != "") & (real_types != "NC")))
+    no_contact_sec = (
+        float(events_df.loc[events_df["contact_type"] == "NC", "duration_sec"].sum())
+        if len(events_df) > 0 else 0.0
+    )
 
     # Flicker rate: transiciones por 1000 pares-frame, calculadas dentro de cada par
     global_data = {
@@ -1757,14 +1776,16 @@ def generate_reports(
             "raw_contact_pct", "real_contact_pct",
             "raw_bouts_total", "real_events_total",
             "flicker_rate_raw_per_1000", "flicker_rate_real_per_1000",
+            "no_contact_sec",
         ],
         "value": [
             total_frames, n_pairs, round(total_sec, 2), fps,
             raw_contact_frames, real_contact_frames,
             round(raw_contact_frames / pair_frames * 100, 2) if pair_frames > 0 else 0,
             round(real_contact_frames / pair_frames * 100, 2) if pair_frames > 0 else 0,
-            sum(raw_bouts.values()), len(events_df),
+            sum(raw_bouts.values()), count_contact_events(events_df),
             _flicker_rate(raw_types, groups), _flicker_rate(real_types, groups),
+            round(no_contact_sec, 2),   # NC spans summed over pairs (pair-seconds)
         ],
     }
 
@@ -1852,7 +1873,7 @@ def run_postprocess(
     events_df = extract_events(df, real_types, fps)
 
     raw_bout_count = sum(_count_raw_bouts(raw_types, groups).values())
-    n_contact = int((events_df["contact_type"] != "NC").sum()) if len(events_df) else 0
+    n_contact = count_contact_events(events_df)
     logger.info("Post-processing: %d raw bouts -> %d contact events (+%d no-contact spans)",
                 raw_bout_count, n_contact, len(events_df) - n_contact)
 
@@ -1991,8 +2012,9 @@ def main():
 
     # Extract events
     events_df = extract_events(df, real_types, fps)
-    logger.info("Extracted %d clean events from %d raw bouts",
-                len(events_df), sum(_count_raw_bouts(raw_types, groups).values()))
+    logger.info("Extracted %d clean contact events (+%d no-contact spans) from %d raw bouts",
+                count_contact_events(events_df), len(events_df) - count_contact_events(events_df),
+                sum(_count_raw_bouts(raw_types, groups).values()))
 
     # Write outputs
     output_dir = Path(args.output_dir) if args.output_dir else input_dir

@@ -8,8 +8,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.common.excel_report import DIAGNOSTICS_README  # noqa: E402
 from scripts.postprocess_contacts_simple import (  # noqa: E402
-    DEFAULT_CONFIG, INVESTIGATION_COLUMNS, PAIR_MATRIX_COLUMNS, PER_ANIMAL_COLUMNS,
+    CONTACT_TYPES, DEFAULT_CONFIG, INVESTIGATION_COLUMNS, PAIR_MATRIX_COLUMNS, PER_ANIMAL_COLUMNS,
     assign_event_ids, calibration_line, compute_labels, extract_events, investigation_bouts,
     load_calibration, n_animals_in_table, normalize_labels, pair_contact_matrix,
     per_animal_summary, run_postprocess, session_frames,
@@ -277,6 +278,9 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
     names = list(sheets)
     assert names.index("PairMatrix") == names.index("PerAnimal") + 1                # right after PerAnimal
     assert names.index("Investigation") == names.index("PairMatrix") + 1            # right after PairMatrix
+    assert names == ["Summary", "Events", "PerAnimal", "PairMatrix", "Investigation",
+                     "PerFrame", "Parameters"]                                       # no reports -> no ByType / Global
+    assert not (tmp_path / "diagnostics.xlsx").exists()                              # no diagnostic inputs
     assert len(sheets["Investigation"]) == 2 and not (tmp_path / "investigation_bouts.csv").exists()
     assert list(sheets["Investigation"].columns) == INVESTIGATION_COLUMNS
     assert list(sheets["PairMatrix"].columns) == PAIR_MATRIX_COLUMNS
@@ -294,6 +298,131 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
     run_postprocess(tmp_path, FPS, make_reports=False, consolidate=True)
     params = pd.read_excel(xlsx, sheet_name="Parameters")
     assert "thresholds_cm.contact_enter" in set(params[params.section == "calibration"].parameter)
+
+
+# ── results.xlsx holds only validated tables; diagnostics.xlsx holds the rest ──
+
+RESULTS_SHEETS = ["Summary", "Events", "PerAnimal", "PairMatrix", "Investigation",
+                  "PerFrame", "ByType", "Global", "Parameters"]
+DIAGNOSTIC_SHEETS = ["Bouts", "Dynamics", "Individual"]
+
+
+def _diagnostic_tables():
+    """Stand-ins for the tracker's raw tables (contact_bouts, dynamics_no_contact, individual)."""
+    bouts = pd.DataFrame({"id": [0, 1, 2], "pair_key": ["0_1", "0_1", "0_2"],
+                          "contact_type": ["N2N", "N2AG", "N2AG"], "initiator": [0, 1, 0]})
+    dynamics = pd.DataFrame({"id": [0, 1], "pair_key": ["0_1", "1_2"],
+                             "kind": ["approach", "avoid"], "mover": [0, 2]})
+    individual = {"metadata": {"num_slots": 3},
+                  "individual_metrics": {"R1": {"slot_idx": 0, "total_events_initiated": 2}}}
+    return bouts, dynamics, individual
+
+
+def _write_diagnostic_sources(path):
+    import json
+    bouts, dynamics, individual = _diagnostic_tables()
+    bouts.to_csv(path / "contact_bouts.csv", index=False)
+    dynamics.to_csv(path / "dynamics_no_contact.csv", index=False)
+    (path / "individual_summary.json").write_text(json.dumps(individual), encoding="utf-8")
+
+
+def _consolidated_run(path):
+    """3 animals, N2N + N2AG, tracker diagnostics present, reports on, workbooks built."""
+    pytest.importorskip("openpyxl")
+    pytest.importorskip("matplotlib")
+    _multi_table(RUNS_3).to_csv(path / "contacts_per_frame.csv", index=False)
+    _write_diagnostic_sources(path)
+    run_postprocess(path, FPS, make_reports=True, consolidate=True)
+
+
+def _check_diagnostics_workbook(path):
+    diag = pd.read_excel(path / "diagnostics.xlsx", sheet_name=None)
+    assert list(diag) == ["README"] + DIAGNOSTIC_SHEETS
+    assert list(diag["README"].columns) == ["README"] and list(diag["README"]["README"]) == [DIAGNOSTICS_README]
+    assert "Not validated by the clip review" in DIAGNOSTICS_README
+    assert len(diag["Bouts"]) == 3 and list(diag["Bouts"].columns) == ["id", "pair_key", "contact_type", "initiator"]
+    assert len(diag["Dynamics"]) == 2 and "mover" in diag["Dynamics"].columns
+    assert len(diag["Individual"]) == 2                                              # metadata + individual_metrics
+    return diag
+
+
+def test_results_workbook_has_only_validated_sheets(tmp_path):
+    _consolidated_run(tmp_path)
+
+    sheets = pd.read_excel(tmp_path / "results.xlsx", sheet_name=None)
+    assert list(sheets) == RESULTS_SHEETS
+    assert not set(DIAGNOSTIC_SHEETS) & set(sheets)
+
+    _check_diagnostics_workbook(tmp_path)
+    for src in ("contact_bouts.csv", "dynamics_no_contact.csv", "individual_summary.json"):
+        assert not (tmp_path / src).exists()                                         # absorbed
+
+
+def test_by_type_and_global_count_contact_types_only(tmp_path):
+    _consolidated_run(tmp_path)
+    sheets = pd.read_excel(tmp_path / "results.xlsx", sheet_name=None)
+
+    by_type = sheets["ByType"]
+    assert list(by_type.contact_type) == CONTACT_TYPES                               # five rows, no NC
+    assert (by_type.removed >= 0).all()
+
+    summary = sheets["Summary"].set_index("contact_type")
+    glob = sheets["Global"].set_index("metric")["value"]
+    events = sheets["Events"]
+    n_nc = int((events.contact_type == "NC").sum())
+    assert n_nc == 5                                                                 # Events keeps its NC rows
+    assert summary.loc["TOTAL", "events"] == 2
+    assert glob["real_events_total"] == summary.loc["TOTAL", "events"] == len(events) - n_nc
+    assert glob["real_events_total"] == by_type.real_events.sum()
+    assert glob["raw_bouts_total"] == by_type.raw_bouts.sum()
+    assert glob["real_contact_frames"] == 120                                        # 2 events x 60 frames; NC not counted
+    # the one NC figure left: pair-time without contact, 3 pairs x 200 frames - 120 contact frames
+    assert glob["no_contact_sec"] == pytest.approx((3 * 200 - 120) / FPS, abs=0.05)
+
+
+def test_rerun_on_a_consolidated_run_keeps_the_diagnostics(tmp_path):
+    _consolidated_run(tmp_path)
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=True)            # sources are gone now
+    _check_diagnostics_workbook(tmp_path)
+    assert not set(DIAGNOSTIC_SHEETS) & set(pd.read_excel(tmp_path / "results.xlsx", sheet_name=None))
+
+
+def test_diagnostics_are_carried_out_of_a_pre_split_results_workbook(tmp_path):
+    pytest.importorskip("openpyxl")
+    bouts, dynamics, _ = _diagnostic_tables()
+    individual = pd.DataFrame({"animal": ["metadata", "individual_metrics"], "num_slots": [3, None]})
+    with pd.ExcelWriter(tmp_path / "results.xlsx", engine="openpyxl") as w:          # layout before the split
+        _multi_table(RUNS_3).to_excel(w, sheet_name="PerFrame", index=False)
+        bouts.to_excel(w, sheet_name="Bouts", index=False)
+        dynamics.to_excel(w, sheet_name="Dynamics", index=False)
+        individual.to_excel(w, sheet_name="Individual", index=False)
+
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=True)
+
+    assert not set(DIAGNOSTIC_SHEETS) & set(pd.read_excel(tmp_path / "results.xlsx", sheet_name=None))
+    diag = _check_diagnostics_workbook(tmp_path)
+    assert list(diag["Individual"].columns) == ["animal", "num_slots"]
+
+
+def test_session_summary_and_event_log_do_not_count_nc_spans_as_events(tmp_path):
+    import json
+    _multi_table(RUNS_3).to_csv(tmp_path / "contacts_per_frame.csv", index=False)
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=False)
+
+    real = json.loads((tmp_path / "session_summary_real.json").read_text(encoding="utf-8"))["real_summary"]
+    assert set(real["events_by_type"]) == set(CONTACT_TYPES)                         # no NC entry
+    assert real["total_events"] == 2 == sum(e["count"] for e in real["events_by_type"].values())
+    assert real["no_contact"]["spans"] == 5
+    impact = json.loads((tmp_path / "session_summary_real.json").read_text(encoding="utf-8"))["filtering_impact"]
+    raw_bouts = sum(json.loads((tmp_path / "session_summary_real.json").read_text(
+        encoding="utf-8"))["raw_summary"]["bouts_by_type"].values())
+    assert impact["bouts_removed"] == raw_bouts - 2
+
+    log = (tmp_path / "event_log.txt").read_text(encoding="utf-8")
+    nc_line = next(l for l in log.splitlines() if l.startswith("  NC "))
+    assert " 5 spans," in nc_line and "events" not in nc_line
+    assert "N2N  (Nose-to-nose):  1 events," in log
+    assert f"Raw bouts: {raw_bouts} -> Real contact events: 2 " in log
 
 
 # ── pair contact matrix ────────────────────────────────────────────────────

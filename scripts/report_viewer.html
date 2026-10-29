@@ -565,7 +565,6 @@ details.params[open] summary::before { transform: rotate(90deg); }
       perFrame: perFrame,
       isV2: isV2,
       byType: sheet(wb, "ByType"),
-      dynamics: sheet(wb, "Dynamics"),
       summary: sheet(wb, "Summary"),
       global: sheet(wb, "Global"),
       params: params,
@@ -601,10 +600,6 @@ details.params[open] summary::before { transform: rotate(90deg); }
     ];
     if (flicker !== null) {
       tiles.push({ k: "Raw bouts removed", v: flicker.toFixed(0) + "%", sub: g.raw_bouts_total + " raw → " + contact.length + " clean", flag: flicker > 60 });
-    }
-    if (d.dynamics && d.dynamics.length) {
-      tiles.push({ k: "Approach / avoid", v: String(d.dynamics.length),
-                   sub: "episodes without contact" });
     }
 
     $("stats").innerHTML = "";
@@ -831,7 +826,7 @@ details.params[open] summary::before { transform: rotate(90deg); }
     var tb = document.createElement("tbody");
     d.byType.forEach(function (r) {
       var t = String(r.contact_type || "").toUpperCase();
-      if (t === "NC" && !state.showNC) return;
+      if (t === "NC") return;   // older workbooks listed no-contact here; it has no raw bouts to compare
       var tr = document.createElement("tr");
       var c1 = document.createElement("td");
       var sp = document.createElement("span"); sp.className = "typecell";
@@ -1043,7 +1038,7 @@ details.params[open] summary::before { transform: rotate(90deg); }
   });
   $("show-nc").addEventListener("change", function (e) {
     state.showNC = e.target.checked;
-    if (current) { renderEthogram(current); renderLegend(current); renderImpact(current); renderEvents(current); }
+    if (current) { renderEthogram(current); renderLegend(current); renderEvents(current); }
   });
 
   var resizeTimer;
