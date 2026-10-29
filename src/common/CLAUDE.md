@@ -14,7 +14,7 @@ Shared utilities used by all pipelines. When adding functionality that several p
 | `individual_metrics.py` | Per-animal and directed-pair metrics computed from v2 bouts (who initiates, active vs passive); extra PDF pages |
 | `contacts_v21.py` | Variant of v2 (hysteresis rule engine, multi-scale temporal windows). Not imported by any pipeline |
 | `contacts.py` | `ContactTracker` v1 (centroid pipeline): 6 contact types + NC, bout detection, CSV/JSON/PDF |
-| `excel_report.py` | `build_excel_report()`: consolidates run outputs into `results.xlsx` |
+| `excel_report.py` | `build_excel_report()`: consolidates run outputs into `results.xlsx` (reported tables) and `diagnostics.xlsx` (tracker diagnostics) |
 | `geometry.py` | `euclidean_distance()`, `resolve_overlaps()`, detection-to-slot matching |
 | `model_loaders.py` | `load_yolo()`, `load_models()` |
 | `yolo_inference.py` | `detect_only()` and YOLO result parsing (keypoints by name) |

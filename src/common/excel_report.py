@@ -13,7 +13,9 @@ contact types are read from the data rather than assumed, and the v2-only
 sheets are added when their source files are present.
 
 results.xlsx sheets (in order):
-    Summary     — headline session numbers, one row per contact type
+    Summary     — headline session numbers, one row per contact type, a TOTAL row
+                  (summed over pairs) and an ANY row (time with any contact, union
+                  over pairs)
     Events      — cleaned behavioural events (the reportable result; keeps the
                   no-contact rows the validation samples its NC windows from)
     PerAnimal   — events and contact time per animal, any partner     (v2 only)
@@ -301,17 +303,66 @@ def _resolve_types(
     return list(CONTACT_TYPES_V2)
 
 
+# Labels that are not a contact in the per-frame table ("none" is contacts_v2's raw label,
+# NC the post-processed one). FOL is a non-contact behaviour, so it is left out of ANY too.
+_NOT_CONTACT = {"", "NC", "NONE", "NAN", "FOL"}
+
+
+def _any_contact_row(
+    per_frame: Optional[pd.DataFrame],
+    summary: Dict[str, Any],
+    summary_real: Dict[str, Any],
+    total_sec: float,
+) -> Optional[Dict[str, Any]]:
+    """The ANY row of Summary: time with at least one pair in contact (union over pairs).
+
+    Counts the frames in which any pair carries a contact type other than NC and FOL, using
+    the post-processed `real_type` column when the table has it, else the raw `contact_type`.
+    None when the per-frame table, its columns or the session length are missing.
+    """
+    if per_frame is None or "frame_idx" not in per_frame.columns or not total_sec:
+        return None
+    col = "real_type" if "real_type" in per_frame.columns else "contact_type"
+    if col not in per_frame.columns:
+        return None
+
+    labels = per_frame[col].fillna("").astype(str).str.strip().str.upper()
+    in_contact = ~labels.isin(_NOT_CONTACT)
+    union_frames = int(per_frame.loc[in_contact, "frame_idx"].nunique())
+    session_frames = int(per_frame["frame_idx"].nunique())
+    if session_frames == 0:
+        return None
+
+    fps = (summary_real.get("metadata", {}).get("fps")
+           or summary.get("metadata", {}).get("fps")
+           or session_frames / total_sec)
+    union_sec = union_frames / float(fps)
+    return {
+        "contact_type": "ANY",
+        "contact_label": "Any contact (union over pairs)",
+        "events": "",
+        "total_sec": round(union_sec, 2),
+        "mean_duration_sec": "",
+        "pct_of_session": round(union_sec / total_sec * 100, 2),
+    }
+
+
 def _summary_sheet(
     summary: Dict[str, Any],
     summary_real: Dict[str, Any],
     events: Optional[pd.DataFrame],
     types: List[str],
+    per_frame: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Build the headline Summary sheet: one row per contact type.
+    """Build the headline Summary sheet: one row per contact type, TOTAL and ANY.
 
     Numbers come from the post-processed (cleaned) results, which are the
     reportable ones. Falls back to the events table if the summary JSON is
     missing.
+
+    The type rows and TOTAL are summed over pairs, and their pct_of_session is a share of
+    pair-time (session x number of pairs). ANY is the time with at least one pair in contact
+    (union over pairs, FOL excluded), and its pct_of_session is a share of the session.
     """
     events_by_type = summary_real.get("real_summary", {}).get("events_by_type", {})
     total_sec = summary_real.get("metadata", {}).get("total_duration_sec")
@@ -359,6 +410,10 @@ def _summary_sheet(
         "mean_duration_sec": "",
         "pct_of_session": round(sum(float(r["pct_of_session"] or 0) for r in rows), 2),
     })
+
+    any_row = _any_contact_row(per_frame, summary, summary_real, float(total_sec or 0))
+    if any_row is not None:
+        rows.append(any_row)
 
     return pd.DataFrame(rows)
 
@@ -453,7 +508,7 @@ def build_excel_report(
     logger.info("Contact taxonomy: %s (%d types)", ", ".join(types), len(types))
 
     sheets: List[tuple] = [
-        ("Summary", _summary_sheet(summary, summary_real, events, types)),
+        ("Summary", _summary_sheet(summary, summary_real, events, types, per_frame)),
         ("Events", events),
         ("PerAnimal", per_animal),
         ("PairMatrix", pair_matrix),

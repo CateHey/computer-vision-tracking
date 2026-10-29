@@ -122,7 +122,8 @@ the *receiver* is the mover reads as "repels"; stable or closing reads as
 
 Approach/avoid episodes that never reach contact are written to a separate table,
 `dynamics_no_contact.csv` — which is exactly the "Hoja B" you have been referring
-to. This captures avoidance, which a contact-only ethogram misses entirely.
+to. After consolidation it is the `Dynamics` sheet of `diagnostics.xlsx`, not of
+`results.xlsx`. This captures avoidance, which a contact-only ethogram misses entirely.
 
 ---
 

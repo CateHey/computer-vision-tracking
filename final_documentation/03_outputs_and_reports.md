@@ -63,7 +63,7 @@ One table per sheet, in this order:
 
 | Sheet | Rows | What it holds |
 |-------|------|---------------|
-| `Summary` | 6 | Headline numbers per contact type, plus a total row |
+| `Summary` | 7 | Headline numbers per contact type, a `TOTAL` row and an `ANY` row. For the type rows and `TOTAL`, `total_sec` is summed over pairs (pair-seconds) and `pct_of_session` is a share of pair-time (session x number of pairs). `ANY` ("Any contact (union over pairs)") is the time with at least one pair in contact, FOL excluded, with `events` blank and `pct_of_session` a share of the session; it needs the per-frame table |
 | `Events` | one per event | The cleaned behavioural events — **the reportable result** |
 | `PerAnimal` | one per animal | Events and contact time per animal against any partner, plus the same per session minute (`session_min`, `events_per_min`, `contact_sec_per_min`), and the investigation bouts of the animal's pairs (`n_investigation_bouts`, `investigation_bouts_per_min`); `per_animal_summary.csv`, see 05 §9) |
 | `PairMatrix` | one per pair of animals | Events by type, contact time (FOL excluded), `fol_sec`, `contact_pct_of_session` and rates per minute for every pair, including pairs with no events: the table behind the social-network figure (`pair_contact_matrix.csv`) |
@@ -275,8 +275,10 @@ is read from `contacts_per_frame.csv` when it is there, and from the `PerFrame` 
 [scripts/report_viewer.html](../scripts/report_viewer.html) reads a `results.xlsx` and
 renders the session as a page. Open it, drop the workbook in, and it shows:
 
-- **Stat tiles** — session duration, total contact time and its share of the session,
-  event count, longest event, and the percentage of raw bouts removed by filtering
+- **Stat tiles** — session duration, contact time as pair-seconds summed over pairs with its
+  share of pair-time (the `TOTAL` row of `Summary`), time with any contact (the `ANY` row: frames
+  in which at least one pair is in contact, as seconds and as a share of the session), event
+  count, longest event, and the percentage of raw bouts removed by filtering
 - **Ethogram** — every event on a time axis, with the inter-rat distance trace underneath
   so it is visible *why* an event fired. Hovering gives the type and timecode; clicking
   jumps to that row in the event table

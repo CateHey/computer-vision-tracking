@@ -27,9 +27,10 @@ from overhead video. Written as the methods reference for the paper.
 **Input.** A video of rats in an arena, single fixed overhead camera. The shipped
 configs are set up for **6 animals**.
 
-**Output.** An overlay video, a single `results.xlsx` holding every table (per-frame
-geometry, classified events with timestamps, session summary, parameters), a PDF report,
-and an HTML viewer that reads the workbook.
+**Output.** An overlay video, `results.xlsx` holding the reported tables (per-frame
+geometry, classified events with timestamps, session summary, parameters), a
+`diagnostics.xlsx` with the raw tracker tables that the clip review does not validate, a PDF
+report, and an HTML viewer that reads `results.xlsx`.
 
 **Three models, strictly separated roles:**
 

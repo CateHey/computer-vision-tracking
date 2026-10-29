@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.common.excel_report import DIAGNOSTICS_README  # noqa: E402
+from src.common.excel_report import DIAGNOSTICS_README, _summary_sheet  # noqa: E402
 from scripts.postprocess_contacts_simple import (  # noqa: E402
     CONTACT_TYPES, DEFAULT_CONFIG, INVESTIGATION_COLUMNS, PAIR_MATRIX_COLUMNS, PER_ANIMAL_COLUMNS,
     assign_event_ids, calibration_line, compute_labels, extract_events, investigation_bouts,
@@ -371,13 +371,59 @@ def test_by_type_and_global_count_contact_types_only(tmp_path):
     events = sheets["Events"]
     n_nc = int((events.contact_type == "NC").sum())
     assert n_nc == 5                                                                 # Events keeps its NC rows
+    assert list(summary.index) == CONTACT_TYPES + ["TOTAL", "ANY"]
     assert summary.loc["TOTAL", "events"] == 2
+    # TOTAL sums the pairs: 2 events x 2 s = 4 s, as a share of pair-time (3 pairs x 6.67 s)
+    assert summary.loc["TOTAL", "total_sec"] == pytest.approx(4.0)
+    assert summary.loc["TOTAL", "pct_of_session"] == pytest.approx(4.0 / (3 * 200 / FPS) * 100, abs=0.05)
+    # ANY is the union over pairs: N2N on 0_1 (frames 50-109) and N2AG on 0_2 (80-139) -> frames 50-139
+    assert summary.loc["ANY", "contact_label"] == "Any contact (union over pairs)"
+    assert pd.isna(summary.loc["ANY", "events"])
+    assert summary.loc["ANY", "total_sec"] == pytest.approx(90 / FPS)
+    assert summary.loc["ANY", "pct_of_session"] == pytest.approx(90 / 200 * 100, abs=0.05)
+    assert summary.loc["ANY", "total_sec"] < summary.loc["TOTAL", "total_sec"]       # overlap counted once
     assert glob["real_events_total"] == summary.loc["TOTAL", "events"] == len(events) - n_nc
     assert glob["real_events_total"] == by_type.real_events.sum()
     assert glob["raw_bouts_total"] == by_type.raw_bouts.sum()
     assert glob["real_contact_frames"] == 120                                        # 2 events x 60 frames; NC not counted
     # the one NC figure left: pair-time without contact, 3 pairs x 200 frames - 120 contact frames
     assert glob["no_contact_sec"] == pytest.approx((3 * 200 - 120) / FPS, abs=0.05)
+
+
+def _any_fixture():
+    """2 pairs x 10 frames at 10 fps. real_type: 0_1 N2N on frames 2-5, 0_2 N2AG on 4-7 and FOL on 8-9.
+    The raw contact_type column disagrees on purpose (N2N everywhere) to show real_type wins."""
+    rows = []
+    for f in range(10):
+        for pk in ("0_1", "0_2"):
+            real = "NC"
+            if pk == "0_1" and 2 <= f <= 5:
+                real = "N2N"
+            if pk == "0_2":
+                real = "N2AG" if 4 <= f <= 7 else ("FOL" if f >= 8 else "NC")
+            rows.append({"frame_idx": f, "pair_key": pk, "contact_type": "N2N", "real_type": real})
+    return pd.DataFrame(rows)
+
+
+def test_summary_any_row_is_the_union_over_pairs_without_nc_and_fol():
+    summary_real = {"metadata": {"fps": 10.0, "total_duration_sec": 1.0, "n_pairs": 2}}
+    types = ["N2N", "N2AG", "N2B", "FOL", "SBS"]
+
+    s = _summary_sheet({}, summary_real, None, types, _any_fixture()).set_index("contact_type")
+    assert list(s.index) == types + ["TOTAL", "ANY"]
+    assert s.loc["ANY", "total_sec"] == pytest.approx(0.6)                           # frames 2-7; FOL (8-9) is not contact
+    assert s.loc["ANY", "pct_of_session"] == pytest.approx(60.0)
+    assert s.loc["ANY", "events"] == "" and s.loc["ANY", "mean_duration_sec"] == ""
+
+    # without real_type (pre-post-processing table) the raw contact_type column is used
+    raw = _any_fixture().drop(columns=["real_type"]).assign(
+        contact_type=lambda d: d.frame_idx.map(lambda f: "none" if f < 3 else "N2B" if f < 6 else "FOL"))
+    s = _summary_sheet({}, summary_real, None, types, raw).set_index("contact_type")
+    assert s.loc["ANY", "total_sec"] == pytest.approx(0.3)                           # frames 3-5 only
+
+    # no per-frame table: no ANY row, TOTAL unchanged
+    s = _summary_sheet({}, summary_real, None, types, None)
+    assert list(s.contact_type)[-1] == "TOTAL" and "ANY" not in set(s.contact_type)
 
 
 def test_rerun_on_a_consolidated_run_keeps_the_diagnostics(tmp_path):
