@@ -88,6 +88,14 @@ the time an animal spends in contact with two or more others is reported separat
 Mouse Tracker's group2/group3 configurations. A pair-by-pair contact matrix summarises the
 dyadic structure of each session.
 
+Because the nose can slide between the flank and the anogenital region within one approach,
+consecutive nose-to-nose, nose-to-anogenital and nose-to-body events of a pair separated by
+≤ 3 frames (0.1 s) of any other label were also merged into *investigation bouts*, the
+equivalent of the single close-investigation class of MARS that is only then sub-labelled
+(face, body, genital). Each bout reports its dominant sub-type and the seconds spent in each.
+Bout counts are the event count reported for investigative behaviour; the sub-type events
+provide the durations.
+
 ## Validation
 
 For each session, **[15]** events per behaviour were sampled, stratified by duration tertile,
@@ -126,5 +134,6 @@ executed on the UQ Bunya HPC (one NVIDIA A100 per session).
 | FOL radius, speed, alignment | 0.4–0.6 BL, ≥ 0.15 BL s⁻¹, cos ≥ 0.6, path 12 frames | | LMT: 2.5 cm corridor, ≥ 10 cm s⁻¹, 45° |
 | Activation / rare / secondary | 0.50 / 0.35 / 0.40 | score thresholds | sensitivity 0.40–0.70 reported |
 | Smoothing, gap, minimum | 5 frames, 3 frames, 0.3 s (FOL 0.4 s) | | A-SOiD 200–400 ms; LMT none / 7 frames for follow; MARS HMM |
+| Investigation bout gap | 3 frames (0.1 s) | merges N2N / N2AG / N2B runs of a pair | MARS close-investigation class; old and new N2B/N2AG settings give the same bout count at 0.5 s (06 §A4) |
 | Tracker bout minimum | 6 frames (FOL 12), gap 3 | diagnostic bouts only | |
 | Dynamics | |Δd| ≥ 0.10 BL s⁻¹, mover ≥ 60 % | | code defaults |

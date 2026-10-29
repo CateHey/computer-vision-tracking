@@ -104,6 +104,17 @@ N2AG and N2B merged, gaps ≤ 3 frames) as the event count, with the seconds per
 each bout; keep the sub-type events for the duration figures. Implemented as an additional
 table (`investigation_bouts.csv`, sheet `Investigation`), so nothing existing changes.
 
+**Bout-level comparison (2026-10-28, `postprocess_contacts_simple.py --no_consolidate
+investigation.max_gap=…` on both runs).** At the default gap of 3 frames the baseline gives
+10 investigation bouts (10.0 s; dominant N2AG 7, N2N 3; no sub-type switch inside any bout,
+since N2B never fired) and the new defaults 11 bouts (10.3 s; N2AG 8, N2N 3; 0.4 switches per
+bout, the N2AG ↔ N2B alternations). With a gap of 10–15 frames (0.3–0.5 s) both runs give
+9 bouts (10.5 s vs 10.7 s); with 20–30 frames the new run gives 8. The N2AG event inflation
+(7 → 10) therefore does not survive at bout level: it is sub-type fragmentation, and the two
+configurations agree within one bout on this clip. The gap stays at 3 frames (the same-type
+gap); 0.5 s is the value at which the two configurations coincide and is the alternative to
+state if the reviewer judges that brief nose lifts belong to one bout.
+
 
 ### B1 — provisional body length
 
