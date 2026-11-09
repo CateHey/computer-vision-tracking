@@ -357,9 +357,9 @@ reviewer against the footage, and `score` turns the answers into one `validation
   `n_bouts_total`). If the file is missing, `bout_precision` is null and a warning is logged.
 - *Identity persistence.* A swap is the one error that invalidates every per-animal figure, and the event clips
   (a few seconds each) cannot show it, so `validate_contacts.py identity <run> [--every 60] [--max 40]`
-  (`identity.every_sec`, `identity.max_frames` in `configs/validation.yaml`) writes
+  (`identity.every_sec`, `identity.max_frames`, `identity.min_frames` in `configs/validation.yaml`) writes
   `<run>/validation/identity/`: `identity_<t>.png` for t = 0, 60 s, 120 s ... (at most 40, spread evenly over a
-  longer session), taken from the overlay video (the raw video if there is none), with each animal's label `R<n>`
+  longer session; a session too short for 5 checkpoints at that spacing gets 5 spread evenly), taken from the overlay video (the raw video if there is none), with each animal's label `R<n>`
   drawn large at its centroid from the `PerFrame` sheet (independent of the small labels the overlay burns in;
   animals without a centroid in that frame are skipped and flagged); `identity.html`, a contact sheet; and
   `identity.xlsx` with one row per checkpoint and animal. The reviewer answers `identity_ok` = `yes` (same

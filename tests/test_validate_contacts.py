@@ -631,13 +631,18 @@ def test_identity_checkpoints():
     assert all(b > a for a, b in zip(long, long[1:]))
     assert len(vc.identity_checkpoints(30 * 60 * 120, 30.0, 60, 0)) == 120    # no cap
     assert vc.identity_checkpoints(0, 30.0, 60, 40) == []
+    # min_n: a 2 min run is too short for 5 checkpoints at 60 s, so it gets 5 spread evenly
+    assert vc.identity_checkpoints(3600, 30.0, 60, 40, 5) == [0, 900, 1800, 2699, 3599]
+    assert vc.identity_checkpoints(30 * 60 * 20, 30.0, 60, 40, 5) == [i * 1800 for i in range(20)]   # long enough: unchanged
+    assert vc.identity_checkpoints(3, 30.0, 60, 40, 5) == [0, 1, 2]                                  # fewer frames than min_n
+    assert vc.identity_checkpoints(0, 30.0, 60, 40, 5) == []
 
 
 def test_identity_config_merges_partial_sections():
     cfg = vc.load_config([])
-    assert cfg["identity"] == {"every_sec": 60, "max_frames": 40}
+    assert cfg["identity"] == {"every_sec": 60, "max_frames": 40, "min_frames": 5}
     cfg = vc.load_config(["identity.every_sec=30"])
-    assert cfg["identity"] == {"every_sec": 30, "max_frames": 40}
+    assert cfg["identity"] == {"every_sec": 30, "max_frames": 40, "min_frames": 5}
 
 
 def _identity_run(tmp_path, n=10, fps=5):
@@ -673,7 +678,8 @@ def _identity_run(tmp_path, n=10, fps=5):
 def test_identity_writes_checkpoint_images_html_and_workbook(tmp_path):
     cv2 = pytest.importorskip("cv2")
     run, cen = _identity_run(tmp_path)
-    assert vc.main(["identity", str(run), "--every", "1"]) == 0           # 5 fps, 10 frames: frames 0 and 5
+    # 5 fps, 10 frames: frames 0 and 5 (identity.min_frames=0 switches off the short-session minimum)
+    assert vc.main(["identity", str(run), "--every", "1", "identity.min_frames=0"]) == 0
     d = run / "validation" / "identity"
     pngs = sorted(p.name for p in d.glob("identity_*.png"))
     assert pngs == ["identity_0000.00s.png", "identity_0001.00s.png"]
@@ -701,6 +707,10 @@ def test_identity_writes_checkpoint_images_html_and_workbook(tmp_path):
     assert "same individual as at time 0" in "\n".join(str(c.value) for c in wb["Instructions"]["A"])
     assert vc.main(["identity", str(run), "--every", "0.2", "--max", "3", "--out", str(tmp_path / "o")]) == 0
     assert len(list((tmp_path / "o").glob("*.png"))) == 3
+    # default identity.min_frames = 5: a session too short for 5 checkpoints at --every gets 5 spread evenly
+    assert vc.main(["identity", str(run), "--every", "1", "--out", str(tmp_path / "m")]) == 0
+    assert sorted(p.name for p in (tmp_path / "m").glob("*.png")) == [
+        f"identity_{f / 5:07.2f}s.png" for f in (0, 2, 4, 7, 9)]
 
 
 def test_identity_falls_back_to_the_raw_video(tmp_path):
@@ -708,7 +718,7 @@ def test_identity_falls_back_to_the_raw_video(tmp_path):
     (run / "overlays" / "cutie_composite_test.avi").rename(tmp_path / "raw.avi")
     assert vc.main(["identity", str(run), "--every", "1"]) == 1             # no overlay, no usable video_path
     (run / "config_used.yaml").write_text(f"video_path: {(tmp_path / 'raw.avi').as_posix()}\n")
-    assert vc.main(["identity", str(run), "--every", "1"]) == 0
+    assert vc.main(["identity", str(run), "--every", "1", "identity.min_frames=0"]) == 0
     assert len(list((run / "validation" / "identity").glob("*.png"))) == 2
 
 

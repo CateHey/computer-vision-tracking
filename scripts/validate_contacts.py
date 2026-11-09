@@ -56,7 +56,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "duration_bins": [0.3, 0.5, 1.0, 2.0],
     "score_grid": [0.0, 0.5, 0.6, 0.7, 0.8, 0.9],
     "duration_grid": [0.0, 0.2, 0.3, 0.5, 1.0, 2.0],
-    "identity": {"every_sec": 60, "max_frames": 40},
+    "identity": {"every_sec": 60, "max_frames": 40, "min_frames": 5},
 }
 TYPE_NAMES = {
     "N2N": "Nose-to-Nose", "N2AG": "Nose-to-Anogenital", "N2B": "Nose-to-Body",
@@ -1839,11 +1839,13 @@ def cmd_score(args: argparse.Namespace, overrides: List[str]) -> int:
 
 
 # --------------------------------------------------------------------------- identity persistence
-def identity_checkpoints(nframes: int, fps: float, every_sec: float, max_n: int) -> List[int]:
+def identity_checkpoints(nframes: int, fps: float, every_sec: float, max_n: int, min_n: int = 0) -> List[int]:
     """Checkpoint frames at 0, every_sec, 2 * every_sec, ... (< nframes), at most max_n of them.
 
     A session with more checkpoints than max_n keeps max_n of them spread evenly over the
-    session (always the first and the last one); max_n <= 0 means no cap.
+    session (always the first and the last one); max_n <= 0 means no cap. A session too short to
+    give min_n checkpoints at that spacing gets min_n of them spread evenly from the first to the
+    last frame instead, so a short test run is still checked (min_n <= 0: off).
     """
     step = max(float(every_sec) * fps, 1.0)
     frames: List[int] = []
@@ -1851,6 +1853,8 @@ def identity_checkpoints(nframes: int, fps: float, every_sec: float, max_n: int)
     while int(round(k * step)) < nframes:
         frames.append(int(round(k * step)))
         k += 1
+    if min_n and min_n > 0 and 0 < len(frames) < min_n:
+        frames = [int(f) for f in np.unique(np.round(np.linspace(0, nframes - 1, int(min_n))).astype(int))]
     if max_n and max_n > 0 and len(frames) > max_n:
         pick = np.unique(np.round(np.linspace(0, len(frames) - 1, int(max_n))).astype(int))
         frames = [frames[i] for i in pick]
@@ -2003,6 +2007,7 @@ def cmd_identity(args: argparse.Namespace, overrides: List[str]) -> int:
     ic = cfg.get("identity") or {}
     every = float(args.every if args.every is not None else ic.get("every_sec", 60))
     max_n = int(args.max if args.max is not None else ic.get("max_frames", 40))
+    min_n = int(ic.get("min_frames", 5))
     if every <= 0:
         logger.error("--every must be > 0 (got %s)", every)
         return 1
@@ -2023,7 +2028,7 @@ def cmd_identity(args: argparse.Namespace, overrides: List[str]) -> int:
     fps = find_fps(run, video)
     cap = cv2.VideoCapture(str(video))
     nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frames = identity_checkpoints(nframes, fps, every, max_n)
+    frames = identity_checkpoints(nframes, fps, every, max_n, min_n)
     if not frames:
         logger.error("Video %s has no frames", video)
         return 1
