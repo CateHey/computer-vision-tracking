@@ -108,10 +108,20 @@ The through-line: **identity moved from "match detections each frame" to "propag
 a labelled mask"**, and pose moved from "run on the whole frame and untangle" to
 "run on a frame containing one animal".
 
-The `safety.py` module in `cutie_composite/` implements checkpointing, mask
-protection and fusion, but the shipped `run.py` is explicitly the *simplified*
-two-phase version — its own docstring says "no safety nets". The safety block in
-the config is therefore inert for this entry point.
+CUTIE alone can let one animal's mask swallow a touching neighbour: with identical
+animals there is no visible boundary between them, one mask grows towards two bodies,
+the other shrinks to a tail or disappears, and the error is written into CUTIE's
+memory. Since 2026-11-19 an **area guard** compares each animal's mask area with its
+own median of the last 3 s. Below 40 %, above 160 % or no mask for 3 frames in a row
+raises a flag: SAM3 runs on a crop around the animals involved, identities are
+re-assigned by overlap with each animal's last healthy mask plus centroid distance,
+and the corrected masks are re-injected into CUTIE without clearing its memory
+(`area_guard.py`, `recovery.py`, `recovery:` block of the configs). If SAM3 cannot
+separate the animals the attempt is repeated every 3 frames for 5 s, then every 10
+frames while the flag holds; once they separate, an animal still missing is looked
+for in the background residual. If SAM3 sees the same mask as CUTIE (an animal
+rearing, for example) nothing changes. The older `safety.py` (checkpointing,
+protection, fusion) is not used.
 
 ---
 
@@ -121,6 +131,7 @@ the config is therefore inert for this entry point.
 |---|---|
 | Bootstrap segmentation | SAM3, text prompt `"mouse"`, score threshold 0.5, first 125 frames |
 | Propagation | CUTIE — `mem_every=5`, `max_mem_frames=5`, long-term memory on, `max_internal_size` 480 local / 720 HPC |
+| Recovery | area guard: below 40 % / above 160 % of the animal's median area, or no mask, for 3 frames → SAM3 on a crop, re-injection into CUTIE (`recovery:`) |
 | Pose | YOLO `models/yolo/yolo26_v11.pt`, confidence 0.25 |
 | Keypoints | **7**, in model index order: `tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear` |
 | Animals | 6 |
@@ -153,6 +164,8 @@ keypoint was mislabelled — "nose" was really the tail tip. See §2.6.
   SAM3 produced. If SAM3 has not locked onto every animal by then, the missing
   ones are never recovered — the run log reports the handoff count
   (`Phase 1 complete. Handoff: n/N rats`), and it is worth checking.
-- **No identity re-check after handoff.** With `safety` disabled there is no
-  checkpoint or fusion, so a CUTIE tracking failure persists to the end of the
-  video.
+- **Identity after handoff.** The area guard catches an animal that is lost or
+  swallowed by a neighbour (§1.3). It does not catch a clean swap, where two animals
+  exchange identities and both masks keep a normal area; that still needs the
+  identity check (§3.7). Every episode is in the run log and marked on
+  `tracks/area_per_rat.png`.

@@ -7,7 +7,7 @@ Each subfolder is a self-contained pipeline with a `run.py` entry point:
 
 | Pipeline | Segmentation / identity | Pose | Status |
 |----------|-------------------------|------|--------|
-| `cutie_composite/` | SAM3 text-prompt bootstrap on the first 125 frames (through `sam3_composite`), then CUTIE propagates one labelled index mask (one id per pixel, N animals) | YOLO on per-animal composites (other animals erased), `ContactTrackerV2` | **Production, the paper pipeline.** One process, one GPU, no chunk mode |
+| `cutie_composite/` | SAM3 text-prompt bootstrap on the first 125 frames (through `sam3_composite`), then CUTIE propagates one labelled index mask (one id per pixel, N animals); an area guard re-runs SAM3 on a crop when a mask is lost or merges with a neighbour (`area_guard.py`, `recovery.py`) | YOLO on per-animal composites (other animals erased), `ContactTrackerV2` | **Production, the paper pipeline.** One process, one GPU, no chunk mode |
 | `sam3_composite/` | SAM3 via Hugging Face `transformers` (text prompt "mouse") + composites | YOLO on composites | Building block: `cutie_composite` imports its SAM3 phase. Standalone runs are exploratory |
 | `isolated_composite/` | SAM2 video predictor + composites; `composition.py` (background plate, erase other animals) is imported by `cutie_composite` and `sam3_*` | YOLO on composites | Exploratory |
 | `sam3_reset/` | `sam3_composite` plus failure detection and reset strategies | YOLO on composites | Exploratory, superseded by CUTIE |

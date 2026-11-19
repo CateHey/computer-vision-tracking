@@ -1,11 +1,17 @@
 """
-Cutie composite pipeline — SIMPLIFIED two-phase (no safety nets).
+Cutie composite pipeline — two phases plus an area guard.
 
 Phase 1 (SAM3):   frames [0, sam3_phase_frames) tracked with sam3_composite's
                   logic (SAM3 video + Forma B init points).
 Phase 2 (Cutie):  Cutie seeded with the last SAM3 frame's masks, then tracks
-                  the rest of the video CONTINUOUSLY. No protection / fusion /
-                  checkpoint — pure Cutie tracking.
+                  the rest of the video CONTINUOUSLY.
+Recovery:         (recovery.enabled) each animal's mask area is compared with its own
+                  median; below low_ratio, above high_ratio or missing for
+                  sustain_frames frames -> SAM3 on a crop of the affected animals,
+                  identities re-assigned by overlap + centroid, the corrected masks
+                  re-injected into Cutie (area_guard.py, recovery.py).
+History:          (tracks.enabled) tracks/tracks.jsonl.gz, one line per frame with every
+                  mask, keypoint and id, plus tracks/area_per_rat.png (tracks.py).
 
 Both phases share the per-frame processing (composites -> YOLO -> keypoints ->
 carry-over -> contacts -> render).
@@ -47,6 +53,7 @@ from src.pipelines.isolated_composite.composition import (
 )
 from src.pipelines.sam3_composite.run import (
     load_sam3_model,
+    sam3_image_segment,
     process_chunk_with_sam3,
     get_chunk_init_points,
     mask_centroid,
@@ -64,6 +71,9 @@ from src.pipelines.cutie_composite.cutie_tracker import (
     CutieTracker,
     slot_masks_to_index_mask,
 )
+from src.pipelines.cutie_composite.area_guard import AreaGuard, GuardConfig
+from src.pipelines.cutie_composite.recovery import MaskRecovery, RecoveryConfig
+from src.pipelines.cutie_composite.tracks import TracksWriter, plot_area
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +94,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     except Exception:  # noqa: BLE001  provenance must never stop a run
         logger.warning("Could not write provenance.json", exc_info=True)
 
-    logger.info("Starting Cutie composite pipeline (SIMPLIFIED: SAM3 -> Cutie, no safety)")
+    logger.info("Starting Cutie composite pipeline (SAM3 -> Cutie, area guard + SAM3 recovery)")
     device = get_device(config)
     logger.info("Using device: %s", device)
 
@@ -130,6 +140,16 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     ext = ".avi" if codec == "XVID" else ".mp4"
     write_individual_videos = bool(out_cfg.get("write_individual_videos", True))
     today = date.today().strftime("%Y-%m-%d")
+
+    rec_cfg = config.get("recovery", {}) or {}
+    recovery_enabled = bool(rec_cfg.get("enabled", False))
+    guard_cfg = GuardConfig.from_config(rec_cfg)
+    recovery_cfg = RecoveryConfig.from_config(rec_cfg)
+    rec_score_threshold = rec_cfg.get("score_threshold")
+    rec_score_threshold = score_threshold if rec_score_threshold is None else float(rec_score_threshold)
+    tracks_cfg = config.get("tracks", {}) or {}
+    tracks_enabled = bool(tracks_cfg.get("enabled", True))
+    area_plot_enabled = bool(tracks_cfg.get("area_plot", True))
 
     # ---- Frames ----
     logger.info("Extracting frames from %s ...", video_path)
@@ -195,6 +215,29 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
             video_path=str(video_path), config=config)
         logger.info("ContactTrackerV2 initialized")
 
+    # ---- History file + area guard ----
+    tracks_writer = None
+    if tracks_enabled:
+        tracks_writer = TracksWriter(
+            run_dir / "tracks" / str(tracks_cfg.get("file", "tracks.jsonl.gz")),
+            meta={"video": str(video_path), "fps": fps, "width": width, "height": height,
+                  "num_slots": num_slots, "keypoint_names": list(kpt_names),
+                  "start_frame": start_frame, "sam3_phase_frames": sam3_phase_frames,
+                  "mask_encoding": "COCO RLE, compressed counts, column-major, size [height, width]"},
+            min_part_px=int(tracks_cfg.get("min_part_px", 20)),
+            flush_every=int(tracks_cfg.get("flush_every_frames", 300)))
+    guard = AreaGuard(num_slots, guard_cfg, fps) if (recovery_enabled or area_plot_enabled) else None
+    logger.info("Recovery (area guard + SAM3): %s; tracks file: %s",
+                "on" if recovery_enabled else "off", "on" if tracks_writer else "off")
+
+    def _close_outputs():
+        main_writer.release()
+        for w in unitary_writers:
+            if w is not None:
+                w.release()
+        if tracks_writer is not None:
+            tracks_writer.close()
+
     # ---- Shared state ----
     state = {
         "prev_centroids": [None] * num_slots,
@@ -209,9 +252,13 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         "global_frame_idx": 0,
     }
 
-    def process_frame_outputs(frame_bgr, slot_masks, slot_centroids):
-        """Composites -> YOLO -> keypoint carry-over -> contacts -> render."""
+    def process_frame_outputs(frame_bgr, slot_masks, slot_centroids, phase="cutie",
+                              sources=None, extras=(), events=()):
+        """Composites -> YOLO -> keypoint carry-over -> contacts -> render -> tracks line."""
         gidx = state["global_frame_idx"]
+        default_src = "sam3" if phase == "sam3" else "cutie"
+        sources = [(sources[s] if sources is not None and sources[s] else default_src)
+                   for s in range(num_slots)]
 
         # Mask carry-over
         had_carry = False
@@ -229,6 +276,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
             if carried.any():
                 slot_masks[s] = carried
                 slot_centroids[s] = mask_centroid(carried)
+                sources[s] = "carry"
                 had_carry = True
         if had_carry:
             state["carried_mask_frames"] += 1
@@ -275,6 +323,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
                     state["yolo_hit_counts"][slot_idx] += 1
 
         # Keypoint carry-over
+        kp_missing = [d is None for d in slot_detections]
         missing_before = sum(1 for d in slot_detections if d is None)
         slot_detections = _carry_over_keypoints(
             slot_detections, state["prev_slot_dets"],
@@ -333,6 +382,12 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
             if slot_masks[s] is not None:
                 state["prev_masks"][s] = slot_masks[s].copy()
 
+        if tracks_writer is not None:
+            kp_carried = [kp_missing[s] and slot_detections[s] is not None for s in range(num_slots)]
+            tracks_writer.write_frame(
+                gidx, fps, phase, slot_masks, slot_centroids, sources, slot_detections,
+                kp_carried, extras=extras, events=events)
+
     # ==================================================================
     # PHASE 1 — SAM3
     # ==================================================================
@@ -365,10 +420,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
             logger.error("SAM3 found only %d/%d animals after %d attempt(s); aborting "
                          "(sam3.require_all_animals: true). Check detection.max_animals and the "
                          "first frames of the video.", init["count"], num_slots, init["attempts"])
-            main_writer.release()
-            for w in unitary_writers:
-                if w is not None:
-                    w.release()
+            _close_outputs()
             raise SystemExit(2)
         logger.warning("SAM3 found only %d/%d animals; continuing with partial animals",
                        init["count"], num_slots)
@@ -381,19 +433,24 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
         if local_idx not in sam3_results:
-            process_frame_outputs(frame_bgr, [None] * num_slots, [None] * num_slots)
+            if guard is not None:
+                guard.update(state["global_frame_idx"], [None] * num_slots, [None] * num_slots, act=False)
+            process_frame_outputs(frame_bgr, [None] * num_slots, [None] * num_slots, phase="sam3")
             state["global_frame_idx"] += 1
             continue
 
         raw_masks = sam3_results[local_idx]['masks']
+        raw_scores = list(sam3_results[local_idx].get('scores', []) or [])
         new_centroids = [mask_centroid(m) for m in raw_masks]
         slot_masks = [None] * num_slots
         slot_centroids = [None] * num_slots
+        used_raw = set()
 
         if not first_assignment_done:
             for i in range(min(len(raw_masks), num_slots)):
                 slot_masks[i] = raw_masks[i]
                 slot_centroids[i] = new_centroids[i]
+                used_raw.add(i)
             if any(c is not None for c in slot_centroids):
                 first_assignment_done = True
         else:
@@ -404,8 +461,15 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
                 if slot_idx >= 0:
                     slot_masks[slot_idx] = raw_masks[new_i]
                     slot_centroids[slot_idx] = new_centroids[new_i]
+                    used_raw.add(new_i)
 
-        process_frame_outputs(frame_bgr, slot_masks, slot_centroids)
+        # SAM3 masks given to no animal go to the tracks file as extras
+        sam3_extras = [(np.asarray(raw_masks[i]).astype(bool),
+                        raw_scores[i] if i < len(raw_scores) else None)
+                       for i in range(len(raw_masks)) if i not in used_raw]
+        if guard is not None:
+            guard.update(state["global_frame_idx"], slot_masks, slot_centroids, act=False)
+        process_frame_outputs(frame_bgr, slot_masks, slot_centroids, phase="sam3", extras=sam3_extras)
         last_good_slot_masks = [m.copy() if m is not None else None for m in slot_masks]
         state["global_frame_idx"] += 1
 
@@ -419,10 +483,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         logger.error("Handoff has %d/%d animals: one was lost during the SAM3 phase. Aborting "
                      "(sam3.require_all_animals: true); a missing animal cannot be recovered later.",
                      handoff_count, num_slots)
-        main_writer.release()
-        for w in unitary_writers:
-            if w is not None:
-                w.release()
+        _close_outputs()
         raise SystemExit(2)
 
     # ==================================================================
@@ -432,10 +493,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     index_mask, num_objects = slot_masks_to_index_mask(last_good_slot_masks, frame_shape)
     if num_objects == 0:
         logger.error("Phase 1 produced no masks. Cannot start Cutie.")
-        main_writer.release()
-        for w in unitary_writers:
-            if w is not None:
-                w.release()
+        _close_outputs()
         return run_dir
 
     logger.info("Loading Cutie and seeding with handoff masks...")
@@ -449,10 +507,21 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     del handoff_frame, phase1_frames  # streaming mode: the SAM3-phase frames are no longer needed
 
     # ==================================================================
-    # PHASE 2 — Cutie (pure tracking, no safety)
+    # PHASE 2 — Cutie (+ area guard and SAM3 recovery when enabled)
     # ==================================================================
     logger.info("=== PHASE 2: Cutie tracking frames [%d, %d) ===",
                 sam3_phase_frames, num_frames)
+
+    recovery = None
+    if recovery_enabled:
+        recovery = MaskRecovery(
+            num_slots, guard, recovery_cfg,
+            segment_fn=lambda crop: sam3_image_segment(
+                sam3_model, sam3_processor, crop, text_prompt=text_prompt, device=device,
+                score_threshold=rec_score_threshold),
+            background_bgr=background)
+    phase2_sam3_calls = 0
+    reinjections = 0
 
     # (gidx, frame_rgb) with gidx = index within the run (0 = start_frame), identical in both modes.
     if preload_all_frames:
@@ -470,7 +539,20 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         slot_masks = cutie.id_mask_to_slot_masks(id_mask, num_slots)
         slot_centroids = [mask_centroid(m) if m is not None else None for m in slot_masks]
 
-        process_frame_outputs(frame_bgr, slot_masks, slot_centroids)
+        sources, extras, events = None, (), ()
+        if recovery is not None:
+            step = recovery.step(gidx, frame_rgb, slot_masks, slot_centroids)
+            slot_masks, slot_centroids = step.slot_masks, step.slot_centroids
+            sources, extras, events = step.sources, step.extras, step.events
+            phase2_sam3_calls += step.sam3_calls
+            if step.reinject_index_mask is not None:
+                cutie.reinject_masks(frame_rgb, step.reinject_index_mask, num_slots)
+                reinjections += 1
+        elif guard is not None:
+            guard.update(gidx, slot_masks, slot_centroids, act=False)
+
+        process_frame_outputs(frame_bgr, slot_masks, slot_centroids, phase="cutie",
+                              sources=sources, extras=extras, events=events)
         state["global_frame_idx"] += 1
         if state["global_frame_idx"] % 500 == 0:
             logger.info("Processed %d/%d frames", state["global_frame_idx"], num_frames)
@@ -483,12 +565,28 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     # ==================================================================
     # Finalize
     # ==================================================================
-    main_writer.release()
-    for w in unitary_writers:
-        if w is not None:
-            w.release()
+    if guard is not None:
+        guard.finalize(state["global_frame_idx"] - 1)
+    _close_outputs()
     logger.info("Output videos written: %s", overlays_dir)
     cutie.cleanup()
+
+    if recovery is not None:
+        by_outcome = guard.summary()
+        logger.info("Recovery: %d episode(s) %s, %d attempt(s), %d re-injection(s), %d SAM3 call(s)",
+                    len(guard.episodes), by_outcome or "", recovery.attempts, reinjections,
+                    phase2_sam3_calls)
+    if guard is not None and area_plot_enabled:
+        try:
+            png = plot_area(guard.frame_series, guard.ratio_series, fps,
+                            [ep.as_dict() for ep in guard.episodes], colors,
+                            guard_cfg.low_ratio, guard_cfg.high_ratio,
+                            run_dir / "tracks" / "area_per_rat.png",
+                            title=f"{video_path}  ({num_slots} animals)")
+            if png is not None:
+                logger.info("Area plot written: %s", png)
+        except Exception:  # noqa: BLE001  a plot must never fail the run
+            logger.warning("Could not write the area plot", exc_info=True)
 
     if contact_tracker is not None:
         summary = contact_tracker.finalize()

@@ -9,7 +9,9 @@ contact classification. Runs locally (short clips) and on UQ Bunya HPC (full vid
 
 **`cutie_composite`** (`src/pipelines/cutie_composite/`) — production default.
 1. SAM3 text-prompt bootstrap on the first 125 frames (needs `HF_TOKEN`)
-2. CUTIE propagates one labelled index mask (identity comes from CUTIE)
+2. CUTIE propagates one labelled index mask (identity comes from CUTIE); an area guard (`recovery:`) re-runs SAM3 on a crop when
+   an animal's mask falls below 40 % / rises above 160 % of its median or disappears for 3 frames, and re-injects the corrected masks
+   (`area_guard.py`, `recovery.py`). Every mask, keypoint and id per frame goes to `<run>/tracks/tracks.jsonl.gz` (`tracks.py`)
 3. Per-animal composite: other animals are erased using a background plate
 4. YOLO pose (`models/yolo/yolo26_v11.pt`) on each composite
 5. `ContactTrackerV2` (`src/common/contacts_v2.py`): 5 types N2N / N2AG / N2B / SBS / FOL + dynamics (`contact_rules_v3: true` in the cutie configs)

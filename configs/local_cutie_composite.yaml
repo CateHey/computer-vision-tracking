@@ -43,14 +43,51 @@ cutie:
   max_mem_frames: 5
   use_long_term: true
 
-safety:
-  checkpoint_interval: 150
-  checkpoint_iou_threshold: 0.85
-  protection_enabled: true
-  fusion_enabled: true
-  max_search_frames: 30
-  fusion_area_tolerance: 0.15
-  fusion_min_growth: 1.5
+recovery:
+  # Area guard + SAM3 recovery in the CUTIE phase (area_guard.py, recovery.py).
+  # Each animal's mask area is compared with its own median of the last baseline_seconds;
+  # below low_ratio, above high_ratio or no mask for sustain_frames frames in a row raises the
+  # flag -> SAM3 on a crop around the animals involved, identities re-assigned by overlap with
+  # each animal's last healthy mask + centroid distance, corrected masks re-injected into CUTIE.
+  enabled: true
+  low_ratio: 0.40                  # area below 40 % of its median: being eaten or lost
+  high_ratio: 1.60                 # area above 160 %: eating a neighbour or leaking into the background
+  sustain_frames: 3                # the flag must hold this many frames in a row
+  baseline_seconds: 3.0            # window of the per-animal median (healthy frames only)
+  min_baseline_samples: 15         # no flag until the median has this many frames
+  healthy_band: [0.80, 1.25]       # frames inside this band feed the median and the healthy reference
+  retry_fast_every: 3              # failed attempt -> retry every 3 frames ...
+  retry_fast_seconds: 5.0          # ... during the first 5 s of the episode ...
+  retry_slow_every: 10             # ... then every 10 frames while the flag holds
+  verified_cooldown_frames: 30     # SAM3 agreed with CUTIE (e.g. rearing): pause those animals
+  score_threshold: null            # SAM3 score threshold for recovery; null = sam3.score_threshold
+  crop_margin: 0.30                # crop around the animals involved, padded by 30 % per side
+  crop_min_size: 192               # px
+  crop_max_frame_fraction: 0.60    # bigger crops fall back to the full frame
+  touch_px: 6                      # animals within this distance of a flagged one join the group
+  centroid_weight: 0.5             # cost = (1 - overlap with last healthy mask) + 0.5 x centroid distance
+  centroid_scale_px: 165           # centroid distance unit (about one body length on the 6-rat video)
+  max_predict_px: 120              # last healthy mask is moved by its velocity, at most this far
+  verify_iou: 0.80                 # SAM3 vs CUTIE overlap that counts as "CUTIE was right"
+  foreign_overlap: 0.50            # drop SAM3 candidates lying mostly on an animal outside the group
+  min_candidate_px: 20
+  residual:                        # animal still missing: look where the frame differs from the background
+    enabled: true
+    diff_threshold: 25             # grey-level difference to the background plate
+    open_px: 3
+    cover_dilate_px: 5             # ignore pixels this close to other animals' masks
+    refine_with_sam3: true         # clean the residual blob with SAM3 on a crop around it
+    refine_min_iou: 0.30
+
+tracks:
+  # tracks/tracks.jsonl.gz: one line per frame with every animal's mask (COCO RLE), area, number of
+  # mask pieces, centroid, source (sam3/cutie/recovered/carry), 7 keypoints, unassigned SAM3 masks and
+  # recovery events. About 20-40 MB for 10 min with 6 animals.
+  enabled: true
+  file: tracks.jsonl.gz
+  min_part_px: 20                  # pieces smaller than this are not counted in n_parts
+  flush_every_frames: 300          # the file stays readable if the job is killed
+  area_plot: true                  # tracks/area_per_rat.png: area / median per animal with the episodes
 
 composition:
   erase_dilate_px: 15

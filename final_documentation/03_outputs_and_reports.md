@@ -15,6 +15,9 @@ outputs/runs/<YYYY-MM-DD_HHMMSS>_cutie_composite/
 │   └── cutie_unitary_ratN_<date>.avi # one isolated video per animal
 ├── logs/
 │   └── run.log
+├── tracks/                       # tracks.enabled (on by default)
+│   ├── tracks.jsonl.gz           # one line per frame: every mask, keypoint and id (see below)
+│   └── area_per_rat.png          # mask area / own median per animal, recovery episodes shaded
 └── contacts/                     # only when contacts.enabled=true
     ├── results.xlsx              # the reported tables, one workbook  <-- the file to keep
     ├── diagnostics.xlsx          # tracker diagnostics: not validated, not for reporting
@@ -36,6 +39,20 @@ keep them instead.
 
 `cutie_composite` has no chunk mode, so there is no batch/merge layout for it. The
 parallel runner and chunk merger belong to the older `centroid` pipeline.
+
+### The tracks file
+
+`tracks/tracks.jsonl.gz` is the full history of the run, about 20–40 MB for 10 minutes
+with 6 animals. The first line is `{"meta": ...}` (video, fps, size, number of animals,
+keypoint names); then one JSON line per frame with, for each animal: mask area,
+`n_parts` (2+ = the mask is split in pieces), centroid, `src` (`sam3`, `cutie`,
+`recovered` when the SAM3 recovery replaced CUTIE's mask, `carry` when carried over
+from the previous frame), the mask as a COCO run-length encoding (`rle`), the 7
+keypoints `[x, y, conf]` and `kp_carry`. `extra` lists SAM3 masks that were given to no
+animal, and `events` the flags and recovery attempts on that frame. The file is
+flushed every 300 frames, so a run that is killed keeps what it wrote. Read it with
+`read_tracks` and `rle_decode` in `src/pipelines/cutie_composite/tracks.py` (pycocotools
+decodes the masks too).
 
 ### The videos
 
