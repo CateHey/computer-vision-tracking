@@ -19,6 +19,7 @@ from overhead video. Written as the methods reference for the paper.
 | [06_open_issues_research.md](06_open_issues_research.md) | What Live Mouse Tracker, MARS, SimBA and A-SOiD do about each open point, and the decisions taken |
 | [07_methods_text.md](07_methods_text.md) | Paper-ready Methods draft with every parameter sourced; values in brackets to fill from the final runs |
 | [08_paper_readiness.md](08_paper_readiness.md) | Reviewer checklist: what is covered where, what remains before submission |
+| [09_contact_update_2026-11.md](09_contact_update_2026-11.md) | **Start here if you knew the October 2026 version:** what was wrong, what the contact rules do now and why, groups and subtypes, and the before / after on the annotated 10 s clip |
 
 ---
 

@@ -102,7 +102,8 @@ investigation-bout precision (from `contacts/investigation_bouts.csv`) and ident
 reported; update it when one is resolved.
 
 `final_documentation/` is the current reference (01 pipeline, 02 contact detection, 03 outputs and reports,
-04 model comparison, 05 contact computation: formulas, parameters and code references per contact type). `docs/` is older design history (see `docs/README.md`).
+04 model comparison, 05 contact computation: formulas, parameters and code references per contact type,
+09 the November 2026 contact update in one page: before / after, groups and subtypes). `docs/` is older design history (see `docs/README.md`).
 
 ## Conventions
 
