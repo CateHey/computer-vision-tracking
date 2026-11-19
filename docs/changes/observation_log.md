@@ -134,6 +134,46 @@ Watch: lateral N2N competing with SBS when two rats walk side by side with heads
 
 ---
 
+### Entry 003 — N2AG gaze factor ignored with the nose on the rear (fix to Entry 002)
+
+- **Date:** 2026-11-19
+- **Video:** same 6-rat clip, run `2026-10-28_091052_cutie_composite`
+- **Pipeline:** cutie_composite, `contact_rules_v3: true`
+- **Commit:** this commit
+
+**How it was tested:** the run saved no masks or keypoints, so both were rebuilt from the
+per-rat overlay videos (the mask is the tinted area; the keypoints are the pure-colour dots)
+and ContactTrackerV2 + post-processing were rerun. With the old rules the rebuilt run gives
+the same type as the original `results.xlsx` in 98.8 % of the pair-frames, and its 21 Events
+match within 1-3 frames (2 lost, 2 gained), so the inputs are faithful.
+
+**Observation:**
+- `CONTACT`: with the Entry 002 rules, 88 of the 190 frames annotated as N2AG came out as
+  N2B zone "rear": same pair, frames and investigator, wrong type.
+
+**Problem:** the stronger N2AG gaze factor (0.2 + 0.8 (cos + 1) / 2) compares the head
+direction with the direction nose -> rear. With the nose on the rear that vector is a few px
+long and points anywhere, so the N2AG score fell (e.g. 0.75 -> 0.35) and N2B won.
+
+**Action:** `_score_n2ag` skips the gaze factor when the nose is within `n2ag_close_bl`
+(0.20 BL) of the rear; further away it still applies. Test:
+`test_n2ag_gaze_is_ignored_with_the_nose_on_the_rear`.
+
+**Result** (frame by frame against the 35 non-tentative manual annotations):
+
+| | Old rules (rebuilt) | Entry 002 | Entry 003 |
+|---|---|---|---|
+| Contact frames found (recall) | 0.656 | 0.695 | **0.717** |
+| Contact frames correct (precision) | 0.719 | 0.745 | 0.735 |
+| Same type when both see contact | 0.845 | 0.533 | 0.837 |
+| Cohen's kappa (6 classes) | 0.609 | 0.524 | **0.645** |
+| Annotations with the same type in Events | 17/35 | 16/35 | **19/35** |
+| Annotated N2AG frames labelled N2AG | 129/190 | 32/190 | **140/190** |
+
+134 tests pass. _Pending: a fresh run on the HPC (the comparison above uses rebuilt inputs)._
+
+---
+
 <!-- TEMPLATE: Copy this for new entries
 
 ### Entry NNN — [Short description]

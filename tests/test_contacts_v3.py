@@ -266,3 +266,18 @@ def test_events_carry_v3_columns_and_following_episodes_merge():
     r = fol.iloc[0]
     assert (r.start_frame, r.end_frame, r.composition, r.n_events) == (10, 69, "FOL+N2AG", 2)
     assert following_episodes(df.drop(columns=["n2ag_subtype"]), ev, 30.0, DEFAULT_CONFIG) is None
+
+
+def test_n2ag_gaze_is_ignored_with_the_nose_on_the_rear():
+    """At <= 0.20 BL the direction nose -> rear is a few px long and points anywhere: the
+    gaze factor must not sink N2AG (it turned annotated N2AG into N2B 'rear')."""
+    new = ContactClassifier("0_1", 0, 1, V3)
+    old = ContactClassifier("0_1", 0, 1, {})
+    kw = dict(nose_j_rear_i_bl=2.0, nose_i=(100.0, 100.0), nose_j=(400.0, 100.0),
+              rear_i=(300.0, 100.0), rear_j=(103.0, 100.0), orient_i=(-1.0, 0.0), orient_j=(1.0, 0.0))
+    on_rear = new._score_n2ag(0.05, **kw)                       # 3 px "behind" the nose
+    assert on_rear == (pytest.approx(1.0), "i")
+    assert old._score_n2ag(0.05, **kw)[0] == pytest.approx(0.4)    # v2 kept its 0.4 floor
+    # further away the gaze still counts: looking away at 0.25 BL scores low
+    far = new._score_n2ag(0.25, **{**kw, "rear_j": (125.0, 100.0)})
+    assert far[0] == pytest.approx(0.2)
