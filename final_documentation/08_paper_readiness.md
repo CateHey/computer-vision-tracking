@@ -15,6 +15,9 @@ Tick items off here. Last update: 2026-10-28.
 | Recall proxy (no-contact windows), inter-rater κ | `validate_contacts.py --nc-per-run` (20 per run in `slurm/run_cutie.sbatch`), `score --compare` (05 §9) |
 | Investigator (who sniffs / follows) accuracy | `investigator_label` / `investigator_ok` in `review.xlsx`, `investigator_accuracy` in `score` (05 §9) |
 | Event boundaries (start / end within ≈ 0.2 s) | `boundaries_ok` in `review.xlsx`, `boundary_accuracy` in `score` (05 §9) |
+| Sub-type accuracy (N2N frontal / perpendicular / lateral, N2AG classic / following, N2B zone) | `subtype_ok` in `review.xlsx`, `subtype_accuracy` in `score` (05 §9) |
+| Groups of look-alike behaviours (FTF, S2S, AGS, BDS, CHS) | `group` in `Events`, `Groups` sheet of `diagnostics.xlsx` (02 §2.8, 05 §4.6) |
+| Frame-level agreement with a manual annotation | 6-mouse clip only, κ 0.645 (`docs/changes/observation_log.md` Entries 002–004); **more annotated video needed** |
 | Investigation-bout precision | `bout_precision` in `score`, from the event verdicts and `investigation_bouts.csv` (05 §9) |
 | Identity persistence over a long session | `validate_contacts.py identity` (checkpoint every 60 s), `identity_check` in `score` (05 §9, 03 §3.7) |
 | Sensitivity of counts to thresholds | `scripts/sensitivity_analysis.py` (03, last section) |

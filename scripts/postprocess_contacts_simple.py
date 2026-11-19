@@ -1313,7 +1313,7 @@ def following_episodes(df: pd.DataFrame, events: pd.DataFrame, fps: float,
     """Following episodes (change 10): per pair, the FOL events and the N2AG events made
     while both animals walk (n2ag_subtype "following" in at least half of their frames),
     merged when the same animal leads the chase and the gap is at most following.max_gap_sec.
-    One rat sniffing the other's rear while trailing it and then dropping back to follow
+    One animal sniffing the other's rear while trailing it and then dropping back to follow
     becomes one episode instead of alternating N2AG / FOL events.
 
     None when the per-frame table has no n2ag_subtype column (runs without contact_rules_v3)."""

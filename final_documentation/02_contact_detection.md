@@ -78,6 +78,11 @@ The exact formulas, thresholds and code locations are in
 FOL sits in a *non-contact* family: following is a social behaviour but not
 physical contact, and grouping it as such keeps "contact time" honest.
 
+Since 2026-11-19 the production configs run with `contact_rules_v3: true`, which changes how
+several of these types are decided (body masks without tail, refined nose tip, head circle,
+evidence of touch for N2AG, N2B competing with SBS) and adds subtypes and groups on top of the
+five types: see [§2.8](#28-contact-rules-v3-and-groups-2026-11).
+
 T2T (tail-to-tail) existed in v1 and was removed in v2.
 
 ---
@@ -102,7 +107,8 @@ between labels.
 
 Two explicit guards remain:
 - **N2B is suppressed** when SBS scores ≥ 0.5, so a side-by-side posture is not
-  relabelled as nose-to-body.
+  relabelled as nose-to-body. *Rules before v3 only:* with `contact_rules_v3: true` N2B
+  competes with SBS (§2.8).
 - **N2B is attenuated** (×0.7) when a more specific contact is near its threshold.
 
 Recording the runner-up (`secondary_type`, `secondary_score`) is a genuine
@@ -275,6 +281,60 @@ the current output would be not merely incomplete but **mis-attributed**.
   `NC`. Both labels end up in the same output column. Cosmetic, but it inflates
   the event count and must be normalised before analysis (the HTML viewer does
   this).
-- **No ground truth.** Thresholds are justified from the literature and by visual
-  inspection. No frame-level agreement against manual scoring has been computed.
-  That remains the main gap before publication.
+- **Little ground truth.** Thresholds are justified from the literature and by visual
+  inspection. The only frame-level comparison against manual scoring is the 6-mouse 10 s clip
+  (35 manual annotations, 2026-11, `docs/changes/observation_log.md` Entries 002–004):
+  Cohen's κ 0.61 with the old rules, 0.645 with v3. One clip by one annotator; more annotated
+  video is still the main gap before publication.
+
+---
+
+## 2.8 Contact rules v3 and groups (2026-11)
+
+Turned on by `contact_rules_v3: true` in `configs/local_cutie_composite.yaml` and
+`hpc_cutie_composite.yaml`; `false` reproduces the earlier rules. Formulas and parameters in
+[05 §4.6](05_contact_computation.md#46-contact-rules-v3-contact_rules_v3-true).
+
+**Geometry.** Every touch test uses a **body mask without tail** (morphological opening with a
+disk of 0.10 BL, largest component kept; the video still shows the full masks) and the
+**refined nose tip** (the most forward border pixel of the animal's own mask within 0.15 BL of
+the nose keypoint, which sits about 5 px inside the head). Around the tip a **head circle** of
+0.08 BL (about 13 px at 165 px BL) replaces the fixed 6 px window; calibrated on the clip
+against the manual annotation (05 §4.6). A mask much larger than the animal's usual one is
+flagged `suspect_mask`.
+
+**Per type.**
+
+| Type | v3 rule |
+|------|---------|
+| N2N | Score barely penalises heads side by side (lateral factor 0.85, was 0.3). Subtype **frontal / perpendicular / lateral** from the head directions |
+| N2AG | Nose tip ≤ 0.30 BL from the rear **and** evidence of touch (head circle on the body, ≤ 0.20 BL, or slow there ≥ 5 frames). Gaze factor 0.2 + 0.8·(cos+1)/2, ignored when the nose is ≤ 0.20 BL from the rear. Subtype **classic / following** (both animals ≥ 0.5 BL/s) |
+| N2B | Head circle on the other's **body** mask; no longer zeroed by SBS. Subtype = zone touched **head / torso / rear**. A nose on the tail only is the flag `nose_on_tail`, not contact |
+| SBS | Shared border measured on body masks; contact with the tail is reported apart (`tail_contact_bl`) |
+| FOL | Annulled only by a real touch (body masks or a head circle on the body), not by distance < 0.5 BL |
+
+**Confidence flags.** `low_confidence`: the bodies touch but no type reaches 0.5; the best
+type ≥ 0.35 is assigned and flagged. `ambiguous`: primary − secondary < 0.10.
+
+**Groups.** Types that look alike are joined in three levels, group (safest) > type > subtype,
+from the table `groups` in `configs/contacts_postprocess_simple.yaml`:
+
+| Group | Label | Type / subtype |
+|-------|-------|----------------|
+| FTF | Face-to-face | N2N frontal, perpendicular |
+| S2S | Side-to-side | SBS; N2N lateral |
+| AGS | Anogenital sniffing | N2AG classic |
+| BDS | Body sniffing | N2B (any zone) |
+| CHS | Chase | FOL; N2AG following |
+| NC | No contact | — |
+
+Each type + subtype maps to one group, so totals by group never count a frame twice. On the
+clip, 19 of the 20 frames annotated as SBS that the program called N2N were lateral N2N, i.e.
+the same group. The **Following** sheet is the CHS group seen as episodes (consecutive FOL and
+N2AG-following events of one follower merged).
+
+**Measured on the 6-mouse clip** (rebuilt inputs; observation log Entries 002–004): contact
+frames found 66 % → 72 %, correct among labelled 72 % → 74 %, type agreement 85 % → 84 %,
+κ 0.61 → 0.645. Still open: lateral N2N competing with SBS, the walking threshold of the N2AG
+subtype (to calibrate against annotated walking), and the subtypes themselves, which the
+manual annotation does not cover (`subtype_ok` in the clip review, 03 §3.7).

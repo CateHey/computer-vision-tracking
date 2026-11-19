@@ -117,6 +117,10 @@ mid_body→tail_start and the closer projection wins.
 Each type gets a score in [0, 1] every frame. Below, `Rt(x, a, b)` is the reversed
 trapezoid and `Ru(x, a, b)` the ramp-up of section 2.
 
+§4.1–4.5 are the rules with `contact_rules_v3: false`. The production configs set it to `true`
+since 2026-11-19; §4.6 lists what v3 changes on top of them. Line numbers refer to the code
+before v3 and have shifted.
+
 ### 4.1 N2N — nose-to-nose (`_score_n2n`, line 1341)
 
 ```
@@ -189,6 +193,54 @@ s_ij  = in_ij * guard * gaze_i(toward centroid_j)
 
 Larger direction wins and names the investigator. Because the test is "nose pixel inside
 the other's mask", N2B needs the masks to be accurate at the contact point.
+
+### 4.6 Contact rules v3 (`contact_rules_v3: true`)
+
+Agreed after the frame-by-frame comparison of the 6-mouse clip with a manual annotation
+(observation log Entries 002–004). Parameters in `configs/*_cutie_composite.yaml`.
+
+**Geometry, once per animal and frame** (`ContactTrackerV2.update`):
+
+```
+body_mask  = opening(mask, disk of body_mask_open_bl=0.10 BL), largest component,
+             border restored inside the mask                         # body_mask()
+suspect    = area(mask) > suspect_mask_ratio=1.4 x median(last 300 areas)   # after 30 frames
+tip_i      = most forward border pixel of mask_i along ears-mid -> nose, within
+             nose_tip_search_bl=0.15 BL of the nose keypoint          # refined_nose_tip()
+head_ij    = disk(tip_i, head_circle_bl=0.08 BL of i) touches body_mask_j   # mask_touches_disk()
+nose_on_tail = disk touches mask_j but not body_mask_j                # flag only
+physical   = body contact >= body_touch_min_bl=0.02 BL or head_ij or head_ji
+```
+
+`tip_*` replaces the nose keypoint in every contact distance. The head-circle radius was
+calibrated against the manual annotation (409 annotated nose-contact frames vs ~7 900 without
+annotation): the old 6 px square at the keypoint against the full mask found 268 with 82 false;
+the v3 circle found 269 / 39 false at 8 px and 314 / 52 false at 13 px (0.08 BL, kept).
+
+**Per type:**
+
+```
+N2N : face = n2n_lateral_factor + (1 - n2n_lateral_factor) * (cos_face + 1) / 2   # 0.85
+      subtype frontal (heads > 135 deg apart) / lateral (< 45 deg) / perpendicular
+N2AG: evidence_ij = head_ij or d_ij <= n2ag_close_bl (0.20) or slow (<= n2ag_slow_bls 0.15)
+                    for >= n2ag_slow_frames (5) frames within 0.30 BL
+      s_ij *= gaze(floor n2ag_gaze_floor=0.2) only if d_ij > 0.20 BL   # direction is noise closer
+      s_ij *= n2ag_no_evidence_factor (0.45) if not evidence_ij
+      subtype following if min(speed_i, speed_j) >= n2ag_walking_bls (0.5) else classic
+N2B : in_ij = head_ij (body mask, no tail); no SBS suppression; zone of the receiver from the
+      axis parameter t: head < 0.20 <= torso < 0.75 <= rear
+SBS : mask_contact_bl measured on body masks; tail_contact_bl = full - body contact
+FOL : 0 only if physical (replaces the < 0.5 BL and mask-border guards)
+```
+
+**After the argmax:** `low_confidence` — if `physical` and no type ≥ its threshold, the best of
+N2N / N2AG / SBS / N2B with score ≥ `low_confidence_min_score` (0.35) is assigned and flagged;
+`ambiguous` — primary − secondary < `ambiguous_margin` (0.10).
+
+**Groups** (post-processing, `groups` table in `contacts_postprocess_simple.yaml`): each event
+gets `group` from its type and most frequent subtype — FTF (N2N frontal / perpendicular), S2S
+(SBS, N2N lateral), AGS (N2AG classic), BDS (N2B), CHS (FOL, N2AG following), NC. One group per
+event; `real_group` in PerFrame is the group of the frame's event.
 
 ---
 
@@ -273,6 +325,19 @@ per-animal and pair tables and every count in this section are unchanged, apart 
 `PerAnimal` columns `n_investigation_bouts` and `investigation_bouts_per_min`. `bout_id` is unique
 over the session and ordered by start frame, then pair.
 
+**Brief interactions** (`brief_labels`, `brief_events`; `diagnostics.xlsx` → `Brief`): the runs
+that survive smoothing and gap bridging but that the minimum-duration filters remove whole, when
+at least `brief.min_frames` (3) long; `near_event` names an event of the same pair within
+`gap_bridging.max_gap` frames. They never overlap `Events`, which is unchanged.
+
+**Following episodes** (`following_episodes`; `Following`, v3 runs): FOL events plus N2AG events
+whose frames are `n2ag_subtype = following` in at least half, merged per pair when the follower
+(`investigator_slot`) is the same and the gap ≤ `following.max_gap_sec` (0.5 s).
+
+**Groups and similarity** (`add_event_groups`, `group_summary`, `type_similarity`): the `group`
+/ `group_label` columns of Events and Brief, the `Groups` totals and the `Similarity` table (per
+type, % of its frames whose `secondary_type` is each other type).
+
 ---
 
 ## 8. Several animals: what pairwise independence means
@@ -338,6 +403,7 @@ reviewer against the footage, and `score` turns the answers into one `validation
 | No contact where none is reported | 20 no-contact (NC) windows per run (`--nc-per-run 20`, set in `slurm/run_cutie.sbatch`): `nc_correct` / `missed_contact` | `recall_proxy`: miss rate with CI, missed types |
 | Who investigates (N2AG, N2B; the follower for FOL) | `investigator_label` is prefilled from `investigator_slot` and shown as `R2 → R3` in `index.html` and the clip banner; the reviewer answers `investigator_ok` yes / no on real events (`na` is prefilled where there is no investigator) | `investigator_accuracy`, overall and per type: yes / (yes + no), Wilson CI |
 | When an event starts and ends | `boundaries_ok` yes / no: start and end within about 0.2 s of where the reviewer would put them | `boundary_accuracy`, overall and per type |
+| The subtype of an event (v3: N2N frontal / perpendicular / lateral, N2AG classic / following, N2B zone) | `review.xlsx` shows `group`, `group_label`, `contact_type`, `contact_label`, `subtype`; the reviewer answers `subtype_ok` yes / no on real events (`na` prefilled where there is no subtype) | `subtype_accuracy`, overall and per type + subtype (e.g. "N2AG following") |
 | Investigation bouts (N2N + N2AG + N2B merged per pair, §7) | no extra review: every reviewed N2N / N2AG / N2B event is mapped to the bout of its pair that overlaps its frames (`investigation_bouts.csv`) | `bout_precision` |
 | The labels stay on the same animal over a long session | `identity` subcommand: a labelled frame every 60 s, `identity_ok` yes / no / unsure per animal and checkpoint | `identity_check` |
 | Two people reach the same verdict | `score --compare` on two filled `review.xlsx` | Cohen's kappa |
@@ -444,12 +510,12 @@ rather than mislabelled.
 | Item | Where | Status |
 |------|-------|--------|
 | First 25 frames use a 120 px body length (37 % off on the 6-mouse video) | `BodyLengthEstimator.current`, line 790 | set `fallback_body_length_px`, or warm up from the first observations |
-| Bout minimum (6 / 12 frames) ≠ event minimum (9 frames) | sections 6–7 | choose one; the events are what is reported |
+| Bout minimum (6 / 12 frames) ≠ event minimum (9 frames) | sections 6–7 | choose one; the events are what is reported. The runs of 3–8 frames removed by the event minimum are listed in `Brief` (§7) |
 | No cross-pair consistency (one nose in two N2N) | section 8 | a rule or a per-frame flag for multi-contact frames |
 | SBS can latch on the very first frames (velocity history empty, body length provisional) | `_score_sbs` + section 2 | review such events with extra care; a warm-up exclusion is an option |
 | Mask IoU and `high_mask_overlap` are meaningless with CUTIE | section 2 | keep as zero or drop the column |
 | `min_keypoint_conf` for the contacts is the code default 0.3 (not in the YAML) | `ContactClassifier.__init__` | add to the config if it is to be tuned |
 | `stale_keypoints` was never set: carried-over keypoints looked like detections | `_carry_over_keypoints`, `classify` | fixed 2026-10-25: `Detection.carried` is propagated to the flag |
-| N2B needs the nose *pixel* inside the other mask; with disjoint CUTIE masks it almost never fires, so flank sniffing is under-counted | `_score_n2b`, line 1532 | use the distance from the nose to the other mask (e.g. within 4 px, as `mask_contact_px` does) |
+| N2B needs the nose *pixel* inside the other mask; with disjoint CUTIE masks it almost never fires, so flank sniffing is under-counted | `_score_n2b`, line 1532 | 6 px radius (2026-10-27); v3 (2026-11-19): head circle of 0.08 BL around the refined nose tip on the body mask, calibrated on the annotated clip (§4.6) |
 | Contact = nose within 0.30 BL (about 2.7 cm for a 9.5 cm mouse), latched until 0.45 BL; this is proximity, not touch | `contact_zone_bl_enter/_exit` | the cm values are reported (section 9); measure `cm_per_px` for the arena and decide the distance the paper calls contact |
 | One pair-event per pair: an animal in two simultaneous contacts contributes two events and twice the contact time | section 8 | `per_animal_summary.csv` gives the per-animal union (section 9); define the per-group count before reporting |

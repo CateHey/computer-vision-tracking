@@ -111,7 +111,7 @@ contacts:
   fallback_body_length_px: 165       # body length until the estimator warms up (measured 164 px on the 6-mouse video)
   social_anogenital_split: 0.8      # nose projected behind this fraction of nose->mid_body->tail_start = anogenital (ramp 0.7-0.9); MARS's genital boundary is midway hips-tail base (~0.85 on this axis). Was 0.55 until 2026-10-27
   n2b_nose_mask_radius_px: 6        # nose within 6 px (~0.4 cm) of the other mask counts as nose-to-body (LMT-style touching); 0 = nose pixel inside the mask (strict, was the default until 2026-10-27)
-  # --- contact rules v3 (2026-11, after the manual comparison of the 6-rat clip). false = the
+  # --- contact rules v3 (2026-11, after the manual comparison of the 6-mouse clip). false = the
   # rules before 2026-11-18, to reproduce earlier runs. With true:
   #   body masks without tail for every touch test (opening, disk body_mask_open_bl); refined nose
   #   tip + head circle (head_circle_bl) instead of the fixed px radius; N2AG needs evidence of
@@ -126,7 +126,7 @@ contacts:
   n2ag_slow_bls: 0.15               # N2AG evidence: investigator this slow ...
   n2ag_slow_frames: 5               # ... for this many frames in a row within 0.30 BL
   n2ag_gaze_floor: 0.2              # gaze factor 0.2 + 0.8 (cos + 1) / 2 (was 0.4 + 0.6 ...)
-  n2ag_walking_bls: 0.5             # N2AG "following" when both rats move >= this (BL/s); else "classic"
+  n2ag_walking_bls: 0.5             # N2AG "following" when both animals move >= this (BL/s); else "classic"
   n2n_lateral_factor: 0.85          # N2N with heads side by side keeps 85 % of its score
   low_confidence_min_score: 0.35    # bodies touch, no type >= 0.5: best type >= this, flagged
   ambiguous_margin: 0.10            # primary - secondary below this = ambiguous

@@ -57,10 +57,10 @@ Switched to YOLO26 model.
 
 ---
 
-### Entry 002 — Contact rules v3 after the manual comparison of the 6-rat clip
+### Entry 002 — Contact rules v3 after the manual comparison of the 6-mouse clip
 
 - **Date:** 2026-11-19
-- **Video:** 6-rat clip, 10 s (300 frames, 960x960, 30 fps); run `2026-10-28_091052_cutie_composite`
+- **Video:** 6-mouse clip, 10 s (300 frames, 960x960, 30 fps); run `2026-10-28_091052_cutie_composite`
 - **Pipeline:** cutie_composite (ContactTrackerV2 + `postprocess_contacts_simple.py`)
 - **Config:** `configs/local_cutie_composite.yaml` / `hpc_cutie_composite.yaml` with
   `contact_rules_v3: true` (`false` reproduces the earlier rules);
@@ -129,7 +129,7 @@ R5->R6 29-35) give no touch with the new rule; the old rule fired on R1->R4 in 4
 Brief 39 runs (26 isolated), including R2-R6 207-210 and R3-R4 207-210. On the synthetic
 demo the scripted N2B scene (frames 1560-1710) is found at 1593-1675 (old rules: 1644-1652).
 _Pending: rerun the tracker on the real clip with v3 and compare with the manual annotations._
-Watch: lateral N2N competing with SBS when two rats walk side by side with heads level
+Watch: lateral N2N competing with SBS when two animals walk side by side with heads level
 (noses ~0.30 BL apart); `social_anogenital_split` 0.65-0.7; SBS subtypes.
 
 ---
@@ -137,7 +137,7 @@ Watch: lateral N2N competing with SBS when two rats walk side by side with heads
 ### Entry 003 — N2AG gaze factor ignored with the nose on the rear (fix to Entry 002)
 
 - **Date:** 2026-11-19
-- **Video:** same 6-rat clip, run `2026-10-28_091052_cutie_composite`
+- **Video:** same 6-mouse clip, run `2026-10-28_091052_cutie_composite`
 - **Pipeline:** cutie_composite, `contact_rules_v3: true`
 - **Commit:** this commit
 
@@ -177,7 +177,7 @@ long and points anywhere, so the N2AG score fell (e.g. 0.75 -> 0.35) and N2B won
 ### Entry 004 — Contact groups, similarity table, full following sequence, walking threshold
 
 - **Date:** 2026-11-19
-- **Video:** same 6-rat clip (rebuilt inputs, see Entry 003)
+- **Video:** same 6-mouse clip (rebuilt inputs, see Entry 003)
 - **Pipeline:** cutie_composite, `contact_rules_v3: true`
 - **Commit:** this commit
 
@@ -222,7 +222,30 @@ long and points anywhere, so the N2AG score fell (e.g. 0.75 -> 0.35) and N2B won
 (kappa 0.645). Groups in the clip: FTF 5 events (3.1 s), S2S 7 (3.3 s), AGS 3 (3.1 s),
 CHS 6 (3.6 s), BDS 4 (1.6 s). The Following sheet is the CHS group seen as episodes. With 0.5
 BL/s, 3 of the 7 N2AG events are classic (were all following); Following 6 -> 5 episodes.
-_Pending: calibrate `n2ag_walking_bls` with the annotator marking which N2AG had both rats walking._
+_Pending: calibrate `n2ag_walking_bls` with the annotator marking which N2AG had both animals walking._
+
+---
+
+### Entry 005 — Clip review shows group and subtype; documentation updated
+
+- **Date:** 2026-11-19
+- **Commit:** this commit
+
+**Action:**
+- `scripts/validate_contacts.py`: `review.xlsx` shows `group`, `group_label`, `contact_type`,
+  `contact_label`, `subtype` in that order (NC windows: `NC` / `No contact`) and has a new
+  reviewer column `subtype_ok` (yes / no / na, `na` prefilled where there is no subtype), with
+  its instructions. `score` reports `subtype_accuracy` overall and per type + subtype
+  (e.g. "N2AG following"), next to investigator and boundary accuracy. This is how the
+  subtypes (OPEN_ISSUES B9) and the walking threshold (B8) get validated.
+- Documentation brought up to date with Entries 002–005: `final_documentation/02` (new §2.8),
+  `03` (diagnostics sheets, Events / PerFrame / Dynamics columns, review columns), `05` (new
+  §4.6, §7, §9, §10), `07` (methods text and parameter table), `08`, `README`; root `CLAUDE.md`,
+  `src/common/CLAUDE.md`, `docs/setup/local.md`; `OPEN_ISSUES.md` (A1, A3, A4 updated; new
+  B7 lateral N2N vs SBS, B8 walking threshold, B9 subtypes not validated).
+- Wording: the animals are mice; "6-rat clip" in Entries 002–004 corrected to "6-mouse clip".
+
+**Result:** 136 tests pass; `sample` on the rebuilt run writes the new columns.
 
 ---
 

@@ -29,8 +29,10 @@ configs are set up for **6 animals**.
 
 **Output.** An overlay video, `results.xlsx` holding the reported tables (per-frame
 geometry, classified events with timestamps, session summary, parameters), a
-`diagnostics.xlsx` with the raw tracker tables that the clip review does not validate, a PDF
-report, and an HTML viewer that reads `results.xlsx`.
+`diagnostics.xlsx` with the tables that the clip review does not validate (brief interactions,
+chase episodes, group totals, type similarity and the raw tracker tables), a PDF report, and an
+HTML viewer that reads `results.xlsx`. Since 2026-11-19 the contact rules run as v3 (body masks
+without tail, refined nose tip, groups FTF / S2S / AGS / BDS / CHS; 02 §2.8).
 
 **Three models, strictly separated roles:**
 

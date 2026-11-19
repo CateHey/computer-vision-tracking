@@ -12,9 +12,9 @@ contact classification. Runs locally (short clips) and on UQ Bunya HPC (full vid
 2. CUTIE propagates one labelled index mask (identity comes from CUTIE)
 3. Per-animal composite: other animals are erased using a background plate
 4. YOLO pose (`models/yolo/yolo26_v11.pt`) on each composite
-5. `ContactTrackerV2` (`src/common/contacts_v2.py`): 5 types N2N / N2AG / N2B / SBS / FOL + dynamics
+5. `ContactTrackerV2` (`src/common/contacts_v2.py`): 5 types N2N / N2AG / N2B / SBS / FOL + dynamics (`contact_rules_v3: true` in the cutie configs)
 6. `scripts/postprocess_contacts_simple.py`: per-pair temporal cleaning
-7. `results.xlsx` (`src/common/excel_report.py`) + `scripts/report_viewer.html`
+7. `results.xlsx` + `diagnostics.xlsx` (`src/common/excel_report.py`) + `scripts/report_viewer.html`
 
 No chunk mode: `scripts/run_parallel.sh` and `scripts/merge_chunks.py` belong to the old centroid pipeline.
 
@@ -29,6 +29,11 @@ Rear/anogenital point = `tail_start` (not `tail_base`).
 
 - SBS uses `mask_contact_bl` (shared-border length in body lengths): CUTIE masks are disjoint, so mask IoU is always 0.
 - Contact types: N2N nose-to-nose, N2AG nose-to-anogenital, N2B nose-to-body, SBS side-by-side, FOL following; NC = none.
+- `contact_rules_v3` (2026-11-19): touch tests on body masks without tail (opening 0.10 BL), refined nose tip + head circle 0.08 BL,
+  N2AG needs evidence of touch, N2B competes with SBS, FOL annulled only by a real touch; subtypes and `low_confidence` / `ambiguous`.
+- Three levels: group (FTF face-to-face, S2S side-to-side, AGS anogenital sniffing, BDS body sniffing, CHS chase, NC) > type > subtype;
+  table `groups` in `configs/contacts_postprocess_simple.yaml`. History and measurements: `docs/changes/observation_log.md`.
+- Everything written to outputs (sheet names, columns, labels) is in English.
 
 ## Other Pipelines
 
@@ -77,7 +82,7 @@ python scripts/postprocess_contacts_simple.py outputs/runs/<run>/contacts/ --mak
 
 ```bash
 python scripts/validate_contacts.py sample outputs/runs/<run> --per-type 15   # one clip per scene (overlapping events), one review row per event
-# reviewer fills verdict / correct_type / investigator_ok / boundaries_ok in <run>/validation/review.xlsx
+# reviewer fills verdict / correct_type / investigator_ok / boundaries_ok / subtype_ok in <run>/validation/review.xlsx
 python scripts/validate_contacts.py score outputs/runs/<run>/validation/review.xlsx
 python scripts/validate_contacts.py sample outputs/runs/<run> --nc-per-run 20   # + 20 no-contact (NC) windows, verdicts nc_correct / missed_contact -> `recall_proxy` in score
 python scripts/validate_contacts.py score --compare <review_A.xlsx> <review_B.xlsx>   # two reviewers -> Cohen's kappa in interrater_summary.{md,json}
@@ -87,8 +92,8 @@ python scripts/sensitivity_analysis.py outputs/runs/<run>   # offline threshold 
 
 A scene groups events that overlap in time (`group_by: scene` in `configs/validation.yaml`; `--group-by event` for one clip each);
 every event of the run inside a scene is listed (`in_sample` false for the extras). Verdicts: real, flicker, wrong_type, tracking_error, unsure; every row also gets
-`investigator_ok` (the named animal is the one sniffing / following) and `boundaries_ok` (start and end within ~0.2 s), each yes / no / na, and `investigator_label` is prefilled.
-`score` writes precision with Wilson CIs per type, flicker rate by duration, min-duration / min-score threshold tables, investigator and boundary accuracy,
+`investigator_ok` (the named animal is the one sniffing / following), `boundaries_ok` (start and end within ~0.2 s) and `subtype_ok` (the subtype is right), each yes / no / na, and `investigator_label` is prefilled; rows show group, type and subtype.
+`score` writes precision with Wilson CIs per type, flicker rate by duration, min-duration / min-score threshold tables, investigator, boundary and subtype accuracy,
 investigation-bout precision (from `contacts/investigation_bouts.csv`) and identity persistence. `slurm/run_cutie.sbatch` samples 20 NC windows in every run. Tests: `pytest tests/`.
 
 ## Documentation

@@ -380,17 +380,19 @@ def _ev_series(sid, pk, ct, a, b, inv=np.nan):
 
 def test_review_prefill_names_the_investigator_and_marks_the_rest_na():
     n2ag = vc.review_prefill(_ev_series("S01.1", "1_2", "N2AG", 10, 40, inv=2))
-    assert n2ag == {"investigator_label": "R3", "investigator_ok": None, "boundaries_ok": None}
+    assert n2ag == {"investigator_label": "R3", "investigator_ok": None, "boundaries_ok": None, "subtype_ok": "na"}
     assert vc.review_prefill(_ev_series("S01.2", "1_2", "FOL", 10, 40, inv=1.0))["investigator_label"] == "R2"
     n2n = vc.review_prefill(_ev_series("S01.3", "0_1", "N2N", 10, 40))
-    assert n2n == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": None}
+    assert n2n == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": None, "subtype_ok": "na"}
     assert vc.review_prefill(_ev_series("S01.4", "0_1", "SBS", 10, 40, inv=0))["investigator_ok"] == "na"
     unknown = vc.review_prefill(_ev_series("S01.5", "0_1", "N2B", 10, 40, inv=np.nan))
     assert unknown["investigator_label"] is None and unknown["investigator_ok"] == "na"
     stray = vc.review_prefill(_ev_series("S01.6", "0_1", "N2B", 10, 40, inv=4))      # not one of the pair
     assert stray["investigator_label"] is None and stray["investigator_ok"] == "na"
     nc = vc.review_prefill(_ev_series("N01.1", "0_1", "NC", 10, 40))
-    assert nc == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na"}
+    assert nc == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na", "subtype_ok": "na"}
+    lat = vc.review_prefill(pd.concat([_ev_series("S01.7", "0_1", "N2N", 10, 40), pd.Series({"subtype": "lateral"})]))
+    assert lat["subtype_ok"] is None                                                 # a subtype to judge
     assert vc.investigator_arrow(_ev_series("x", "1_2", "N2AG", 1, 2, inv=2)) == "R3->R2"
     assert vc.investigator_arrow(_ev_series("x", "1_2", "N2N", 1, 2)) == ""
 
@@ -407,7 +409,8 @@ def test_review_workbook_has_the_investigator_and_boundary_columns(tmp_path):
     ws = wb["review"]
     head = [c.value for c in ws[1]]
     i = head.index("correct_type")
-    assert head[i:i + 5] == ["correct_type", "investigator_label", "investigator_ok", "boundaries_ok", "reviewer"]
+    assert head[i:i + 6] == ["correct_type", "investigator_label", "investigator_ok", "boundaries_ok",
+                             "subtype_ok", "reviewer"]
     assert head[-1] == "notes" and {"start_frame", "end_frame"} <= set(head)
     got = {r[head.index("sample_id")].value: {c: r[head.index(c)].value for c in
                                               ("investigator_label", "investigator_ok", "boundaries_ok")}
@@ -416,7 +419,7 @@ def test_review_workbook_has_the_investigator_and_boundary_columns(tmp_path):
     assert got["S01.2"] == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": None}
     assert got["N01.1"] == {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na"}
     lists = [dv.formula1 for dv in ws.data_validations.dataValidation]
-    assert lists.count('"yes,no,na"') == 2
+    assert lists.count('"yes,no,na"') == 3
     text = "\n".join(str(c.value) for c in wb["Instructions"]["A"])
     assert "investigator_ok" in text and "boundaries_ok" in text and "0.2 s" in text
     assert "recording times" in text and "0.5× speed" in text and "scrub the player to clip_from" in text
@@ -785,3 +788,32 @@ def test_bouts_source_falls_back_to_diagnostics_xlsx(tmp_path):
     (old / "contacts").mkdir(parents=True)
     book(old / "contacts" / "results.xlsx", Bouts=bouts("results"))
     assert list(vc.load_events(old, source="bouts")[0]["tag"]) == ["results"]
+
+
+def test_review_shows_group_and_subtype_and_scores_the_subtype(tmp_path):
+    from openpyxl import load_workbook
+    extra = {"group": "S2S", "group_label": "Side-to-side", "subtype": "lateral"}
+    ev = pd.concat([_ev_series("S01.1", "0_1", "N2N", 10, 40), pd.Series(extra)])
+    nc = _ev_series("N01.1", "0_1", "NC", 100, 189)
+    rows = [{**vc._event_row(e, None, FPS), "clip": "c.mp4", "thumbnail": "t.png", "in_sample": True}
+            for e in (ev, nc)]
+    for r in rows:                                     # what cmd_sample does for NC windows
+        if r["contact_type"] == "NC":
+            r["group"], r["group_label"] = "NC", "No contact"
+    p = tmp_path / "review.xlsx"
+    vc.write_review_xlsx(rows, p)
+    ws = load_workbook(p)["review"]
+    head = [c.value for c in ws[1]]
+    i = head.index("group")
+    assert head[i:i + 5] == ["group", "group_label", "contact_type", "contact_label", "subtype"]
+    vals = [{c: r[head.index(c)].value for c in ("group", "subtype", "subtype_ok")} for r in ws.iter_rows(min_row=2)]
+    assert vals == [{"group": "S2S", "subtype": "lateral", "subtype_ok": None},
+                    {"group": "NC", "subtype": None, "subtype_ok": "na"}]
+    # score: accuracy of the subtype per type and subtype
+    df = pd.DataFrame({"verdict": ["real"] * 4 + ["flicker"], "contact_type": ["N2AG"] * 3 + ["N2N", "N2N"],
+                       "subtype": ["following", "following", "classic", "lateral", "frontal"],
+                       "subtype_ok": ["yes", "no", "yes", "na", "no"]})
+    acc = vc.review_accuracy(df, "subtype_ok", by="type_subtype")
+    assert acc["overall"]["n_scored"] == 3 and acc["overall"]["n_yes"] == 2       # na and flicker excluded
+    assert set(acc["per_type"]) == {"N2AG following", "N2AG classic"}
+    assert acc["per_type"]["N2AG following"]["accuracy"] == 0.5

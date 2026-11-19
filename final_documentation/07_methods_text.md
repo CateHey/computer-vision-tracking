@@ -51,29 +51,49 @@ quantities, and the behaviour with the highest score above its activation thresh
 nose-to-anogenital, following, side-by-side, nose-to-body. Distance criteria had hysteresis
 (enter / leave thresholds) to avoid frame-to-frame flicker.
 
-- **Nose-to-nose (N2N).** Nose points within 0.30 BL (**[3.0 cm]**; leave at 0.45 BL), weighted
-  by how directly the two heads face each other. Live Mouse Tracker's criterion is 26 mm
-  between nose points.
-- **Nose-to-anogenital (N2AG).** The nose of the investigating animal within 0.30 BL of the
-  other's tail start, the investigator oriented towards it, and the nose projecting onto the
-  rear 20 % of the other's body axis (nose → mid-body → tail start), which approximates the
-  genital region used by MARS (midway between hips and tail base; Segalin et al., 2021). The
-  investigator is the animal whose nose is at the other's rear.
-- **Nose-to-body (N2B).** The nose within 6 px (**[0.4 cm]**) of the other animal's mask
-  (masks touching, as in Live Mouse Tracker's contact definition), outside the face and
-  anogenital regions, with the investigator oriented towards the other animal.
-- **Side-by-side (SBS).** Masks sharing a border (≥ 0.35 BL of shared boundary to enter,
+Touch was tested on a **body mask** of each animal from which the tail and thin mask leaks were
+removed (morphological opening with a disk of 0.10 BL; the largest component kept), and from
+a **nose tip** refined on the animal's own mask (the most forward border point within 0.15 BL
+of the nose keypoint, which lies inside the head). A **head circle** of 0.08 BL around the nose
+tip touching the other animal's body mask counted as a touch; its radius was chosen against a
+frame-by-frame manual annotation **[of n sessions]** (05 §4.6).
+
+- **Nose-to-nose (N2N).** Nose tips within 0.30 BL (**[3.0 cm]**; leave at 0.45 BL), weighted
+  by how directly the two heads face each other (heads side by side keep 85 % of the score).
+  Sub-typed frontal, perpendicular or lateral from the head directions. Live Mouse Tracker's
+  criterion is 26 mm between nose points.
+- **Nose-to-anogenital (N2AG).** The nose tip of the investigating animal within 0.30 BL of the
+  other's tail start with evidence of touch (head circle on the other's body, within 0.20 BL,
+  or staying slow there for ≥ 5 frames), the investigator oriented towards it when further than
+  0.20 BL, and the nose projecting onto the rear 20 % of the other's body axis (nose → mid-body
+  → tail start), which approximates the genital region used by MARS (midway between hips and
+  tail base; Segalin et al., 2021). The investigator is the animal whose nose is at the other's
+  rear. Sub-typed *following* when both animals moved at ≥ 0.5 BL s⁻¹, else *classic*.
+- **Nose-to-body (N2B).** The head circle touching the other animal's body mask (masks touching,
+  as in Live Mouse Tracker's contact definition), outside the face and anogenital regions, with
+  the investigator oriented towards the other animal; scored even during side-by-side postures.
+  Sub-typed by the zone touched (head, torso, rear). A nose on the tail only was flagged, not
+  counted.
+- **Side-by-side (SBS).** Body masks sharing a border (≥ 0.35 BL of shared boundary to enter,
   0.20 BL to leave), centroids within 1 BL, body axes parallel (|cos| ≥ 0.7, either direction)
   and both animals slow (< 0.75 BL s⁻¹); score = geometric mean of the four factors. Live Mouse
   Tracker's side-by-side uses 52 mm between flanks and the same orientation.
 - **Following (FOL).** A non-contact behaviour: the follower's nose within 0.4 BL (leave at
   0.6 BL) of the path of the followed animal's rear over the previous 12 frames, the follower
   oriented towards the followed animal and moving at ≥ 0.15 BL s⁻¹, and no body contact
-  (all nose–body distances > 0.5 BL, no shared mask border). Live Mouse Tracker: both animals
-  moving, heading difference < 45°, centre distance < 2 BL.
+  (no touch of the body masks or head circles). Live Mouse Tracker: both animals moving,
+  heading difference < 45°, centre distance < 2 BL.
 
-Each frame also records the runner-up behaviour (score ≥ 0.40) and a distance dynamic
-(closing, stable, separating; |Δd| ≥ 0.10 BL s⁻¹).
+Each frame also records the runner-up behaviour (score ≥ 0.40; frames with a margin < 0.10 are
+flagged ambiguous) and a distance dynamic (closing, stable, separating; |Δd| ≥ 0.10 BL s⁻¹).
+When the bodies touched but no behaviour reached its threshold, the best one scoring ≥ 0.35 was
+assigned and flagged low-confidence.
+
+Behaviours that are hard to tell apart were also reported in five groups, each behaviour and
+sub-type belonging to exactly one: face-to-face (N2N frontal or perpendicular), side-to-side
+(SBS and lateral N2N), anogenital sniffing (classic N2AG), body sniffing (N2B) and chase (FOL
+and N2AG while both animals walk). Consecutive chase events of the same follower separated by
+≤ 0.5 s were merged into chase episodes.
 
 ## From frames to events
 
@@ -102,7 +122,7 @@ For each session, **[15]** events per behaviour were sampled, stratified by dura
 and rendered as slow-motion clips with the two animals highlighted; events overlapping in time
 were shown in one clip with every pair marked. **[Two]** raters blind to the automatic label
 scored each event as real, flicker, wrong type (with the correct type), tracking error or
-unsure. Precision per behaviour is real / (real + flicker + wrong type + tracking error) with a
+unsure, and whether its investigator, its boundaries (± 0.2 s) and its sub-type were right. Precision per behaviour is real / (real + flicker + wrong type + tracking error) with a
 Wilson 95 % interval; inter-rater agreement is Cohen's κ **[value]**. To estimate misses,
 **[n]** no-contact windows of 3 s per session, biased towards moments when animals were within
 1 BL, were reviewed for unlabelled contacts (miss rate **[value]**). Session quality was
@@ -128,7 +148,15 @@ executed on the UQ Bunya HPC (one NVIDIA A100 per session).
 | Contact enter / leave | 0.30 / 0.45 BL (3.0 / 4.5 cm) | nose–nose, nose–tail start | LMT: 26 mm nose–nose and nose–tail base |
 | Proximity | 1.0 BL | centroid distance | zone label only |
 | Anogenital region | rear 20 % of the body axis (split 0.8, ramp 0.7–0.9) | | MARS genital boundary midway hips–tail base |
-| N2B touch radius | 6 px (0.4 cm) | nose to other mask | LMT "masks touching"; keypoint error scale |
+| Body mask | opening with a 0.10 BL disk, largest component | removes tail and thin leaks for every touch test | tail touches are not contacts (annotator) |
+| Nose tip | most forward mask border point within 0.15 BL of the nose keypoint | | the keypoint lies ~5 px inside the head |
+| Head circle (touch radius) | 0.08 BL (≈ 13 px at 165 px BL) | nose tip to other body mask | calibrated on annotated frames: F1 0.81 vs 0.71 for the former 6 px rule |
+| N2AG evidence | head circle on body, ≤ 0.20 BL, or slow (≤ 0.15 BL s⁻¹) ≥ 5 frames | | distance alone over-counted |
+| N2N lateral factor | 0.85 | score kept with heads side by side | |
+| N2AG walking (sub-type) | both ≥ 0.5 BL s⁻¹ | following vs classic | tracking jitter reaches ~0.25 BL s⁻¹; **[to calibrate]** |
+| Low confidence / ambiguous | best ≥ 0.35 with bodies touching / margin < 0.10 | flags | |
+| Brief interactions | ≥ 3 frames, below the event minimum | diagnostic table only | |
+| Chase episode gap | 0.5 s | merges FOL / N2AG-following events of one follower | |
 | SBS border enter / leave | 0.35 / 0.20 BL | shared mask boundary | replaces mask IoU (always 0 with disjoint masks) |
 | SBS speed, alignment | < 0.75 BL s⁻¹, |cos| ≥ 0.7 | | LMT: orientation only (same way / opposite) |
 | FOL radius, speed, alignment | 0.4–0.6 BL, ≥ 0.15 BL s⁻¹, cos ≥ 0.6, path 12 frames | | LMT: 2.5 cm corridor, ≥ 10 cm s⁻¹, 45° |

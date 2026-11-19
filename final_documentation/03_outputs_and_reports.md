@@ -64,7 +64,7 @@ One table per sheet, in this order:
 | Sheet | Rows | What it holds |
 |-------|------|---------------|
 | `Summary` | 7 | Headline numbers per contact type, a `TOTAL` row and an `ANY` row. For the type rows and `TOTAL`, `total_sec` is summed over pairs (pair-seconds) and `pct_of_session` is a share of pair-time (session x number of pairs). `ANY` ("Any contact (union over pairs)") is the time with at least one pair in contact, FOL excluded, with `events` blank and `pct_of_session` a share of the session; it needs the per-frame table |
-| `Events` | one per event | The cleaned behavioural events — **the reportable result** |
+| `Events` | one per event | The cleaned behavioural events — **the reportable result**. With v3 each event carries its `group` (02 §2.8) |
 | `PerAnimal` | one per animal | Events and contact time per animal against any partner, plus the same per session minute (`session_min`, `events_per_min`, `contact_sec_per_min`), and the investigation bouts of the animal's pairs (`n_investigation_bouts`, `investigation_bouts_per_min`); `per_animal_summary.csv`, see 05 §9) |
 | `PairMatrix` | one per pair of animals | Events by type, contact time (FOL excluded), `fol_sec`, `contact_pct_of_session` and rates per minute for every pair, including pairs with no events: the table behind the social-network figure (`pair_contact_matrix.csv`) |
 | `Investigation` | one per investigation bout | N2N, N2AG and N2B merged into one bout per pair (gaps of up to `investigation.max_gap` frames bridged), with `n2n_sec` / `n2ag_sec` / `n2b_sec` / `other_sec`, `dominant_type`, `n_subtype_switches`, `investigator_slot` and `peak_score` (`investigation_bouts.csv`, see 05 §7). Additional to `Events`, which is unchanged |
@@ -75,18 +75,24 @@ One table per sheet, in this order:
 
 ### `diagnostics.xlsx` (tracker diagnostics, not validated, not for reporting)
 
-Written next to `results.xlsx`, only when at least one of these tables exists. Its first
-sheet, `README`, says so in one cell. The other sheets keep the content and columns they had
-when they were still in `results.xlsx`:
+Written next to `results.xlsx` when at least one of these tables has content. Its first
+sheet, `README`, says so in one cell. `Brief`, `Following`, `Groups` and `Similarity` are
+derived from the cleaned events (2026-11); `Bouts`, `Dynamics` and `Individual` keep the content
+and columns they had when they were still in `results.xlsx`:
 
 | Sheet | Rows | What it holds |
 |-------|------|---------------|
-| `README` | 1 | "Diagnostic tables from the tracker (raw bouts, approach/avoid episodes, per-animal initiator statistics). Not validated by the clip review — not for reporting. The reported tables are in results.xlsx." |
+| `README` | 1 | "Diagnostic tables: brief interactions … Not validated by the clip review — not for reporting. The reported tables are in results.xlsx." |
+| `Brief` | one per brief interaction | Runs of at least `brief.min_frames` (3) frames that survive smoothing and gap bridging but are removed whole by the minimum duration (0.3 s; FOL 0.4 s): 3–8 frames at 30 fps (FOL up to 11). Same columns as `Events` (`brief_id` instead of `event_id`) plus `near_event`: the `event_id` of an event of the same pair within 3 frames. Empty `near_event` = an isolated interaction; filled = a piece next to an event, usually a type flicker (on the 6-mouse clip 10 of 11 isolated ones matched the manual type, 5 of 16 pieces). Never overlaps `Events`. `brief_events.csv` |
+| `Following` | one per episode | Chase episodes (v3 runs): FOL events and N2AG events with both animals walking, of the same pair and the same follower, merged when ≤ `following.max_gap_sec` (0.5 s) apart. `composition` lists every event in order (`FOL → N2AG`), `sequence` adds their frames, plus `fol_sec`, `n2ag_following_sec`, `event_ids`. The CHS group seen as episodes. `following_episodes.csv` |
+| `Groups` | one per group | Events, seconds, pairs and type / subtype mix per group (FTF, S2S, AGS, BDS, CHS; contacts only). `groups_summary.csv` |
+| `Similarity` | 5 | Per type, the % of its frames whose second type (`secondary_type`) is each other type, and `no_second_%`: how alike the types are in this video. `type_similarity.csv` |
 | `Bouts` | one per bout | Bouts straight from `contacts_v2`, with the voted `initiator` |
-| `Dynamics` | one per episode | Approach / avoid episodes **without** contact ("Hoja B"), with `mover` |
+| `Dynamics` | one per episode | Approach / avoid episodes **without** contact ("Hoja B"), with `mover`; since 2026-11 also `subkind` (approach: `search` = one animal approaches, `mutual_approach`; avoidance: `withdrawal` = one leaves right after a contact, `flight` = one leaves with no contact before, `mutual_separation`), `after_contact` and `ends_in_contact` |
 | `Individual` | varies | Per-animal initiator statistics flattened from `individual_summary.json`; built from the tracker bouts and their `initiator`, a different basis from the validated `PerAnimal` sheet |
 
-Why they are apart: none of the three is a cleaned event table, so a clip review of `Events`
+Why they are apart: none of them is validated by the clip review (`Bouts`, `Dynamics` and
+`Individual` are not cleaned event tables; `Brief` and `Following` are not sampled), so a clip review of `Events`
 says nothing about them (`PerAnimal` and `Individual` can disagree for the same animal because
 they count different things). Re-running the post-processing on a run that is already
 consolidated keeps them: they are read back from `diagnostics.xlsx`, or from the `Bouts`,
@@ -108,6 +114,8 @@ The complete measurement record, grouped as `contacts_v2` writes it:
 | Roles | `investigator_role`, `initiator`, `bout_id` |
 | Soft scores | one column per contact type, the continuous score before thresholding |
 | Quality flags | `stale_keypoints`, `high_mask_overlap`, `missing_keypoints`, `single_detection`, `merged_state`, `fol_used_centroid`, `nose_off_mask_i/_j` and `nose_off_mask` (nose keypoint outside its own mask) |
+| v3 (2026-11) | `n2n_subtype`, `n2ag_subtype`, `n2b_zone` (subtype of the frame's type), `low_confidence`, `ambiguous`, `tail_contact_bl` (border shared through the tail), `head_touch_ij/_ji` (head circle on the other's body), `nose_on_tail` (flag, not contact), `suspect_mask_i/_j` (mask > 1.4× the animal's median area) |
+| Cleaned labels | `real_group` (the group of the event the frame belongs to), `real_type`, `real_zone`, `real_event_id` |
 
 This is the sheet for any custom analysis. Two columns need care: `mask_iou` is
 identically 0 with CUTIE's disjoint masks (kept only for the `high_mask_overlap`
@@ -123,10 +131,15 @@ One row per cleaned event, covering the whole session including `NC` intervals (
 samples its no-contact windows from them; count events with `contact_type != "NC"`):
 
 `event_id`, `start_time_sec`, `end_time_sec`, `duration_sec`, `start_time`, `end_time`,
-`duration` (all three human-readable as `MM:SS.d`), `contact_type`, `contact_label`
-(the full name, e.g. "Nose-to-anogenital"), `start_frame`, `end_frame`, `duration_frames`,
-`investigator_slot`, and the mean nose–nose distance, centroid distance and mask IoU over
-the event.
+`duration` (all three human-readable as `MM:SS.d`), then the label in hierarchy order —
+`group` (FTF, S2S, AGS, BDS, CHS, NC), `group_label` ("Side-to-side"), `contact_type`,
+`contact_label` (the full name, e.g. "Nose-to-anogenital"), `subtype` (v3: N2N frontal /
+perpendicular / lateral, N2AG classic / following, N2B head / torso / rear) — then
+`start_frame`, `end_frame`, `duration_frames`, `investigator_slot`, the mean nose–nose
+distance, centroid distance and mask IoU over the event, and with v3 `secondary_type` (most
+frequent second type), `ambiguous` and `low_confidence` (1 when they hold in at least half of
+the event's frames) and `mean_tail_contact_bl`. The group comes from the type and the event's
+most frequent subtype; NC rows get `NC` / "No contact".
 
 **This is the sheet to report and to use for statistics.**
 
@@ -362,9 +375,12 @@ defective (pre-2026-09-30) behaviour for comparison. Old `demo_as_shipped` /
     `correct_type`), `investigator_ok` (`yes` / `no` / `na`: the mouse named in `investigator_label`
     is the one sniffing or following; prefilled `na` where there is no investigator) and
     `boundaries_ok` (`yes` / `no` / `na`: the event starts and ends within about 0.2 s of where you
-    would put it; prefilled `na` for no-contact windows). `start_time` / `end_time` are recording
-    times, `clip_from` / `clip_to` positions inside the half-speed clip. `score` turns them into
-    precision, miss rate, investigator and boundary accuracy and investigation-bout precision
+    would put it; prefilled `na` for no-contact windows) and `subtype_ok` (`yes` / `no` / `na`: the
+    subtype shown is right; prefilled `na` where the row has no subtype). Each row shows `group`,
+    `group_label`, `contact_type`, `contact_label` and `subtype` in that order. `start_time` /
+    `end_time` are recording times, `clip_from` / `clip_to` positions inside the half-speed clip.
+    `score` turns them into precision, miss rate, investigator, boundary and subtype accuracy
+    (`subtype_accuracy`, per type and subtype, e.g. "N2AG following") and investigation-bout precision
     ([05 §9](05_contact_computation.md#9-evidence-that-the-computation-did-what-this-says)).
 
 ---

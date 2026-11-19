@@ -104,7 +104,8 @@ outputs/runs/<timestamp>_<tag>/
   logs/run.log
   overlays/<tag>_<model>_<date>.avi
   contacts/                         # per-frame CSV, events, session summary
-  results.xlsx, report.pdf          # after post-processing (cutie_composite)
+  results.xlsx, diagnostics.xlsx    # after post-processing (cutie_composite): reported tables /
+  report.pdf                        # Brief, Following, Groups, Similarity, Bouts, Dynamics, Individual
 ```
 
 Chunked centroid runs on Bunya add a `chunks/` level and a merged batch directory; see

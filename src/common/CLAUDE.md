@@ -10,11 +10,11 @@ Shared utilities used by all pipelines. When adding functionality that several p
 | `io_video.py` | Video read/write, frame iteration, video properties |
 | `metrics.py` | `mask_iou()`, `compute_centroid()`, `evaluate_closeness()` |
 | `visualization.py` | Mask overlays, keypoint rendering, status text |
-| `contacts_v2.py` | `ContactTrackerV2`: continuous scores + Schmitt triggers, 5 types (N2N, N2AG, N2B, SBS, FOL) + NC, families, dynamics. **Used by `cutie_composite`** |
+| `contacts_v2.py` | `ContactTrackerV2`: continuous scores + Schmitt triggers, 5 types (N2N, N2AG, N2B, SBS, FOL) + NC, families, dynamics; `contact_rules_v3` (body masks, nose tip, head circle, subtypes, flags; on in the cutie configs). **Used by `cutie_composite`** |
 | `individual_metrics.py` | Per-animal and directed-pair metrics computed from v2 bouts (who initiates, active vs passive); extra PDF pages |
 | `contacts_v21.py` | Variant of v2 (hysteresis rule engine, multi-scale temporal windows). Not imported by any pipeline |
 | `contacts.py` | `ContactTracker` v1 (centroid pipeline): 6 contact types + NC, bout detection, CSV/JSON/PDF |
-| `excel_report.py` | `build_excel_report()`: consolidates run outputs into `results.xlsx` (reported tables) and `diagnostics.xlsx` (tracker diagnostics) |
+| `excel_report.py` | `build_excel_report()`: consolidates run outputs into `results.xlsx` (reported tables) and `diagnostics.xlsx` (Brief, Following, Groups, Similarity + tracker diagnostics) |
 | `geometry.py` | `euclidean_distance()`, `resolve_overlaps()`, detection-to-slot matching |
 | `model_loaders.py` | `load_yolo()`, `load_models()` |
 | `yolo_inference.py` | `detect_only()` and YOLO result parsing (keypoints by name) |

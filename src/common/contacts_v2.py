@@ -1713,7 +1713,7 @@ class ContactClassifier:
         floor = self.gaze_floor_n2ag if self.v3 else 0.4
         # v3: with the nose on the rear (<= n2ag_close_bl) the direction nose -> rear is noise
         # (a few px long), so the gaze factor only applies further away. Without this, 88 of
-        # the 190 annotated N2AG frames of the 6-rat clip became N2B "rear".
+        # the 190 annotated N2AG frames of the 6-mouse clip became N2B "rear".
         if not (self.v3 and nose_i_rear_j_bl <= self.n2ag_close_bl):
             score_ij *= self._gaze_alignment(orient_i, nose_i, rear_j, floor)
         if not (self.v3 and nose_j_rear_i_bl <= self.n2ag_close_bl):

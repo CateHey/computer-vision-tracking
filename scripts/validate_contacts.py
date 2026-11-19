@@ -888,9 +888,10 @@ def cut_scene_clip(cap, scene: Dict[str, Any], visible: pd.DataFrame, pf_pairs: 
 
 # --------------------------------------------------------------------------- outputs
 REVIEWER_COLS = ["verdict", "correct_type", "investigator_label", "investigator_ok", "boundaries_ok",
-                 "reviewer", "notes"]
+                 "subtype_ok", "reviewer", "notes"]
 COLUMN_ORDER = ["sample_id", "scene_id", "clip", "thumbnail", "in_sample", "partial",
-                "pair_label", "contact_type", "contact_label", "nc_near", "min_centroid_dist_bl",
+                "pair_label", "group", "group_label", "contact_type", "contact_label", "subtype",
+                "nc_near", "min_centroid_dist_bl",
                 "start_time", "end_time", "start_frame", "end_frame",
                 "duration_sec", "duration_frames", "duration_tertile",
                 "clip_from", "clip_to", "peak_score", "mean_score", "secondary_type", "secondary_score"] \
@@ -904,12 +905,23 @@ def review_prefill(ev: Any) -> Dict[str, Any]:
     investigator_ok: left empty for the reviewer when there is an investigator to judge, 'na'
     otherwise (N2N, SBS, NC windows, or an event whose investigator is unknown).
     boundaries_ok: left empty for events, 'na' for NC windows (they have no event boundaries).
+    subtype_ok: left empty when the event has a subtype to judge (N2N frontal / perpendicular /
+    lateral, N2AG classic / following, N2B head / torso / rear), 'na' otherwise.
     """
     if str(ev["contact_type"]).strip().upper() == "NC":
-        return {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na"}
+        return {"investigator_label": None, "investigator_ok": "na", "boundaries_ok": "na", "subtype_ok": "na"}
     inv = investigator_of(ev)
     return {"investigator_label": slot_label(inv) if inv is not None else None,
-            "investigator_ok": None if inv is not None else "na", "boundaries_ok": None}
+            "investigator_ok": None if inv is not None else "na", "boundaries_ok": None,
+            "subtype_ok": None if _text(ev.get("subtype")) else "na"}
+
+
+def _text(x: Any) -> Optional[str]:
+    """A non-empty string, or None for NaN / blank."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return None
+    x = str(x).strip()
+    return x if x and x.lower() != "nan" else None
 
 
 def write_review_xlsx(rows: List[Dict[str, Any]], path: Path, speed: float = 1.0) -> None:
@@ -939,7 +951,8 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path, speed: float = 1.0
             22 if c == "contact_label" else 14)
     last = max(len(rows) + 1, 2)
     for col, opts in (("verdict", ALL_VERDICTS), ("correct_type", CORRECT_TYPES),
-                      ("investigator_ok", YES_NO_NA), ("boundaries_ok", YES_NO_NA)):
+                      ("investigator_ok", YES_NO_NA), ("boundaries_ok", YES_NO_NA),
+                      ("subtype_ok", YES_NO_NA)):
         dv = DataValidation(type="list", formula1='"' + ",".join(opts) + '"', allow_blank=True)
         ws.add_data_validation(dv)
         L = get_column_letter(cols.index(col) + 1)
@@ -983,6 +996,16 @@ def write_review_xlsx(rows: List[Dict[str, Any]], path: Path, speed: float = 1.0
         "boundaries_ok: yes = the event starts and ends within about 0.2 s of where you would put them;",
         "no = clearly too early / late / long / short (say which in 'notes'); na = cannot be judged.",
         "NC windows have no boundaries and are pre-filled with na.",
+        "",
+        "Group and subtype (when the run has them): group > contact_type > subtype, from general to specific.",
+        "group: FTF face-to-face (N2N frontal / perpendicular), S2S side-to-side (SBS, N2N lateral), AGS",
+        "anogenital sniffing (N2AG classic), BDS body sniffing (N2B), CHS chase (FOL, N2AG following), NC no contact.",
+        "subtype: N2N frontal = heads facing each other, perpendicular = at an angle, lateral = heads side by side",
+        "looking the same way; N2AG classic = the sniffed animal is still, following = both animals walking;",
+        "N2B head / torso / rear = the part of the other animal's body the nose touches.",
+        "subtype_ok (answer for every row whose verdict is 'real'; yes / no / na): yes = the subtype is right;",
+        "no = it is wrong (write the right one in 'notes'); na = cannot be judged. Rows without a subtype are",
+        "pre-filled with na. The group follows from the type and the subtype, so it needs no column of its own.",
         "",
         "Also fill in 'reviewer' (your initials) and 'notes' (optional). Do not edit the other columns.",
     ]
@@ -1065,6 +1088,8 @@ def _event_row(ev: pd.Series, pf: Optional[pd.DataFrame], fps: float) -> Dict[st
     return {
         "sample_id": ev["sample_id"], "pair_label": pair_label(ev["pair_key"]),
         "contact_type": ev["contact_type"], "contact_label": TYPE_NAMES.get(ev["contact_type"], ev["contact_type"]),
+        # group > type > subtype, when the events table has them (runs from 2026-11-19 on)
+        **{k: _text(ev.get(k)) for k in ("group", "group_label", "subtype") if k in ev.index},
         "start_time": fmt_time(ev["start_frame"] / fps), "end_time": fmt_time((ev["end_frame"] + 1) / fps),
         "start_frame": int(ev["start_frame"]), "end_frame": int(ev["end_frame"]),
         "duration_sec": round(float(dur), 3), "duration_frames": int(ev["n_frames"]),
@@ -1196,6 +1221,11 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
                 n_nc += 1
     cap.release()
 
+    # NC windows get the no-contact group when the events carry groups
+    if any(r.get("group") for r in rows):
+        for r in rows:
+            if str(r.get("contact_type", "")).upper() == "NC":
+                r["group"], r["group_label"] = "NC", "No contact"
     write_review_xlsx(rows, out / "review.xlsx", speed)
     write_index_html(rows, out / "index.html", f"Contact validation - {run.name}", speed)
     manifest: Dict[str, Any] = {
@@ -1263,8 +1293,10 @@ def _yes_no_stats(sub: pd.DataFrame, col: str) -> Dict[str, Any]:
             "ci_low": None if math.isnan(lo) else lo, "ci_high": None if math.isnan(hi) else hi}
 
 
-def review_accuracy(df: pd.DataFrame, col: str, types: Optional[Sequence[str]] = None) -> Optional[Dict[str, Any]]:
-    """Accuracy of a yes/no/na review column (investigator_ok, boundaries_ok), overall and per type.
+def review_accuracy(df: pd.DataFrame, col: str, types: Optional[Sequence[str]] = None,
+                    by: str = "contact_type") -> Optional[Dict[str, Any]]:
+    """Accuracy of a yes/no/na review column (investigator_ok, boundaries_ok, subtype_ok), overall
+    and per type (`by="type_subtype"`: per type and subtype, e.g. "N2AG following").
 
     Only rows with verdict `real` count (a flicker has no investigator or boundaries to judge) and
     only the answers yes and no: accuracy = yes / (yes + no), Wilson 95% CI. `types` restricts the
@@ -1279,7 +1311,10 @@ def review_accuracy(df: pd.DataFrame, col: str, types: Optional[Sequence[str]] =
     overall = _yes_no_stats(real, col)
     if overall["n_scored"] == 0:
         return None
-    per_type = {t: _yes_no_stats(g, col) for t, g in real.groupby("contact_type")}
+    if by == "type_subtype":
+        sub = real["subtype"].map(_text) if "subtype" in real.columns else pd.Series(None, index=real.index)
+        real = real.assign(type_subtype=[f"{t} {u}" if u else str(t) for t, u in zip(real["contact_type"], sub)])
+    per_type = {t: _yes_no_stats(g, col) for t, g in real.groupby(by)}
     return {"overall": overall, "per_type": {t: st for t, st in per_type.items() if st["n_scored"]}}
 
 
@@ -1449,6 +1484,7 @@ def compute_summary(df: pd.DataFrame, cfg: dict) -> Dict[str, Any]:
     # files next to the review and are added by cmd_score.
     s["investigator_accuracy"] = review_accuracy(df, "investigator_ok", INVESTIGATOR_TYPES)
     s["boundary_accuracy"] = review_accuracy(df, "boundaries_ok")
+    s["subtype_accuracy"] = review_accuracy(df, "subtype_ok", by="type_subtype")
     s["bout_precision"] = None
     s["identity_check"] = None
     s["per_type"] = {t: _prec(g) for t, g in df.groupby("contact_type")}
@@ -1502,7 +1538,8 @@ def _pct(x: Optional[float]) -> str:
 def _render_accuracy_md(s: Dict[str, Any]) -> List[str]:
     """Markdown block for investigator and boundary accuracy ([] when neither was reviewed)."""
     blocks = [(name, s.get(key)) for name, key in (("investigator", "investigator_accuracy"),
-                                                    ("boundaries", "boundary_accuracy"))]
+                                                    ("boundaries", "boundary_accuracy"),
+                                                    ("subtype", "subtype_accuracy"))]
     blocks = [(n, b) for n, b in blocks if b]
     if not blocks:
         return []
@@ -1510,6 +1547,7 @@ def _render_accuracy_md(s: Dict[str, Any]) -> List[str]:
          "Judged on events with verdict `real` only, answers yes / no (na and blanks excluded). "
          "Investigator: the animal named in `investigator_label` is the one sniffing (N2AG, N2B) or following (FOL). "
          "Boundaries: start and end within about 0.2 s of where the reviewer would put them. "
+         "Subtype: the subtype shown (frontal / perpendicular / lateral, classic / following, head / torso / rear) is right. "
          "Accuracy = yes / (yes + no), Wilson 95% CI.", "",
          "| check | type | n scored | yes | no | accuracy | 95% CI |", "|---|---|---|---|---|---|---|"]
     for name, b in blocks:

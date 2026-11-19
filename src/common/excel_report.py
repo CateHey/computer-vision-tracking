@@ -65,7 +65,8 @@ DIAGNOSTICS_NAME = "diagnostics.xlsx"
 DIAGNOSTIC_SHEETS = ("Brief", "Following", "Groups", "Similarity", "Bouts", "Dynamics", "Individual")
 DIAGNOSTICS_README = (
     "Diagnostic tables: brief interactions (3 frames up to the 0.3 s minimum of "
-    "Events), and from the tracker raw bouts, approach/avoid episodes and "
+    "Events), chase episodes (Following), totals per group (Groups), type similarity "
+    "(Similarity), and from the tracker raw bouts, approach/avoid episodes and "
     "per-animal initiator statistics. Not validated by the clip review \u2014 not for "
     "reporting. The reported tables are in results.xlsx."
 )
