@@ -267,6 +267,20 @@ class ContactEvent:
     tail_tail_dist_bl: float = float("inf")     # se conserva como métrica (T2T ya no es tipo)
     mask_iou: float = 0.0
     mask_contact_bl: float = 0.0   # longitud del borde compartido entre máscaras / bl_ref
+    # v3: border shared by the full masks that the body masks do not explain (tail contact)
+    tail_contact_bl: float = 0.0
+    # v3: the head circle (refined nose tip, radius head_circle_bl) of i touches j's body
+    # mask (ij) / of j touches i's (ji)
+    head_touch_ij: bool = False
+    head_touch_ji: bool = False
+
+    # v3 sub-labels and confidence (changes 5, 7, 8, 9, 10)
+    n2n_subtype: str = ""          # frontal / perpendicular / lateral
+    n2ag_subtype: str = ""         # following (both walking) / classic
+    n2b_zone: str = ""             # head / torso / rear of the receiver
+    nose_on_tail: bool = False     # nose on the other's tail only: a flag, not a contact
+    low_confidence: bool = False   # physical contact, best type assigned below 0.5
+    ambiguous: bool = False        # primary - secondary < ambiguous_margin
 
     # Cinemática
     velocity_i_bls: float = 0.0
@@ -308,6 +322,9 @@ class ContactEvent:
     # (no mask pixel within nose_off_mask_radius_px): direct evidence of a misplaced keypoint.
     nose_off_mask_i: bool = False
     nose_off_mask_j: bool = False
+    # v3: the mask is much larger than this animal's usual mask (suspect_mask_ratio x median)
+    suspect_mask_i: bool = False
+    suspect_mask_j: bool = False
 
     # Simultaneous contacts of each animal in this frame (over all its pairs):
     # 1 = dyadic only, 2 = the animal is in contact with two others (LMT 'group3').
@@ -343,6 +360,11 @@ class ContactEvent:
             "secondary_type": self.secondary_type.value if self.secondary_type != ContactType.NONE else "",
             "secondary_name": CONTACT_TYPE_NAMES.get(self.secondary_type.value, "") if self.secondary_type != ContactType.NONE else "",
             "secondary_score": round(self.secondary_score, 4),
+            "n2n_subtype": self.n2n_subtype,
+            "n2ag_subtype": self.n2ag_subtype,
+            "n2b_zone": self.n2b_zone,
+            "low_confidence": int(self.low_confidence),
+            "ambiguous": int(self.ambiguous),
             # 3
             "dynamics": self.dynamics.value,
             "mover": self.mover or "",
@@ -358,6 +380,9 @@ class ContactEvent:
             "tail_tail_dist_bl": _fmt(self.tail_tail_dist_bl),
             "mask_iou": round(self.mask_iou, 4),
             "mask_contact_bl": round(self.mask_contact_bl, 4),
+            "tail_contact_bl": round(self.tail_contact_bl, 4),
+            "head_touch_ij": int(self.head_touch_ij),
+            "head_touch_ji": int(self.head_touch_ji),
             # 6
             "velocity_i_bls": round(self.velocity_i_bls, 4),
             "velocity_j_bls": round(self.velocity_j_bls, 4),
@@ -386,6 +411,9 @@ class ContactEvent:
             "nose_off_mask_i": int(self.nose_off_mask_i),
             "nose_off_mask_j": int(self.nose_off_mask_j),
             "nose_off_mask": int(self.nose_off_mask_i or self.nose_off_mask_j),
+            "nose_on_tail": int(self.nose_on_tail),
+            "suspect_mask_i": int(self.suspect_mask_i),
+            "suspect_mask_j": int(self.suspect_mask_j),
             # 11b simultaneous contacts per animal (group configurations)
             "n_contacts_i": self.n_contacts_i,
             "n_contacts_j": self.n_contacts_j,
@@ -528,6 +556,13 @@ class DynamicsEvent:
     start_dist_bl: float = float("inf")
     end_dist_bl: float = float("inf")
     _sum_delta: float = 0.0
+    # change 12: approach -> search (one approaches) / mutual_approach;
+    # avoidance -> withdrawal (one leaves right after a contact) / flight (one leaves,
+    # no contact before) / mutual_separation. Filled at close from the per-frame movers.
+    subkind: str = ""
+    after_contact: bool = False      # starts within dynamics_link_frames of a contact
+    ends_in_contact: bool = False    # a contact follows within dynamics_link_frames
+    _mover_votes: Counter = field(default_factory=Counter)
 
     @property
     def duration_sec(self) -> float:
@@ -554,6 +589,9 @@ class DynamicsEvent:
             "start_dist_bl": _fmt(self.start_dist_bl),
             "end_dist_bl": _fmt(self.end_dist_bl),
             "mean_delta_bls": round(self.mean_delta_bls, 4),
+            "subkind": self.subkind,
+            "after_contact": int(self.after_contact),
+            "ends_in_contact": int(self.ends_in_contact),
         }
 
 
@@ -999,6 +1037,95 @@ def mask_near_point(point, mask, radius_px: int = 0) -> bool:
     return y1 > y0 and x1 > x0 and bool(np.asarray(mask[y0:y1, x0:x1]).any())
 
 
+# ── v3 geometry (contact_rules_v3): body mask without tail, refined nose tip, head circle ──
+
+def body_mask(mask, body_length_px: float, open_frac: float = 0.10):
+    """Mask of the BODY only, used for contact detection (the video keeps the full masks).
+
+    Morphological opening with a disk of diameter open_frac * body length removes every part
+    thinner than that disk (the tail, thin leaks of background); the largest remaining
+    component is kept and its border restored inside the original mask. Returns the original
+    mask when the opening would remove everything (e.g. a mask much smaller than expected)."""
+    if mask is None:
+        return None
+    m = np.asarray(mask) > 0
+    if not m.any():
+        return m
+    d = max(3, int(round(open_frac * max(body_length_px, 1.0))))
+    if d % 2 == 0:
+        d += 1
+    ys, xs = np.nonzero(m)
+    pad = d + 2
+    y0, y1 = max(int(ys.min()) - pad, 0), int(ys.max()) + pad + 1
+    x0, x1 = max(int(xs.min()) - pad, 0), int(xs.max()) + pad + 1
+    crop = m[y0:y1, x0:x1].astype(np.uint8)
+    disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (d, d))
+    opened = cv2.morphologyEx(crop, cv2.MORPH_OPEN, disk)
+    if not opened.any():
+        return m
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=8)
+    if n > 2:
+        biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        opened = (labels == biggest).astype(np.uint8)
+    # restore the border pixels the opening shaved off (corners), never the tail
+    restored = cv2.dilate(opened, np.ones((3, 3), np.uint8)) & crop
+    out = np.zeros_like(m)
+    out[y0:y1, x0:x1] = restored > 0
+    return out
+
+
+def mask_touches_disk(center, mask, radius_px: float) -> bool:
+    """True when `mask` has a pixel within radius_px (Euclidean disk) of `center`."""
+    if center is None or mask is None:
+        return False
+    h, w = mask.shape[:2]
+    r = max(float(radius_px), 0.0)
+    cx, cy = float(center[0]), float(center[1])
+    x0, x1 = max(int(math.floor(cx - r)), 0), min(int(math.ceil(cx + r)) + 1, w)
+    y0, y1 = max(int(math.floor(cy - r)), 0), min(int(math.ceil(cy + r)) + 1, h)
+    if x1 <= x0 or y1 <= y0:
+        return False
+    win = np.asarray(mask[y0:y1, x0:x1]) > 0
+    if not win.any():
+        return False
+    yy, xx = np.nonzero(win)
+    return bool((((xx + x0) - cx) ** 2 + ((yy + y0) - cy) ** 2 <= r * r).any())
+
+
+def refined_nose_tip(nose, direction, own_mask, radius_px: float):
+    """Tip of the snout taken from the animal's own mask.
+
+    Among the border pixels of own_mask within radius_px of the nose keypoint, the one
+    furthest forward along `direction` (ears-midpoint -> nose, a unit vector). Falls back
+    to the keypoint when the mask, the direction or a nearby border pixel is missing."""
+    if nose is None or direction is None or own_mask is None:
+        return nose
+    h, w = own_mask.shape[:2]
+    r = max(float(radius_px), 1.0)
+    cx, cy = float(nose[0]), float(nose[1])
+    x0, x1 = max(int(math.floor(cx - r)) - 1, 0), min(int(math.ceil(cx + r)) + 2, w)
+    y0, y1 = max(int(math.floor(cy - r)) - 1, 0), min(int(math.ceil(cy + r)) + 2, h)
+    if x1 <= x0 or y1 <= y0:
+        return nose
+    win = (np.asarray(own_mask[y0:y1, x0:x1]) > 0).astype(np.uint8)
+    if not win.any():
+        return nose
+    border = win & (1 - cv2.erode(win, np.ones((3, 3), np.uint8), borderType=cv2.BORDER_CONSTANT, borderValue=0))
+    yy, xx = np.nonzero(border)
+    if not len(xx):
+        return nose
+    px, py = xx + x0, yy + y0
+    near = (px - cx) ** 2 + (py - cy) ** 2 <= r * r
+    if not near.any():
+        return nose
+    px, py = px[near], py[near]
+    proj = (px - cx) * direction[0] + (py - cy) * direction[1]
+    k = int(np.argmax(proj))
+    if proj[k] <= 0:
+        return nose          # the keypoint is already the most forward point
+    return (float(px[k]), float(py[k]))
+
+
 def ramp_up_score(x: float, low: float, high: float) -> float:
     if not math.isfinite(x):
         return 0.0
@@ -1079,6 +1206,27 @@ class ContactClassifier:
         # Fracción del movimiento que un animal debe aportar para ser el "mover".
         self.dyn_mover_frac = float(config.get("dynamics_mover_frac", 0.60))
 
+        # ── contact_rules_v3 (changes 1-9 agreed after the 2026-11 manual comparison) ──
+        # Off by default so earlier runs reproduce; the cutie_composite configs turn it on.
+        self.v3 = bool(config.get("contact_rules_v3", False))
+        self.body_open_frac = float(config.get("body_mask_open_bl", 0.10))         # 1
+        self.nose_tip_search_frac = float(config.get("nose_tip_search_bl", 0.15))  # 2
+        self.head_radius_frac = float(config.get("head_circle_bl", 0.08))          # 2
+        self.n2ag_close_bl = float(config.get("n2ag_close_bl", 0.20))              # 3
+        self.n2ag_slow_bls = float(config.get("n2ag_slow_bls", 0.15))              # 3
+        self.n2ag_slow_frames = int(config.get("n2ag_slow_frames", 5))             # 3
+        self.n2ag_no_evidence_factor = float(config.get("n2ag_no_evidence_factor", 0.45))
+        self.gaze_floor_n2ag = float(config.get("n2ag_gaze_floor", 0.2))           # 3
+        self.touch_min_bl = float(config.get("body_touch_min_bl", 0.02))           # 4, 8
+        self.n2b_zone_head_t = float(config.get("n2b_zone_head_t", 0.20))          # 5
+        self.n2b_zone_torso_t = float(config.get("n2b_zone_torso_t", 0.75))        # 5
+        self.n2n_lateral_factor = float(config.get("n2n_lateral_factor", 0.85))    # 7
+        self.low_conf_min = float(config.get("low_confidence_min_score", 0.35))    # 8
+        self.ambiguous_margin = float(config.get("ambiguous_margin", 0.10))        # 9
+        # frames in a row the investigator has been slow near the rear (per direction)
+        self._slow_near_ij = 0
+        self._slow_near_ji = 0
+
         # Schmitt triggers internos (uno por tipo). Para distancias: tau_high < tau_low.
         self.trig_n2n = SchmittTrigger(self.contact_near, self.contact_far)
         self.trig_n2ag_ij = SchmittTrigger(self.contact_near, self.contact_far)
@@ -1116,8 +1264,14 @@ class ContactClassifier:
         body_length_j: float,
         frame_idx: int,
         time_sec: float,
+        body_mask_i: Optional[np.ndarray] = None,
+        body_mask_j: Optional[np.ndarray] = None,
     ) -> ContactEvent:
-        """Procesa un frame y retorna el evento completo."""
+        """Procesa un frame y retorna el evento completo.
+
+        body_mask_i / body_mask_j (v3 only): the body masks without tail, when the caller
+        has already computed them (the tracker does, once per animal per frame); computed
+        here from mask_i / mask_j otherwise."""
 
         event = ContactEvent(
             frame_idx=frame_idx,
@@ -1175,11 +1329,36 @@ class ContactClassifier:
         # Normalización: PROMEDIO de los dos body lengths (fix BUG-2; antes era min)
         bl_ref = max((body_length_i + body_length_j) / 2.0, 1.0)
 
+        # --- v3: body masks without tail (1), refined nose tips and head circles (2) ---
+        # tip_* replaces the nose keypoint in every contact distance; the keypoint itself is
+        # kept for the nose_off_mask flag and the clip positions.
+        bmask_i, bmask_j = mask_i, mask_j
+        tip_i, tip_j = nose_i, nose_j
+        if self.v3:
+            if bmask_i is not None or body_mask_i is not None:
+                bmask_i = body_mask_i if body_mask_i is not None else body_mask(
+                    mask_i, body_length_i, self.body_open_frac)
+            if bmask_j is not None or body_mask_j is not None:
+                bmask_j = body_mask_j if body_mask_j is not None else body_mask(
+                    mask_j, body_length_j, self.body_open_frac)
+            dir_i = head_orientation(det_i, self.min_kp_conf) or body_orientation(det_i, self.min_kp_conf)
+            dir_j = head_orientation(det_j, self.min_kp_conf) or body_orientation(det_j, self.min_kp_conf)
+            tip_i = refined_nose_tip(nose_i, dir_i, mask_i, self.nose_tip_search_frac * body_length_i)
+            tip_j = refined_nose_tip(nose_j, dir_j, mask_j, self.nose_tip_search_frac * body_length_j)
+            r_i = self.head_radius_frac * body_length_i
+            r_j = self.head_radius_frac * body_length_j
+            event.head_touch_ij = mask_touches_disk(tip_i, bmask_j, r_i)
+            event.head_touch_ji = mask_touches_disk(tip_j, bmask_i, r_j)
+            # nose on the tail only: the head circle reaches the full mask but not the body
+            tail_ij = not event.head_touch_ij and mask_touches_disk(tip_i, mask_j, r_i)
+            tail_ji = not event.head_touch_ji and mask_touches_disk(tip_j, mask_i, r_j)
+            event.nose_on_tail = bool(tail_ij or tail_ji)
+
         # --- Distancias geométricas ---
-        d_nose_nose = euclidean(nose_i, nose_j)
+        d_nose_nose = euclidean(tip_i, tip_j)
         d_centroid = euclidean(centroid_i, centroid_j)
-        d_nose_i_rear_j = euclidean(nose_i, rear_j)   # nariz_i -> trasero_j
-        d_nose_j_rear_i = euclidean(nose_j, rear_i)   # nariz_j -> trasero_i
+        d_nose_i_rear_j = euclidean(tip_i, rear_j)   # nariz_i -> trasero_j
+        d_nose_j_rear_i = euclidean(tip_j, rear_i)   # nariz_j -> trasero_i
         d_tail_tail = euclidean(tb_i, tb_j)
 
         event.nose_nose_dist_bl = d_nose_nose / bl_ref if math.isfinite(d_nose_nose) else float("inf")
@@ -1203,8 +1382,19 @@ class ContactClassifier:
         if (mask_i is not None and mask_j is not None
                 and math.isfinite(event.centroid_dist_bl)
                 and event.centroid_dist_bl < 1.5 * self.proximity_bl):
-            event.mask_contact_bl = mask_contact_px(
-                mask_i, mask_j, self.mask_contact_dilate_px) / bl_ref
+            full_bl = mask_contact_px(mask_i, mask_j, self.mask_contact_dilate_px) / bl_ref
+            if self.v3:
+                # 6: SBS and every touch test use the body masks; the rest is tail contact
+                event.mask_contact_bl = mask_contact_px(
+                    bmask_i, bmask_j, self.mask_contact_dilate_px) / bl_ref
+                event.tail_contact_bl = max(full_bl - event.mask_contact_bl, 0.0)
+            else:
+                event.mask_contact_bl = full_bl
+
+        # v3: physical contact = body masks touching, or a head circle on the other's body
+        physical_contact = self.v3 and (
+            event.mask_contact_bl >= self.touch_min_bl
+            or event.head_touch_ij or event.head_touch_ji)
 
         # --- Cinemática ---
         speed_i_px = math.sqrt(velocity_i[0] ** 2 + velocity_i[1] ** 2)
@@ -1223,11 +1413,25 @@ class ContactClassifier:
         # proyectando sobre el eje nose->mid_body->tail_start del receptor.
         # Usamos esto para repartir el contacto entre olfateo social y anogenital.
         # t_i_on_j: dónde cae la nariz de i sobre el cuerpo de j.
-        t_i_on_j = self._nose_axis_param(nose_i, nose_j, mid_j, rear_j)
-        t_j_on_i = self._nose_axis_param(nose_j, nose_i, mid_i, rear_i)
+        t_i_on_j = self._nose_axis_param(tip_i, nose_j, mid_j, rear_j)
+        t_j_on_i = self._nose_axis_param(tip_j, nose_i, mid_i, rear_i)
 
         # 1. N2N — nose-to-nose (orientaciones opuestas)
         event.scores.n2n = self._score_n2n(event.nose_nose_dist_bl, orient_i, orient_j)
+
+        # v3 (3): evidence that a nose near the rear is really touching it
+        evidence_ij = evidence_ji = True
+        if self.v3:
+            self._slow_near_ij = (self._slow_near_ij + 1
+                                  if event.nose_tailbase_ij_bl <= self.contact_near
+                                  and event.velocity_i_bls <= self.n2ag_slow_bls else 0)
+            self._slow_near_ji = (self._slow_near_ji + 1
+                                  if event.nose_tailbase_ji_bl <= self.contact_near
+                                  and event.velocity_j_bls <= self.n2ag_slow_bls else 0)
+            evidence_ij = (event.head_touch_ij or event.nose_tailbase_ij_bl <= self.n2ag_close_bl
+                           or self._slow_near_ij >= self.n2ag_slow_frames)
+            evidence_ji = (event.head_touch_ji or event.nose_tailbase_ji_bl <= self.n2ag_close_bl
+                           or self._slow_near_ji >= self.n2ag_slow_frames)
 
         # 2. N2AG — anogenital: nariz cerca del trasero (tail_start) Y proyección
         #    en la mitad trasera del cuerpo del otro.
@@ -1236,15 +1440,16 @@ class ContactClassifier:
             event.nose_tailbase_ji_bl,
             t_i_on_j=t_i_on_j,
             t_j_on_i=t_j_on_i,
-            nose_i=nose_i, nose_j=nose_j,
+            nose_i=tip_i, nose_j=tip_j,
             rear_i=rear_i, rear_j=rear_j,
             orient_i=orient_i, orient_j=orient_j,
+            evidence_ij=evidence_ij, evidence_ji=evidence_ji,
         )
         event.scores.n2ag = n2ag_score
 
         # 3. FOL — following ESTRICTAMENTE no-contacto (cambio B)
         fol_score, fol_role = self._score_fol(
-            nose_i, nose_j,
+            tip_i, tip_j,
             centroid_i, centroid_j,
             orient_i, orient_j,
             event.velocity_i_bls, event.velocity_j_bls,
@@ -1253,6 +1458,7 @@ class ContactClassifier:
                                  event.nose_tailbase_ij_bl,
                                  event.nose_tailbase_ji_bl),
             mask_contact_bl=event.mask_contact_bl,
+            physical_contact=physical_contact,
         )
         event.scores.fol = fol_score
         # Cambio F: propagar bandera de uso de centroide en el path del followed
@@ -1272,14 +1478,15 @@ class ContactClassifier:
 
         # 5. N2B — nose-to-body (catch-all). No se dispara si es claramente SBS (cambio B).
         n2b_score, n2b_role = self._score_n2b(
-            nose_i, nose_j,
-            mask_i, mask_j,
+            tip_i, tip_j,
+            bmask_i, bmask_j,
             event.nose_nose_dist_bl,
             event.nose_tailbase_ij_bl,
             event.nose_tailbase_ji_bl,
             centroid_i=centroid_i, centroid_j=centroid_j,
             orient_i=orient_i, orient_j=orient_j,
             sbs_score=event.scores.sbs,
+            head_touch_ij=event.head_touch_ij, head_touch_ji=event.head_touch_ji,
         )
         event.scores.n2b = n2b_score
 
@@ -1290,6 +1497,17 @@ class ContactClassifier:
             activation_threshold=activation,
             rare_threshold=rare,
         )
+
+        # v3 (8): low confidence — the bodies touch but no type reaches its threshold
+        if (self.v3 and event.contact_type == ContactType.NONE and physical_contact):
+            best_ct, best_sc = ContactType.NONE, 0.0
+            for ct in (ContactType.N2N, ContactType.N2AG, ContactType.SBS, ContactType.N2B):
+                sc = event.scores.get(ct)
+                if sc >= self.low_conf_min and sc > best_sc:
+                    best_ct, best_sc = ct, sc
+            if best_ct != ContactType.NONE:
+                event.contact_type = best_ct
+                event.low_confidence = True
         event.family = CONTACT_FAMILY.get(event.contact_type, Family.NONE)
 
         # --- secondary_type ---
@@ -1301,6 +1519,10 @@ class ContactClassifier:
         )
         event.secondary_type = sec_type
         event.secondary_score = sec_score
+        # v3 (9): primary and secondary too close to call
+        if (self.v3 and sec_type != ContactType.NONE and event.contact_type != ContactType.NONE
+                and event.scores.get(event.contact_type) - sec_score < self.ambiguous_margin):
+            event.ambiguous = True
 
         # --- investigator_role del frame (según el tipo ganador) ---
         if event.contact_type == ContactType.N2AG:
@@ -1312,6 +1534,17 @@ class ContactClassifier:
         elif event.contact_type == ContactType.N2N:
             # En N2N ambos investigan; dejamos rol None salvo asimetría futura
             event.investigator_role = None
+
+        # v3 sub-labels of the winning type (5, 7, 10)
+        if self.v3:
+            if event.contact_type == ContactType.N2N:
+                event.n2n_subtype = self._n2n_subtype(orient_i, orient_j)
+            elif event.contact_type == ContactType.N2AG:
+                walking = min(event.velocity_i_bls, event.velocity_j_bls) >= self.follow_min_speed_bls
+                event.n2ag_subtype = "following" if walking else "classic"
+            elif event.contact_type == ContactType.N2B:
+                t = t_i_on_j if event.investigator_role == "i" else t_j_on_i
+                event.n2b_zone = self._n2b_zone(t)
 
         # --- Dinámica de distancia (cambio D) ---
         self._compute_dynamics(event, centroid_i, centroid_j,
@@ -1374,9 +1607,10 @@ class ContactClassifier:
         orient_investigator: Optional[Tuple[float, float]],
         nose_investigator: Optional[Tuple[float, float]],
         target_point: Optional[Tuple[float, float]],
+        floor: float = 0.4,
     ) -> float:
-        """Factor [0.4, 1.0] que indica si el investigador mira al target.
-        Si falta dato, 1.0 (fallback seguro)."""
+        """Factor [floor, 1.0] que indica si el investigador mira al target.
+        Si falta dato, 1.0 (fallback seguro). v3 uses floor 0.2 for N2AG."""
         if orient_investigator is None or nose_investigator is None or target_point is None:
             return 1.0
         dx = target_point[0] - nose_investigator[0]
@@ -1386,7 +1620,7 @@ class ContactClassifier:
             return 1.0
         to_target = (dx / mag, dy / mag)
         cos_align = cos_angle(orient_investigator, to_target)
-        return 0.4 + 0.6 * (cos_align + 1.0) / 2.0
+        return floor + (1.0 - floor) * (cos_align + 1.0) / 2.0
 
     # -------------------------- Scoring por tipo --------------------------
 
@@ -1404,10 +1638,39 @@ class ContactClassifier:
         if orient_i is not None and orient_j is not None:
             opposite_j = (-orient_j[0], -orient_j[1])
             cos_face = cos_angle(orient_i, opposite_j)
-            face_factor = 0.3 + 0.7 * (cos_face + 1.0) / 2.0
+            if self.v3:
+                # 7: frontal, perpendicular and lateral are all nose-to-nose; lateral
+                # (heads side by side, same direction) is barely penalised
+                lo = self.n2n_lateral_factor
+                face_factor = lo + (1.0 - lo) * (cos_face + 1.0) / 2.0
+            else:
+                face_factor = 0.3 + 0.7 * (cos_face + 1.0) / 2.0
         else:
             face_factor = 1.0
         return soft * face_factor
+
+    @staticmethod
+    def _n2n_subtype(orient_i, orient_j) -> str:
+        """frontal (heads facing, > 135 deg apart), lateral (same direction, < 45 deg) or
+        perpendicular (in between), from the head directions ears -> nose."""
+        if orient_i is None or orient_j is None:
+            return ""
+        c = cos_angle(orient_i, orient_j)
+        if c <= -math.cos(math.radians(45)):
+            return "frontal"
+        if c >= math.cos(math.radians(45)):
+            return "lateral"
+        return "perpendicular"
+
+    def _n2b_zone(self, t: Optional[float]) -> str:
+        """Body zone of the receiver touched by the nose: head (t < 0.2), torso (< 0.75), rear."""
+        if t is None:
+            return ""
+        if t < self.n2b_zone_head_t:
+            return "head"
+        if t < self.n2b_zone_torso_t:
+            return "torso"
+        return "rear"
 
     def _score_n2ag(
         self,
@@ -1421,8 +1684,14 @@ class ContactClassifier:
         rear_j: Optional[Tuple[float, float]] = None,
         orient_i: Optional[Tuple[float, float]] = None,
         orient_j: Optional[Tuple[float, float]] = None,
+        evidence_ij: bool = True,
+        evidence_ji: bool = True,
     ) -> Tuple[float, Optional[str]]:
         """nose-to-anogenital + quién investiga.
+
+        v3: a nose within 0.30 BL of the rear also needs evidence of touching (head circle
+        on the body, or within 0.20 BL, or slow there for several frames); without it the
+        score is scaled by n2ag_no_evidence_factor (below the activation threshold).
 
         Combina: distancia nariz->trasero (tail_start), factor de mirada, y
         factor de línea media (la nariz debe caer en la mitad TRASERA del cuerpo
@@ -1438,8 +1707,14 @@ class ContactClassifier:
         score_ji = max(soft_ji, 0.5) if active_ji else soft_ji
 
         # Factor de mirada
-        score_ij *= self._gaze_alignment(orient_i, nose_i, rear_j)
-        score_ji *= self._gaze_alignment(orient_j, nose_j, rear_i)
+        floor = self.gaze_floor_n2ag if self.v3 else 0.4
+        score_ij *= self._gaze_alignment(orient_i, nose_i, rear_j, floor)
+        score_ji *= self._gaze_alignment(orient_j, nose_j, rear_i, floor)
+        if self.v3:
+            if not evidence_ij:
+                score_ij *= self.n2ag_no_evidence_factor
+            if not evidence_ji:
+                score_ji *= self.n2ag_no_evidence_factor
 
         # Factor de línea media: la nariz debe estar en la mitad trasera (t alto)
         score_ij *= self._rear_zone_factor(t_i_on_j)
@@ -1476,6 +1751,7 @@ class ContactClassifier:
         bl_ref,
         min_body_dist_bl: float,
         mask_contact_bl: float,
+        physical_contact: bool = False,
     ) -> Tuple[float, Optional[str]]:
         """following — ESTRICTAMENTE no-contacto (cambio B).
 
@@ -1484,10 +1760,16 @@ class ContactClassifier:
         anula: en ese caso es un olfateo, no un following.
         """
         # Guardia no-contacto: si hay contacto cercano, no es following.
-        if math.isfinite(min_body_dist_bl) and min_body_dist_bl < self.follow_no_contact_bl:
-            return 0.0, None
-        if mask_contact_bl > self.sbs_contact_enter:
-            return 0.0, None
+        if self.v3:
+            # 4: only a real touch (body masks or a head circle on the body) annuls FOL;
+            # a follower walking 0.3-0.5 BL behind is still following
+            if physical_contact:
+                return 0.0, None
+        else:
+            if math.isfinite(min_body_dist_bl) and min_body_dist_bl < self.follow_no_contact_bl:
+                return 0.0, None
+            if mask_contact_bl > self.sbs_contact_enter:
+                return 0.0, None
 
         score_ij, _ = self._score_fol_direction(
             nose_i, centroid_j, orient_i, speed_i_bls, self._path_j, bl_ref,
@@ -1589,15 +1871,19 @@ class ContactClassifier:
         centroid_i=None, centroid_j=None,
         orient_i=None, orient_j=None,
         sbs_score: float = 0.0,
+        head_touch_ij: bool = False,
+        head_touch_ji: bool = False,
     ) -> Tuple[float, Optional[str]]:
         """nose-to-body (catch-all). Nariz dentro de la máscara del otro.
 
         Cambio B: si el frame es claramente SBS (sbs_score alto), N2B se anula
         para no pisar al side-by-side.
+        v3 (5): no SBS guard (N2B competes and may be primary or secondary); the touch is
+        the head circle on the other's BODY mask, so a nose on the tail is not N2B.
         """
         # Guardia SBS (cambio B)
         sbs_strong = float(self.config.get("n2b_sbs_suppress", 0.5))
-        if sbs_score >= sbs_strong:
+        if not self.v3 and sbs_score >= sbs_strong:
             return 0.0, None
 
         # Guardia: si hay contacto específico ya cerca del umbral, reducir N2B
@@ -1605,8 +1891,12 @@ class ContactClassifier:
         if nose_nose_bl < self.contact_far or nose_i_rear_j_bl < self.contact_far or nose_j_rear_i_bl < self.contact_far:
             guard_factor = 0.7
 
-        score_i_in_j = 1.0 if self._nose_touches_mask(nose_i, mask_j) else 0.0
-        score_j_in_i = 1.0 if self._nose_touches_mask(nose_j, mask_i) else 0.0
+        if self.v3:
+            score_i_in_j = 1.0 if head_touch_ij else 0.0
+            score_j_in_i = 1.0 if head_touch_ji else 0.0
+        else:
+            score_i_in_j = 1.0 if self._nose_touches_mask(nose_i, mask_j) else 0.0
+            score_j_in_i = 1.0 if self._nose_touches_mask(nose_j, mask_i) else 0.0
 
         align_i = self._gaze_alignment(orient_i, nose_i, centroid_j)
         align_j = self._gaze_alignment(orient_j, nose_j, centroid_i)
@@ -1855,11 +2145,21 @@ class DynamicsTracker:
         self._gap: Dict[Tuple[str, str], int] = {}
         self._closed: List[DynamicsEvent] = []
         self._counter: int = 0
+        # change 12
+        self.link_frames = int(config.get("dynamics_link_frames", max(1, round(0.5 * fps))))
+        self.vote_mover = bool(config.get("contact_rules_v3", False))
+        self._last_contact: Dict[str, int] = {}                 # pair -> last contact frame
+        self._last_approach: Dict[str, DynamicsEvent] = {}      # pair -> latest approach
 
     def process_event(self, event: ContactEvent) -> None:
         pair = event.pair_key
         # Solo nos interesa approach/avoid SIN contacto
         in_contact = event.contact_type != ContactType.NONE
+        if in_contact and event.family != Family.NON_CONTACT:
+            self._last_contact[pair] = event.frame_idx
+            ap = self._last_approach.get(pair)
+            if ap is not None and event.frame_idx - ap.end_frame <= self.link_frames:
+                ap.ends_in_contact = True
         kind = None
         if not in_contact:
             if event.dynamics == Dynamics.CLOSING:
@@ -1876,6 +2176,7 @@ class DynamicsTracker:
                 ev.end_time_sec = event.time_sec
                 ev.end_dist_bl = event.centroid_dist_bl
                 ev._sum_delta += event.dist_delta_bls
+                ev._mover_votes[event.mover or ""] += 1
                 self._gap[key] = 0
             else:
                 self._counter += 1
@@ -1893,8 +2194,13 @@ class DynamicsTracker:
                 )
                 ev.n_frames = 1
                 ev._sum_delta = event.dist_delta_bls
+                ev._mover_votes[event.mover or ""] += 1
+                last = self._last_contact.get(pair)
+                ev.after_contact = last is not None and event.frame_idx - last <= self.link_frames
                 self._open[key] = ev
                 self._gap[key] = 0
+            if kind == "approach":
+                self._last_approach[pair] = self._open[key]
 
         # Gap para los eventos abiertos del par que no se vieron este frame
         to_close = []
@@ -1921,7 +2227,25 @@ class DynamicsTracker:
         ev = self._open.pop(key)
         self._gap.pop(key, None)
         if ev.n_frames >= self.min_frames:
+            self._label(ev)
             self._closed.append(ev)
+        elif self._last_approach.get(ev.pair_key) is ev:
+            self._last_approach.pop(ev.pair_key, None)
+
+    def _label(self, ev: DynamicsEvent) -> None:
+        """subkind from the per-frame movers: one-sided when one animal is the mover in more
+        frames than 'no clear mover'; mutual otherwise. With contact_rules_v3 the reported
+        mover is that majority instead of the mover of the first frame."""
+        n_i, n_j, n_none = ev._mover_votes["i"], ev._mover_votes["j"], ev._mover_votes[""]
+        one_sided = max(n_i, n_j) > n_none
+        if self.vote_mover:
+            ev.mover = ("i" if n_i >= n_j else "j") if one_sided else None
+        if ev.kind == "approach":
+            ev.subkind = "search" if one_sided else "mutual_approach"
+        elif not one_sided:
+            ev.subkind = "mutual_separation"
+        else:
+            ev.subkind = "withdrawal" if ev.after_contact else "flight"
 
 
 # ============================================================================
@@ -1967,6 +2291,16 @@ class ContactTrackerV2:
         self.bout_manager = BoutManager(fps=fps, config=self.config)
         self.dynamics_tracker = DynamicsTracker(fps=fps, config=self.config)  # cambio D
 
+        # v3: body masks (no tail) once per animal per frame, and the "suspect mask" flag
+        # (area above suspect_mask_ratio x the animal's running median area)
+        self.v3 = bool(self.config.get("contact_rules_v3", False))
+        self.body_open_frac = float(self.config.get("body_mask_open_bl", 0.10))
+        self.suspect_ratio = float(self.config.get("suspect_mask_ratio", 1.4))
+        self._mask_areas: Dict[int, Deque[int]] = {
+            i: deque(maxlen=int(self.config.get("suspect_mask_history", 300)))
+            for i in range(num_slots)
+        }
+
         self._csv_path = self.output_dir / "contacts_per_frame.csv"
         self._dynamics_csv_path = self.output_dir / "dynamics_no_contact.csv"  # Hoja B
 
@@ -2002,6 +2336,15 @@ class ContactTrackerV2:
                 slot_centroids[slot_idx] if slot_idx < len(slot_centroids) else None
             )
 
+        body_masks: Dict[int, Optional[np.ndarray]] = {}
+        suspect: Dict[int, bool] = {}
+        if self.v3:
+            for slot_idx in range(self.num_slots):
+                m = slot_masks[slot_idx] if slot_idx < len(slot_masks) else None
+                suspect[slot_idx] = self._suspect_mask(slot_idx, m)
+                body_masks[slot_idx] = body_mask(
+                    m, self.body_length_estimators[slot_idx].current(), self.body_open_frac)
+
         for pair_key, classifier in self.classifiers.items():
             i, j = classifier.slot_i, classifier.slot_j
             event = classifier.classify(
@@ -2017,7 +2360,11 @@ class ContactTrackerV2:
                 body_length_j=self.body_length_estimators[j].current(),
                 frame_idx=frame_idx,
                 time_sec=time_sec,
+                body_mask_i=body_masks.get(i),
+                body_mask_j=body_masks.get(j),
             )
+            event.suspect_mask_i = suspect.get(i, False)
+            event.suspect_mask_j = suspect.get(j, False)
             self.bout_manager.process_event(event)
             self.dynamics_tracker.process_event(event)   # cambio D
             self._all_events.append(event)
@@ -2036,6 +2383,20 @@ class ContactTrackerV2:
             ev.n_contacts_i, ev.n_contacts_j = per_slot[clf.slot_i], per_slot[clf.slot_j]
 
         self._frames_processed += 1
+
+    def _suspect_mask(self, slot_idx: int, mask: Optional[np.ndarray]) -> bool:
+        """True when this mask is much larger than the animal's usual mask (running median
+        of the last suspect_mask_history areas): a leak into the background or a neighbour.
+        The area joins the history afterwards; needs 30 frames of history first."""
+        if mask is None:
+            return False
+        area = int(np.count_nonzero(mask))
+        if area == 0:
+            return False
+        hist = self._mask_areas[slot_idx]
+        flag = len(hist) >= 30 and area > self.suspect_ratio * float(np.median(hist))
+        hist.append(area)
+        return bool(flag)
 
     def write_merged_placeholder(
         self,
@@ -2163,6 +2524,7 @@ class ContactTrackerV2:
             "start_time", "end_time", "duration_sec",
             "start_time_sec", "end_time_sec", "n_frames",
             "start_dist_bl", "end_dist_bl", "mean_delta_bls",
+            "subkind", "after_contact", "ends_in_contact",      # change 12
         ]
         with self._dynamics_csv_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)

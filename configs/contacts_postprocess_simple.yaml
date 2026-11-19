@@ -57,6 +57,22 @@ min_bout:
 investigation:
   max_gap: 3             # frames. ~100ms at 30fps.
 
+# --- Brief interactions (additional output; Events is unchanged) ---
+# Runs that survive smoothing and gap bridging but are removed whole by min_bout
+# (shorter than 0.3 s, or 0.4 s for FOL). Only runs of at least min_frames are listed;
+# shorter ones are mostly 1-2 frame flicker. At 30 fps: 3-8 frames (FOL 3-11).
+# Written to brief_events.csv (sheet Brief of diagnostics.xlsx). Not validated.
+brief:
+  enabled: true
+  min_frames: 3          # frames. 100 ms at 30 fps.
+
+# --- Following episodes (contact_rules_v3 runs; additional output) ---
+# FOL events and N2AG events made while both animals walk, of the same pair and the same
+# follower, merged when the gap between them is at most max_gap_sec.
+# Written to following_episodes.csv (sheet Following of diagnostics.xlsx). Not validated.
+following:
+  max_gap_sec: 0.5       # seconds. 15 frames at 30 fps.
+
 # --- FPS fallback ---
 # Used only if no --fps flag, no session_summary.json, and no --video_path.
 fps_fallback: 30.0

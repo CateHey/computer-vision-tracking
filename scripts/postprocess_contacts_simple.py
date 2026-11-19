@@ -106,6 +106,8 @@ DEFAULT_CONFIG = {
     "gap_bridging": {"max_gap": 3},
     "min_bout": {"duration_sec": 0.3},
     "investigation": {"max_gap": INVESTIGATION_MAX_GAP_DEFAULT},
+    "brief": {"enabled": True, "min_frames": 3},
+    "following": {"max_gap_sec": 0.5},
     "fps_fallback": 30.0,
 }
 
@@ -329,9 +331,11 @@ def session_frames(df: pd.DataFrame) -> int:
     return int(pd.to_numeric(df["frame_idx"], errors="coerce").nunique())
 
 
-def compute_labels(df: pd.DataFrame, config: dict, fps: float):
-    """Aplica las 3 reglas por par y devuelve (raw_types, real_types) alineados
-    al orden ORIGINAL de filas. Punto unico usado por run_postprocess y main()."""
+def _label_stages(df: pd.DataFrame, config: dict, fps: float):
+    """The 3 rules per pair. Returns (raw_types, pre_min_types, real_types), all aligned to
+    the ORIGINAL row order: pre_min_types is the label after majority vote and gap bridging,
+    before the minimum-duration filters ("" = no contact); real_types is the final label
+    ("NC" = no contact)."""
     smooth_window = config.get("smoothing", {}).get("window", 5)
     gap_max = config.get("gap_bridging", {}).get("max_gap", 3)
     min_bout_sec = config.get("min_bout", {}).get("duration_sec", 0.3)
@@ -339,16 +343,98 @@ def compute_labels(df: pd.DataFrame, config: dict, fps: float):
     per_type_frames = min_frames_by_type(config, fps)
 
     raw_types = normalize_labels(df["contact_type"])
+    pre_min = raw_types.copy()
     types = raw_types.copy()
     for idx in pair_groups(df).values():
         t = raw_types[idx].copy()
         t = apply_majority_vote(t, smooth_window)
         t = apply_gap_bridging(t, gap_max)
+        pre_min[idx] = t
         t = apply_min_bout_filter(t, min_bout_frames)
         t = apply_min_bout_filter_by_type(t, per_type_frames)
         types[idx] = t
     real_types = np.where(types == "", "NC", types).astype(object)
+    return raw_types, pre_min, real_types
+
+
+def compute_labels(df: pd.DataFrame, config: dict, fps: float):
+    """Aplica las 3 reglas por par y devuelve (raw_types, real_types) alineados
+    al orden ORIGINAL de filas. Punto unico usado por run_postprocess y main()."""
+    raw_types, _, real_types = _label_stages(df, config, fps)
     return raw_types, real_types
+
+
+def brief_min_frames(config: dict) -> int:
+    """brief.min_frames (frames) from the config; 3 when absent."""
+    return max(1, int((config.get("brief") or {}).get("min_frames", 3)))
+
+
+def brief_labels(pre_min: np.ndarray, real_types: np.ndarray, df: pd.DataFrame,
+                 min_frames: int) -> np.ndarray:
+    """Labels of the BRIEF interactions: runs that survive smoothing and gap bridging but
+    are removed whole by the minimum-duration filters, and last at least `min_frames`.
+    Runs shorter than that (1-2 frames, mostly flicker) are left out. "" elsewhere.
+
+    With the default rules (0.3 s at 30 fps) a brief interaction lasts 3-8 frames (3-11
+    for FOL, whose minimum is 0.4 s). They never overlap an event of Events."""
+    out = np.full(len(pre_min), "", dtype=object)
+    for idx in pair_groups(df).values():
+        t = pre_min[idx]
+        r = real_types[idx]
+        n = len(t)
+        i = 0
+        while i < n:
+            if t[i] == "":
+                i += 1
+                continue
+            j = i
+            while j < n and t[j] == t[i]:
+                j += 1
+            removed = all(r[k] == "NC" for k in range(i, j))
+            if removed and (j - i) >= min_frames:
+                out[idx[i:j]] = t[i]
+            i = j
+    return out
+
+
+BRIEF_RENAME = {"event_id": "brief_id"}
+
+
+def _near_events(brief: pd.DataFrame, events: Optional[pd.DataFrame], max_gap: int) -> List[str]:
+    """For each brief interaction, the event_id of the contact events of the same pair that
+    touch it or lie within max_gap frames ("" when isolated). A non-empty value marks a piece
+    cut off next to a longer event (often a change of type), not a separate interaction."""
+    out = []
+    ok = (events is not None and len(events) and
+          {"start_frame", "end_frame", "contact_type", "event_id"} <= set(events.columns))
+    ev = events[events.contact_type != "NC"] if ok else None
+    for _, b in brief.iterrows():
+        if ev is None:
+            out.append("")
+            continue
+        m = ev
+        if "pair_key" in ev.columns and "pair_key" in brief.columns:
+            m = ev[ev.pair_key.astype(str) == str(b.pair_key)]
+        m = m[(m.start_frame <= b.end_frame + max_gap + 1) & (m.end_frame >= b.start_frame - max_gap - 1)]
+        out.append(", ".join(str(int(x)) for x in m.event_id))
+    return out
+
+
+def brief_events(df: pd.DataFrame, pre_min: np.ndarray, real_types: np.ndarray,
+                 fps: float, config: dict, events: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """Brief-interaction table: the Events columns (event_id -> brief_id) plus `near_event`.
+    When there are none, an empty table with those columns, so the sheet keeps its header."""
+    if not (config.get("brief") or {}).get("enabled", True):
+        return pd.DataFrame()
+    labels = brief_labels(pre_min, real_types, df, brief_min_frames(config))
+    ev = extract_events(df, labels, fps)
+    if not len(ev):
+        cols = [] if events is None else [BRIEF_RENAME.get(c, c) for c in events.columns]
+        return pd.DataFrame(columns=cols + ["near_event"])
+    ev = ev.rename(columns=BRIEF_RENAME)
+    gap = int(config.get("gap_bridging", {}).get("max_gap", 3))
+    ev["near_event"] = _near_events(ev, events, gap)
+    return ev
 
 
 def load_and_validate(csv_path: Path, source: Optional[Path] = None) -> pd.DataFrame:
@@ -606,6 +692,33 @@ def _majority_investigator(rows: pd.DataFrame, pair_key) -> Optional[int]:
     return None
 
 
+SUBTYPE_COLUMN = {"N2N": "n2n_subtype", "N2AG": "n2ag_subtype", "N2B": "n2b_zone"}
+
+
+def _mode_text(values: pd.Series) -> str:
+    """Most frequent non-empty text value ("" when none)."""
+    v = [x for x in values.fillna("").astype(str).str.strip() if x and x.lower() != "nan"]
+    return Counter(v).most_common(1)[0][0] if v else ""
+
+
+def _v3_event_columns(rows: pd.DataFrame, ct: str) -> Dict[str, Any]:
+    """Event columns from the contact_rules_v3 per-frame labels (change 9 and sub-labels):
+    secondary_type (most frequent), subtype (N2N frontal / perpendicular / lateral, N2AG
+    following / classic, N2B head / torso / rear), and ambiguous / low_confidence when they
+    hold in at least half of the event's frames."""
+    def _frac(col):
+        if col not in rows.columns or not len(rows):
+            return 0.0
+        return float(pd.to_numeric(rows[col], errors="coerce").fillna(0).astype(bool).mean())
+    sub_col = SUBTYPE_COLUMN.get(str(ct).upper())
+    return {
+        "secondary_type": _mode_text(rows["secondary_type"]) if "secondary_type" in rows.columns else "",
+        "subtype": _mode_text(rows[sub_col]) if sub_col and sub_col in rows.columns else "",
+        "ambiguous": int(_frac("ambiguous") >= 0.5),
+        "low_confidence": int(_frac("low_confidence") >= 0.5),
+    }
+
+
 def extract_events(
     df: pd.DataFrame, real_types: np.ndarray, fps: float
 ) -> pd.DataFrame:
@@ -667,6 +780,9 @@ def extract_events(
         }
         if "mask_contact_bl" in event_slice.columns:
             row["mean_mask_contact_bl"] = _mean_bl("mask_contact_bl")
+        if "low_confidence" in event_slice.columns:          # contact_rules_v3 tables
+            row.update(_v3_event_columns(same_type if len(same_type) else event_slice, ct))
+            row["mean_tail_contact_bl"] = _mean_bl("tail_contact_bl")
         events.append(row)
 
     ev = pd.DataFrame(events)
@@ -1057,6 +1173,98 @@ def write_real_events(events_df: pd.DataFrame, output_dir: Path) -> Path:
     path = output_dir / "contacts_real_events.csv"
     events_df.to_csv(path, index=False)
     logger.info("Wrote %s (%d events)", path, len(events_df))
+    return path
+
+
+FOLLOWING_COLUMNS = [
+    "episode_id", "pair_key", "pair_label", "follower_slot", "start_frame", "end_frame",
+    "start_time_sec", "end_time_sec", "duration_sec", "start_time", "end_time", "duration",
+    "n_events", "composition", "fol_sec", "n2ag_following_sec", "event_ids",
+]
+
+
+def following_episodes(df: pd.DataFrame, events: pd.DataFrame, fps: float,
+                       config: dict) -> Optional[pd.DataFrame]:
+    """Following episodes (change 10): per pair, the FOL events and the N2AG events made
+    while both animals walk (n2ag_subtype "following" in at least half of their frames),
+    merged when the same animal leads the chase and the gap is at most following.max_gap_sec.
+    One rat sniffing the other's rear while trailing it and then dropping back to follow
+    becomes one episode instead of alternating N2AG / FOL events.
+
+    None when the per-frame table has no n2ag_subtype column (runs without contact_rules_v3)."""
+    if "n2ag_subtype" not in df.columns or events is None or not len(events):
+        return None
+    max_gap = max(0, round(float((config.get("following") or {}).get("max_gap_sec", 0.5)) * fps))
+    ev = events[events.contact_type.isin(["FOL", "N2AG"])].copy()
+    rows = []
+    if len(ev):
+        sub = df["n2ag_subtype"].fillna("").astype(str)
+        keep = []
+        for _, e in ev.iterrows():
+            if e.contact_type == "FOL":
+                keep.append(True)
+                continue
+            m = df["frame_idx"].between(e.start_frame, e.end_frame)
+            if "pair_key" in df.columns:
+                m &= df["pair_key"].astype(str) == str(e.pair_key)
+            m &= df["contact_type"].astype(str).str.upper() == "N2AG"
+            keep.append(bool(m.any()) and float((sub[m] == "following").mean()) >= 0.5)
+        ev = ev[keep]
+    has_pair = "pair_key" in ev.columns
+    groups = ev.groupby(ev.pair_key.astype(str), sort=False) if has_pair else [("", ev)]
+    for key, g in groups:
+        g = g.sort_values("start_frame")
+        cur = None
+        for _, e in g.iterrows():
+            inv = str(e.get("investigator_slot", "")).strip()
+            if (cur is not None and inv == cur["inv"] and inv != ""
+                    and e.start_frame - cur["end"] - 1 <= max_gap):
+                cur["end"] = max(cur["end"], int(e.end_frame))
+                cur["events"].append(e)
+            else:
+                if cur is not None:
+                    rows.append(cur)
+                cur = {"key": key, "inv": inv, "start": int(e.start_frame),
+                       "end": int(e.end_frame), "events": [e]}
+        if cur is not None:
+            rows.append(cur)
+    out = []
+    for r in sorted(rows, key=lambda r: (r["start"], _pair_sort_key(r["key"]))):
+        evs = r["events"]
+        start_sec, end_sec = r["start"] / fps, (r["end"] + 1) / fps
+        kinds = [e.contact_type for e in evs]
+        out.append({
+            "pair_key": r["key"], "pair_label": pair_label(r["key"]) if r["key"] else "",
+            "follower_slot": r["inv"], "start_frame": r["start"], "end_frame": r["end"],
+            "start_time_sec": round(start_sec, 4), "end_time_sec": round(end_sec, 4),
+            "duration_sec": round(end_sec - start_sec, 4),
+            "start_time": format_time(start_sec), "end_time": format_time(end_sec),
+            "duration": format_duration(end_sec - start_sec),
+            "n_events": len(evs),
+            "composition": "+".join(dict.fromkeys(kinds)),
+            "fol_sec": round(sum(e.duration_sec for e in evs if e.contact_type == "FOL"), 4),
+            "n2ag_following_sec": round(sum(e.duration_sec for e in evs if e.contact_type == "N2AG"), 4),
+            "event_ids": ", ".join(str(int(e.event_id)) for e in evs),
+        })
+    res = pd.DataFrame(out, columns=[c for c in FOLLOWING_COLUMNS if c != "episode_id"])
+    res.insert(0, "episode_id", range(len(res)))
+    return res
+
+
+def write_following_episodes(follow_df: pd.DataFrame, output_dir: Path) -> Path:
+    """following_episodes.csv (diagnostic, not validated by the clip review)."""
+    path = output_dir / "following_episodes.csv"
+    follow_df.to_csv(path, index=False)
+    logger.info("Following episodes written: %s (%d)", path, len(follow_df))
+    return path
+
+
+def write_brief_events(brief_df: pd.DataFrame, output_dir: Path) -> Path:
+    """brief_events.csv: interactions of 3-8 frames that the minimum duration keeps out of
+    Events. Diagnostic: the clip review does not sample them."""
+    path = output_dir / "brief_events.csv"
+    brief_df.to_csv(path, index=False)
+    logger.info("Brief interactions written: %s (%d)", path, len(brief_df))
     return path
 
 
@@ -1867,10 +2075,12 @@ def run_postprocess(
         smooth_window, gap_max, min_bout_sec, min_bout_frames,
     )
 
-    raw_types, real_types = compute_labels(df, config, fps)
+    raw_types, pre_min, real_types = _label_stages(df, config, fps)
     groups = pair_groups(df)
 
     events_df = extract_events(df, real_types, fps)
+    brief_df = brief_events(df, pre_min, real_types, fps, config, events_df)
+    follow_df = following_episodes(df, events_df, fps, config)
 
     raw_bout_count = sum(_count_raw_bouts(raw_types, groups).values())
     n_contact = count_contact_events(events_df)
@@ -1885,6 +2095,10 @@ def run_postprocess(
 
     write_real_per_frame(df, real_types, contacts_dir)
     write_real_events(events_df, contacts_dir)
+    if (config.get("brief") or {}).get("enabled", True):
+        write_brief_events(brief_df, contacts_dir)
+    if follow_df is not None:
+        write_following_episodes(follow_df, contacts_dir)
     write_investigation_bouts(bouts_df, contacts_dir)
     write_per_animal_summary(per_animal, contacts_dir)
     write_pair_contact_matrix(pair_matrix, contacts_dir)
@@ -2007,11 +2221,15 @@ def main():
         "Rules: majority-vote(%d) -> gap bridging(%d) -> min bout(%d frames), per pair",
         smooth_window, gap_max, min_bout_frames,
     )
-    raw_types, real_types = compute_labels(df, config, fps)
+    raw_types, pre_min, real_types = _label_stages(df, config, fps)
     groups = pair_groups(df)
 
     # Extract events
     events_df = extract_events(df, real_types, fps)
+    brief_df = brief_events(df, pre_min, real_types, fps, config, events_df)
+    follow_df = following_episodes(df, events_df, fps, config)
+    logger.info("Brief interactions (>= %d frames, below the minimum duration): %d",
+                brief_min_frames(config), len(brief_df))
     logger.info("Extracted %d clean contact events (+%d no-contact spans) from %d raw bouts",
                 count_contact_events(events_df), len(events_df) - count_contact_events(events_df),
                 sum(_count_raw_bouts(raw_types, groups).values()))
@@ -2029,6 +2247,10 @@ def main():
 
     write_real_per_frame(df, real_types, output_dir)
     write_real_events(events_df, output_dir)
+    if (config.get("brief") or {}).get("enabled", True):
+        write_brief_events(brief_df, output_dir)
+    if follow_df is not None:
+        write_following_episodes(follow_df, output_dir)
     write_investigation_bouts(bouts_df, output_dir)
     write_per_animal_summary(per_animal, output_dir)
     write_pair_contact_matrix(pair_matrix, output_dir)

@@ -9,9 +9,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.common.excel_report import DIAGNOSTICS_README, _summary_sheet  # noqa: E402
+from scripts.postprocess_contacts_simple import _label_stages  # noqa: E402
 from scripts.postprocess_contacts_simple import (  # noqa: E402
     CONTACT_TYPES, DEFAULT_CONFIG, INVESTIGATION_COLUMNS, PAIR_MATRIX_COLUMNS, PER_ANIMAL_COLUMNS,
-    assign_event_ids, calibration_line, compute_labels, extract_events, investigation_bouts,
+    assign_event_ids, brief_events, calibration_line, compute_labels, extract_events, investigation_bouts,
     load_calibration, n_animals_in_table, normalize_labels, pair_contact_matrix,
     per_animal_summary, run_postprocess, session_frames,
 )
@@ -304,7 +305,7 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
 
 RESULTS_SHEETS = ["Summary", "Events", "PerAnimal", "PairMatrix", "Investigation",
                   "PerFrame", "ByType", "Global", "Parameters"]
-DIAGNOSTIC_SHEETS = ["Bouts", "Dynamics", "Individual"]
+DIAGNOSTIC_SHEETS = ["Brief", "Bouts", "Dynamics", "Individual"]
 
 
 def _diagnostic_tables():
@@ -754,3 +755,63 @@ def test_investigation_max_gap_is_read_from_the_config(tmp_path):
     assert "gaps <= 5 frames" in log
     summary = json.loads((tmp_path / "session_summary_real.json").read_text(encoding="utf-8"))
     assert summary["parameters"]["investigation_max_gap"] == 5
+
+
+# ── Brief interactions: 3 frames up to the minimum duration, outside Events ──
+
+RUNS_BRIEF = {"0_1": (50, 56, "N2N", "i"),      # 6 frames  < 9 (0.3 s)  -> brief
+              "0_2": (80, 82, "N2AG", "i"),     # 2 frames: removed by the vote -> not listed
+              "1_2": (20, 30, "FOL", "j")}      # 10 frames < 12 (FOL 0.4 s) -> brief
+
+
+# the shipped YAML rule: FOL needs 0.4 s (DEFAULT_CONFIG has no per-type minimum)
+CONFIG_FOL = {**DEFAULT_CONFIG, "min_bout": {"duration_sec": 0.3, "by_type": {"FOL": 0.4}}}
+
+
+def test_brief_events_list_short_runs_and_leave_events_alone():
+    df = _multi_table(RUNS_BRIEF)
+    raw, pre_min, real = _label_stages(df, CONFIG_FOL, FPS)
+    assert (real == "NC").all()                                                      # nothing reaches Events
+    ev = extract_events(df, real, FPS)
+    brief = brief_events(df, pre_min, real, FPS, CONFIG_FOL, ev)
+    assert "brief_id" in brief.columns and "event_id" not in brief.columns
+    got = sorted(zip(brief.pair_key, brief.contact_type, brief.start_frame, brief.end_frame))
+    assert got == [("0_1", "N2N", 50, 55), ("1_2", "FOL", 20, 29)]
+    assert list(brief.near_event) == ["", ""]                                        # no event nearby
+
+    # min_frames raises the floor
+    cfg = {**CONFIG_FOL, "brief": {"enabled": True, "min_frames": 7}}
+    brief = brief_events(df, pre_min, real, FPS, cfg, ev)
+    assert list(brief.contact_type) == ["FOL"]
+
+    # a run long enough for Events is never brief; with none the table keeps its header
+    df = _multi_table(RUNS_3)
+    _, pre_min, real = _label_stages(df, DEFAULT_CONFIG, FPS)
+    ev = extract_events(df, real, FPS)
+    brief = brief_events(df, pre_min, real, FPS, DEFAULT_CONFIG, ev)
+    assert brief.empty and "brief_id" in brief.columns and "contact_type" in brief.columns
+    assert "near_event" in brief.columns
+
+
+def test_brief_piece_next_to_an_event_points_to_it():
+    # 0_1: N2N 60 frames (an event) followed at once by 6 frames of N2B (brief, cut off)
+    df = _multi_table({"0_1": (50, 110, "N2N", "i")})
+    sel = (df.pair_key == "0_1") & df.frame_idx.between(110, 115)
+    df.loc[sel, "contact_type"] = "N2B"
+    _, pre_min, real = _label_stages(df, DEFAULT_CONFIG, FPS)
+    ev = extract_events(df, real, FPS)
+    brief = brief_events(df, pre_min, real, FPS, DEFAULT_CONFIG, ev)
+    assert list(brief.contact_type) == ["N2B"]
+    n2n_id = int(ev[ev.contact_type == "N2N"].event_id.iloc[0])
+    assert list(brief.near_event) == [str(n2n_id)]
+
+
+def test_brief_sheet_goes_to_diagnostics_only(tmp_path):
+    pytest.importorskip("openpyxl")
+    runs = {k: v for k, v in RUNS_BRIEF.items() if k != "1_2"}                       # N2N 6 frames only
+    _multi_table(runs).to_csv(tmp_path / "contacts_per_frame.csv", index=False)
+    run_postprocess(tmp_path, FPS, make_reports=False, consolidate=True)
+    assert not (tmp_path / "brief_events.csv").exists()                              # absorbed
+    assert "Brief" not in pd.read_excel(tmp_path / "results.xlsx", sheet_name=None)
+    diag = pd.read_excel(tmp_path / "diagnostics.xlsx", sheet_name=None)
+    assert list(diag) == ["README", "Brief"] and len(diag["Brief"]) == 1

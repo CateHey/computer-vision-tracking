@@ -30,6 +30,10 @@ results.xlsx sheets (in order):
 diagnostics.xlsx sheets (written only when at least one of them has data; not
 validated, not for reporting):
     README      — one cell saying exactly that
+    Brief       — brief interactions: runs of at least brief.min_frames (3) frames that
+                  the minimum duration (0.3 s; FOL 0.4 s) keeps out of Events
+    Following   — following episodes: FOL + N2AG-while-walking events of the same pair and
+                  the same follower, merged (contact_rules_v3 runs only)
     Bouts       — tracker bouts, with the voted `initiator`
     Dynamics    — approach / avoid episodes without contact, with `mover` (v2 only)
     Individual  — per-animal initiator statistics from individual_summary.json (v2 only)
@@ -55,10 +59,11 @@ DIAGNOSTICS_NAME = "diagnostics.xlsx"
 
 # Tables built from the raw tracker output. The clip-review validation checks the
 # cleaned events, not these, so they live apart from the reported workbook.
-DIAGNOSTIC_SHEETS = ("Bouts", "Dynamics", "Individual")
+DIAGNOSTIC_SHEETS = ("Brief", "Following", "Bouts", "Dynamics", "Individual")
 DIAGNOSTICS_README = (
-    "Diagnostic tables from the tracker (raw bouts, approach/avoid episodes, "
-    "per-animal initiator statistics). Not validated by the clip review \u2014 not for "
+    "Diagnostic tables: brief interactions (3 frames up to the 0.3 s minimum of "
+    "Events), and from the tracker raw bouts, approach/avoid episodes and "
+    "per-animal initiator statistics. Not validated by the clip review \u2014 not for "
     "reporting. The reported tables are in results.xlsx."
 )
 
@@ -86,6 +91,8 @@ SOURCE_FILES = [
     "contacts_per_frame.csv",
     "contacts_real_per_frame.csv",
     "contacts_real_events.csv",
+    "brief_events.csv",
+    "following_episodes.csv",        # contact_rules_v3 only
     "per_animal_summary.csv",        # v2 only
     "pair_contact_matrix.csv",       # v2 only
     "investigation_bouts.csv",       # v2 only
@@ -437,7 +444,7 @@ def build_excel_report(
 ) -> Optional[Path]:
     """Consolidate a contacts directory into results.xlsx and diagnostics.xlsx.
 
-    results.xlsx holds the reported tables; diagnostics.xlsx (README, Bouts,
+    results.xlsx holds the reported tables; diagnostics.xlsx (README, Brief, Bouts,
     Dynamics, Individual) holds the unvalidated tracker diagnostics and is written
     in the same call, only when at least one of those tables has data.
 
@@ -476,6 +483,8 @@ def build_excel_report(
     pair_matrix = _read_csv(contacts_dir / "pair_contact_matrix.csv")   # v2 only
     investigation = _read_csv(contacts_dir / "investigation_bouts.csv")   # v2 only
     diagnostics: Dict[str, Optional[pd.DataFrame]] = {
+        "Brief": _read_csv(contacts_dir / "brief_events.csv"),
+        "Following": _read_csv(contacts_dir / "following_episodes.csv"),   # v3 only
         "Bouts": _read_csv(contacts_dir / "contact_bouts.csv"),
         "Dynamics": _read_csv(contacts_dir / "dynamics_no_contact.csv"),   # v2 only
         "Individual": None,   # filled below from individual_summary.json (v2 only)
@@ -527,7 +536,10 @@ def build_excel_report(
 
     # Diagnostics go to their own file, next to results.xlsx.
     diagnostics_ok = True
-    if any(df is not None for df in diagnostics.values()):
+    # An empty Brief table alone (no brief interactions, no tracker tables) is no reason
+    # to write the file.
+    if any(df is not None and not (name == "Brief" and df.empty)
+           for name, df in diagnostics.items()):
         diag_path = contacts_dir / DIAGNOSTICS_NAME
         diag_written = _write_workbook(diag_path, [
             ("README", pd.DataFrame({"README": [DIAGNOSTICS_README]})),
