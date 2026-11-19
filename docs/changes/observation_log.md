@@ -209,6 +209,8 @@ long and points anywhere, so the N2AG score fell (e.g. 0.75 -> 0.35) and N2B won
    (the group of the event the frame belongs to). One group per event, so totals by group
    never count a frame twice. New sheet **Groups** in `diagnostics.xlsx` with the totals.
    Names and codes are editable (`groups`, `group_labels`); all in English.
+   Rows without contact get group `NC` / `No contact` (as contact_type / contact_label), so
+   the column is never empty; the Groups sheet counts contacts only.
 2. New sheet **Similarity** in `diagnostics.xlsx`: per type, % of its frames whose second
    type is each other type (how alike the types are in that video).
 3. Following: `composition` keeps every event in order ("N2AG → N2AG") and the new column

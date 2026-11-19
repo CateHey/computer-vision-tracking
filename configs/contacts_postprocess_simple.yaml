@@ -89,6 +89,7 @@ group_labels:
   AGS: Anogenital sniffing
   BDS: Body sniffing
   CHS: Chase
+  NC: No contact          # rows without contact (contact_type NC)
 
 # --- FPS fallback ---
 # Used only if no --fps flag, no session_summary.json, and no --video_path.

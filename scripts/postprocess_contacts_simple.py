@@ -1200,6 +1200,7 @@ DEFAULT_GROUP_LABELS: Dict[str, str] = {
     "AGS": "Anogenital sniffing",
     "BDS": "Body sniffing",
     "CHS": "Chase",
+    "NC": "No contact",
 }
 
 
@@ -1225,7 +1226,8 @@ def contact_group(contact_type: str, subtype: str, groups: Dict[str, Dict[str, s
 
 
 def add_event_groups(events: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Adds `group` (code) and `group_label` to an Events-like table (empty for NC rows),
+    """Adds `group` (code) and `group_label` to an Events-like table (NC / No contact for the
+    rows without contact, as in contact_type / contact_label),
     placed with the type in hierarchy order: group, group_label, contact_type, contact_label,
     subtype. The group of an event uses its subtype (the most frequent over its frames)."""
     if events is None or not len(events) or "contact_type" not in events.columns:
@@ -1233,7 +1235,7 @@ def add_event_groups(events: pd.DataFrame, config: dict) -> pd.DataFrame:
     groups, labels = group_table(config), group_labels(config)
     sub = events["subtype"] if "subtype" in events.columns else pd.Series("", index=events.index)
     events = events.copy()
-    codes = [contact_group(ct, st, groups) if str(ct) != "NC" else ""
+    codes = [contact_group(ct, st, groups) if str(ct) != "NC" else "NC"
              for ct, st in zip(events["contact_type"], sub)]
     cols = [c for c in events.columns if c not in ("group", "group_label")]
     events["group"] = codes
@@ -1249,7 +1251,7 @@ def group_summary(events: pd.DataFrame) -> Optional[pd.DataFrame]:
     """Totals per group (Groups sheet): events, seconds, and the type / subtype mix."""
     if events is None or "group" not in events.columns:
         return None
-    ev = events[events["group"].astype(str) != ""]
+    ev = events[~events["group"].astype(str).isin(["", "NC"])]          # contacts only
     rows = []
     for g, e in ev.groupby("group", sort=False):
         sub = e["subtype"].fillna("").astype(str) if "subtype" in e.columns else pd.Series("", index=e.index)

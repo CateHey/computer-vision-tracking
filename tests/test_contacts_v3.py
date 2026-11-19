@@ -305,8 +305,8 @@ def test_groups_join_alike_types_and_similarity_table():
                        "contact_type": ["N2N", "SBS", "N2N", "NC"], "contact_label": ["", "", "", ""],
                        "start_frame": [0, 10, 0, 40], "subtype": ["lateral", "", "frontal", ""]})
     ev = add_event_groups(ev, DEFAULT_CONFIG)
-    assert list(ev.group) == ["S2S", "S2S", "FTF", ""]
-    assert list(ev.group_label) == ["Side-to-side", "Side-to-side", "Face-to-face", ""]
+    assert list(ev.group) == ["S2S", "S2S", "FTF", "NC"]
+    assert list(ev.group_label) == ["Side-to-side", "Side-to-side", "Face-to-face", "No contact"]
     assert list(ev.columns) == ["event_id", "pair_key", "duration_sec", "group", "group_label",
                                 "contact_type", "contact_label", "subtype", "start_frame"]
     gs = group_summary(ev)
