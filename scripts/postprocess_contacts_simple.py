@@ -1163,10 +1163,12 @@ def write_real_per_frame(
     # Incluye eventos NC para coincidir con contacts_real_events.csv
     event_ids = assign_event_ids(df, real_types)
     out["real_event_id"] = event_ids
-    # real_group: the group of the event the frame belongs to (one per event, as in Events)
+    # real_group: the group of the event the frame belongs to (one per event, as in Events),
+    # placed before real_type (group > type)
     if events is not None and "group" in events.columns:
         gmap = dict(zip(events["event_id"].astype(int), events["group"].fillna("").astype(str)))
-        out["real_group"] = [gmap.get(int(e), "") if int(e) >= 0 else "" for e in event_ids]
+        out.insert(out.columns.get_loc("real_type"), "real_group",
+                   [gmap.get(int(e), "") if int(e) >= 0 else "" for e in event_ids])
 
     path = output_dir / "contacts_real_per_frame.csv"
     out.to_csv(path, index=False)
@@ -1186,13 +1188,18 @@ def write_real_events(events_df: pd.DataFrame, output_dir: Path) -> Path:
 # summing by group never counts a frame twice. Level 1 = group (safest), level 2 = type,
 # level 3 = subtype. "default" is used when the subtype is missing (runs without v3).
 DEFAULT_GROUPS: Dict[str, Dict[str, str]] = {
-    "N2N": {"frontal": "Cara a cara", "perpendicular": "Cara a cara",
-            "lateral": "Lado a lado", "default": "Cara a cara"},
-    "SBS": {"default": "Lado a lado"},
-    "N2AG": {"classic": "Olfateo anogenital", "following": "Persecución",
-             "default": "Olfateo anogenital"},
-    "N2B": {"default": "Olfateo corporal"},
-    "FOL": {"default": "Persecución"},
+    "N2N": {"frontal": "FTF", "perpendicular": "FTF", "lateral": "S2S", "default": "FTF"},
+    "SBS": {"default": "S2S"},
+    "N2AG": {"classic": "AGS", "following": "CHS", "default": "AGS"},
+    "N2B": {"default": "BDS"},
+    "FOL": {"default": "CHS"},
+}
+DEFAULT_GROUP_LABELS: Dict[str, str] = {
+    "FTF": "Face-to-face",
+    "S2S": "Side-to-side",
+    "AGS": "Anogenital sniffing",
+    "BDS": "Body sniffing",
+    "CHS": "Chase",
 }
 
 
@@ -1202,8 +1209,14 @@ def group_table(config: dict) -> Dict[str, Dict[str, str]]:
     return {str(k).upper(): dict(v) for k, v in g.items()} if g else DEFAULT_GROUPS
 
 
+def group_labels(config: dict) -> Dict[str, str]:
+    """Group code -> readable name, from config["group_labels"] or the default."""
+    g = config.get("group_labels") if isinstance(config, dict) else None
+    return {**DEFAULT_GROUP_LABELS, **({str(k): str(v) for k, v in g.items()} if g else {})}
+
+
 def contact_group(contact_type: str, subtype: str, groups: Dict[str, Dict[str, str]]) -> str:
-    """Group of one contact: by type and subtype, falling back to the type's default."""
+    """Group code of one contact: by type and subtype, falling back to the type's default."""
     row = groups.get(str(contact_type).upper())
     if not row:
         return ""
@@ -1212,20 +1225,28 @@ def contact_group(contact_type: str, subtype: str, groups: Dict[str, Dict[str, s
 
 
 def add_event_groups(events: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Adds the `group` column to Events (empty for NC rows). The group of an event uses
-    its subtype (the most frequent one over its frames)."""
+    """Adds `group` (code) and `group_label` to an Events-like table (empty for NC rows),
+    placed with the type in hierarchy order: group, group_label, contact_type, contact_label,
+    subtype. The group of an event uses its subtype (the most frequent over its frames)."""
     if events is None or not len(events) or "contact_type" not in events.columns:
         return events
-    groups = group_table(config)
+    groups, labels = group_table(config), group_labels(config)
     sub = events["subtype"] if "subtype" in events.columns else pd.Series("", index=events.index)
     events = events.copy()
-    events["group"] = [contact_group(ct, st, groups) if str(ct) != "NC" else ""
-                       for ct, st in zip(events["contact_type"], sub)]
-    return events
+    codes = [contact_group(ct, st, groups) if str(ct) != "NC" else ""
+             for ct, st in zip(events["contact_type"], sub)]
+    cols = [c for c in events.columns if c not in ("group", "group_label")]
+    events["group"] = codes
+    events["group_label"] = [labels.get(c, c) for c in codes]
+    # hierarchy order
+    head = cols[:cols.index("contact_type")]
+    rest = [c for c in cols[cols.index("contact_type"):] if c not in ("contact_type", "contact_label", "subtype")]
+    typ = [c for c in ("contact_type", "contact_label", "subtype") if c in cols]
+    return events[head + ["group", "group_label"] + typ + rest]
 
 
 def group_summary(events: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """Totals per group (Grupos sheet): events, seconds, and the type / subtype mix."""
+    """Totals per group (Groups sheet): events, seconds, and the type / subtype mix."""
     if events is None or "group" not in events.columns:
         return None
     ev = events[events["group"].astype(str) != ""]
@@ -1233,22 +1254,23 @@ def group_summary(events: pd.DataFrame) -> Optional[pd.DataFrame]:
     for g, e in ev.groupby("group", sort=False):
         sub = e["subtype"].fillna("").astype(str) if "subtype" in e.columns else pd.Series("", index=e.index)
         mix = Counter(f"{ct} {st}".strip() for ct, st in zip(e.contact_type, sub))
-        rows.append({"group": g, "n_events": len(e),
+        rows.append({"group": g, "group_label": e["group_label"].iloc[0] if "group_label" in e.columns else g,
+                     "n_events": len(e),
                      "total_sec": round(float(e.duration_sec.sum()), 4),
                      "mean_sec": round(float(e.duration_sec.mean()), 4),
                      "n_pairs": int(e.pair_key.nunique()) if "pair_key" in e.columns else 0,
                      "types": ", ".join(f"{k} ({v})" for k, v in mix.most_common())})
-    order = {name: i for i, name in enumerate(dict.fromkeys(
-        v for row in DEFAULT_GROUPS.values() for v in row.values()))}
+    order = {name: i for i, name in enumerate(DEFAULT_GROUP_LABELS)}
     rows.sort(key=lambda r: (order.get(r["group"], 99), r["group"]))
-    return pd.DataFrame(rows, columns=["group", "n_events", "total_sec", "mean_sec", "n_pairs", "types"])
+    return pd.DataFrame(rows, columns=["group", "group_label", "n_events", "total_sec", "mean_sec",
+                                       "n_pairs", "types"])
 
 
 SIMILARITY_TYPES = ["N2N", "N2AG", "FOL", "SBS", "N2B"]
 
 
 def type_similarity(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """Semejanza sheet: for the frames whose (raw) type is each row, the % whose second type
+    """Similarity sheet: for the frames whose (raw) type is each row, the % whose second type
     (secondary_type, a score >= 0.4 that did not win) is each column. A high % means the two
     types look alike in this video."""
     if "secondary_type" not in df.columns or "contact_type" not in df.columns:
@@ -1268,7 +1290,7 @@ def type_similarity(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 
 def write_groups_tables(events: pd.DataFrame, df: pd.DataFrame, output_dir: Path) -> None:
-    """groups_summary.csv (sheet Grupos) and type_similarity.csv (sheet Semejanza)."""
+    """groups_summary.csv (sheet Groups) and type_similarity.csv (sheet Similarity)."""
     gs = group_summary(events)
     if gs is not None:
         gs.to_csv(output_dir / "groups_summary.csv", index=False)
@@ -2181,7 +2203,7 @@ def run_postprocess(
     groups = pair_groups(df)
 
     events_df = add_event_groups(extract_events(df, real_types, fps), config)
-    brief_df = brief_events(df, pre_min, real_types, fps, config, events_df)
+    brief_df = add_event_groups(brief_events(df, pre_min, real_types, fps, config, events_df), config)
     follow_df = following_episodes(df, events_df, fps, config)
 
     raw_bout_count = sum(_count_raw_bouts(raw_types, groups).values())
@@ -2329,7 +2351,7 @@ def main():
 
     # Extract events
     events_df = add_event_groups(extract_events(df, real_types, fps), config)
-    brief_df = brief_events(df, pre_min, real_types, fps, config, events_df)
+    brief_df = add_event_groups(brief_events(df, pre_min, real_types, fps, config, events_df), config)
     follow_df = following_episodes(df, events_df, fps, config)
     logger.info("Brief interactions (>= %d frames, below the minimum duration): %d",
                 brief_min_frames(config), len(brief_df))

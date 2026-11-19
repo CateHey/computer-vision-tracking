@@ -282,7 +282,7 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
     assert names == ["Summary", "Events", "PerAnimal", "PairMatrix", "Investigation",
                      "PerFrame", "Parameters"]                                       # no reports -> no ByType / Global
     # no tracker tables: diagnostics.xlsx holds only the tables derived from Events
-    assert list(pd.read_excel(tmp_path / "diagnostics.xlsx", sheet_name=None)) == ["README", "Brief", "Grupos"]
+    assert list(pd.read_excel(tmp_path / "diagnostics.xlsx", sheet_name=None)) == ["README", "Brief", "Groups"]
     assert len(sheets["Investigation"]) == 2 and not (tmp_path / "investigation_bouts.csv").exists()
     assert list(sheets["Investigation"].columns) == INVESTIGATION_COLUMNS
     assert list(sheets["PairMatrix"].columns) == PAIR_MATRIX_COLUMNS
@@ -306,7 +306,7 @@ def test_consolidation_adds_per_animal_and_calibration_sheets(tmp_path):
 
 RESULTS_SHEETS = ["Summary", "Events", "PerAnimal", "PairMatrix", "Investigation",
                   "PerFrame", "ByType", "Global", "Parameters"]
-DIAGNOSTIC_SHEETS = ["Brief", "Grupos", "Bouts", "Dynamics", "Individual"]
+DIAGNOSTIC_SHEETS = ["Brief", "Groups", "Bouts", "Dynamics", "Individual"]
 
 
 def _diagnostic_tables():
@@ -815,5 +815,5 @@ def test_brief_sheet_goes_to_diagnostics_only(tmp_path):
     assert not (tmp_path / "brief_events.csv").exists()                              # absorbed
     assert "Brief" not in pd.read_excel(tmp_path / "results.xlsx", sheet_name=None)
     diag = pd.read_excel(tmp_path / "diagnostics.xlsx", sheet_name=None)
-    assert list(diag) == ["README", "Brief", "Grupos"] and len(diag["Brief"]) == 1
-    assert diag["Grupos"].empty                                                       # nothing reaches Events
+    assert list(diag) == ["README", "Brief", "Groups"] and len(diag["Brief"]) == 1
+    assert diag["Groups"].empty                                                       # nothing reaches Events

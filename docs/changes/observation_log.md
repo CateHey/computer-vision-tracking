@@ -195,19 +195,21 @@ long and points anywhere, so the N2AG score fell (e.g. 0.75 -> 0.35) and N2B won
 1. Three levels: **group** (safest) > type > subtype. Table `groups` in
    `configs/contacts_postprocess_simple.yaml`, editable:
 
-   | Group | Type | Subtype |
-   |---|---|---|
-   | Cara a cara | N2N | frontal, perpendicular |
-   | Lado a lado | N2N / SBS | lateral / — |
-   | Olfateo anogenital | N2AG | classic |
-   | Olfateo corporal | N2B | head / torso / rear |
-   | Persecución | N2AG / FOL | following / — |
+   | Group | Label | Type | Subtype |
+   |---|---|---|---|
+   | FTF | Face-to-face | N2N | frontal, perpendicular |
+   | S2S | Side-to-side | N2N / SBS | lateral / — |
+   | AGS | Anogenital sniffing | N2AG | classic |
+   | BDS | Body sniffing | N2B | head / torso / rear |
+   | CHS | Chase | N2AG / FOL | following / — |
 
-   Column `group` in Events (from the event's type and most frequent subtype) and
-   `real_group` in PerFrame (the group of the event the frame belongs to). One group per
-   event, so totals by group never count a frame twice. New sheet **Grupos** in
-   `diagnostics.xlsx` with the totals per group.
-2. New sheet **Semejanza** in `diagnostics.xlsx`: per type, % of its frames whose second
+   Columns `group` and `group_label` in Events and Brief, placed before `contact_type`
+   (hierarchy order: group, group_label, contact_type, contact_label, subtype), from the
+   event's type and most frequent subtype; `real_group` in PerFrame, before `real_type`
+   (the group of the event the frame belongs to). One group per event, so totals by group
+   never count a frame twice. New sheet **Groups** in `diagnostics.xlsx` with the totals.
+   Names and codes are editable (`groups`, `group_labels`); all in English.
+2. New sheet **Similarity** in `diagnostics.xlsx`: per type, % of its frames whose second
    type is each other type (how alike the types are in that video).
 3. Following: `composition` keeps every event in order ("N2AG → N2AG") and the new column
    `sequence` adds the frames ("N2AG 84-101 → N2AG 111-123").
@@ -215,8 +217,8 @@ long and points anywhere, so the N2AG score fell (e.g. 0.75 -> 0.35) and N2B won
    `follow_min_speed_bls`.
 
 **Result:** 135 tests pass. Contact detection and the Entry 003 metrics are unchanged
-(kappa 0.645). Groups in the clip: Cara a cara 5 events (3.1 s), Lado a lado 7 (3.3 s),
-Olfateo anogenital 3 (3.1 s), Persecución 6 (3.6 s), Olfateo corporal 4 (1.6 s). With 0.5
+(kappa 0.645). Groups in the clip: FTF 5 events (3.1 s), S2S 7 (3.3 s), AGS 3 (3.1 s),
+CHS 6 (3.6 s), BDS 4 (1.6 s). The Following sheet is the CHS group seen as episodes. With 0.5
 BL/s, 3 of the 7 N2AG events are classic (were all following); Following 6 -> 5 episodes.
 _Pending: calibrate `n2ag_walking_bls` with the annotator marking which N2AG had both rats walking._
 

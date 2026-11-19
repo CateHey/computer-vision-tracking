@@ -290,24 +290,28 @@ def test_groups_join_alike_types_and_similarity_table():
     from scripts.postprocess_contacts_simple import (
         DEFAULT_CONFIG, add_event_groups, contact_group, group_summary, group_table, type_similarity)
     g = group_table(DEFAULT_CONFIG)
-    assert contact_group("N2N", "lateral", g) == "Lado a lado"                  # level 1 joins ...
-    assert contact_group("SBS", "", g) == "Lado a lado"
-    assert contact_group("N2N", "frontal", g) == "Cara a cara"                  # ... level 3 splits
-    assert contact_group("N2N", None, g) == "Cara a cara"                       # no subtype: default
-    assert contact_group("N2AG", "following", g) == "Persecución"
-    assert contact_group("FOL", "", g) == "Persecución"
-    assert contact_group("N2AG", "classic", g) == "Olfateo anogenital"
-    assert contact_group("N2B", "rear", g) == "Olfateo corporal"
-    custom = group_table({"groups": {"n2b": {"default": "Olfateo"}, "N2AG": {"default": "Olfateo"}}})
-    assert contact_group("N2AG", "classic", custom) == "Olfateo"                # editable in the config
+    assert contact_group("N2N", "lateral", g) == "S2S"                          # level 1 joins ...
+    assert contact_group("SBS", "", g) == "S2S"
+    assert contact_group("N2N", "frontal", g) == "FTF"                          # ... level 3 splits
+    assert contact_group("N2N", None, g) == "FTF"                               # no subtype: default
+    assert contact_group("N2AG", "following", g) == "CHS"
+    assert contact_group("FOL", "", g) == "CHS"
+    assert contact_group("N2AG", "classic", g) == "AGS"
+    assert contact_group("N2B", "rear", g) == "BDS"
+    custom = group_table({"groups": {"n2b": {"default": "SNF"}, "N2AG": {"default": "SNF"}}})
+    assert contact_group("N2AG", "classic", custom) == "SNF"                    # editable in the config
     ev = pd.DataFrame({"event_id": [0, 1, 2, 3], "pair_key": ["0_1", "0_1", "1_2", "0_1"],
-                       "contact_type": ["N2N", "SBS", "N2N", "NC"],
-                       "subtype": ["lateral", "", "frontal", ""], "duration_sec": [1.0, 2.0, 0.5, 9.0]})
+                       "duration_sec": [1.0, 2.0, 0.5, 9.0],
+                       "contact_type": ["N2N", "SBS", "N2N", "NC"], "contact_label": ["", "", "", ""],
+                       "start_frame": [0, 10, 0, 40], "subtype": ["lateral", "", "frontal", ""]})
     ev = add_event_groups(ev, DEFAULT_CONFIG)
-    assert list(ev.group) == ["Lado a lado", "Lado a lado", "Cara a cara", ""]
+    assert list(ev.group) == ["S2S", "S2S", "FTF", ""]
+    assert list(ev.group_label) == ["Side-to-side", "Side-to-side", "Face-to-face", ""]
+    assert list(ev.columns) == ["event_id", "pair_key", "duration_sec", "group", "group_label",
+                                "contact_type", "contact_label", "subtype", "start_frame"]
     gs = group_summary(ev)
-    assert list(gs.group) == ["Cara a cara", "Lado a lado"]
-    assert gs.set_index("group").loc["Lado a lado", "total_sec"] == 3.0       # no double counting
+    assert list(gs.group) == ["FTF", "S2S"] and list(gs.group_label) == ["Face-to-face", "Side-to-side"]
+    assert gs.set_index("group").loc["S2S", "total_sec"] == 3.0                # no double counting
     df = pd.DataFrame({"contact_type": ["N2AG"] * 4 + ["SBS"] * 2 + ["none"],
                        "secondary_type": ["N2B", "N2B", "N2B", "", "N2N", "", "SBS"]})
     sim = type_similarity(df).set_index("type")

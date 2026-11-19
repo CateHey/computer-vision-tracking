@@ -34,9 +34,9 @@ validated, not for reporting):
                   the minimum duration (0.3 s; FOL 0.4 s) keeps out of Events
     Following   — following episodes: FOL + N2AG-while-walking events of the same pair and
                   the same follower, merged (contact_rules_v3 runs only)
-    Grupos      — totals per group (Cara a cara, Lado a lado, Olfateo anogenital, Olfateo
-                  corporal, Persecución): contact types that look alike, joined
-    Semejanza   — per type, % of its frames whose second type is each other type
+    Groups      — totals per group (FTF face-to-face, S2S side-to-side, AGS anogenital
+                  sniffing, BDS body sniffing, CHS chase): contact types that look alike, joined
+    Similarity  — per type, % of its frames whose second type is each other type
     Bouts       — tracker bouts, with the voted `initiator`
     Dynamics    — approach / avoid episodes without contact, with `mover` (v2 only)
     Individual  — per-animal initiator statistics from individual_summary.json (v2 only)
@@ -62,7 +62,7 @@ DIAGNOSTICS_NAME = "diagnostics.xlsx"
 
 # Tables built from the raw tracker output. The clip-review validation checks the
 # cleaned events, not these, so they live apart from the reported workbook.
-DIAGNOSTIC_SHEETS = ("Brief", "Following", "Grupos", "Semejanza", "Bouts", "Dynamics", "Individual")
+DIAGNOSTIC_SHEETS = ("Brief", "Following", "Groups", "Similarity", "Bouts", "Dynamics", "Individual")
 DIAGNOSTICS_README = (
     "Diagnostic tables: brief interactions (3 frames up to the 0.3 s minimum of "
     "Events), and from the tracker raw bouts, approach/avoid episodes and "
@@ -490,8 +490,8 @@ def build_excel_report(
     diagnostics: Dict[str, Optional[pd.DataFrame]] = {
         "Brief": _read_csv(contacts_dir / "brief_events.csv"),
         "Following": _read_csv(contacts_dir / "following_episodes.csv"),   # v3 only
-        "Grupos": _read_csv(contacts_dir / "groups_summary.csv"),
-        "Semejanza": _read_csv(contacts_dir / "type_similarity.csv"),
+        "Groups": _read_csv(contacts_dir / "groups_summary.csv"),
+        "Similarity": _read_csv(contacts_dir / "type_similarity.csv"),
         "Bouts": _read_csv(contacts_dir / "contact_bouts.csv"),
         "Dynamics": _read_csv(contacts_dir / "dynamics_no_contact.csv"),   # v2 only
         "Individual": None,   # filled below from individual_summary.json (v2 only)
@@ -548,9 +548,9 @@ def build_excel_report(
     def _has_content(name, df):
         if df is None:
             return False
-        if name in ("Brief", "Following", "Grupos"):
+        if name in ("Brief", "Following", "Groups"):
             return not df.empty
-        if name == "Semejanza":
+        if name == "Similarity":
             return "frames" in df.columns and float(pd.to_numeric(df["frames"], errors="coerce").fillna(0).sum()) > 0
         return True
     if any(_has_content(name, df) for name, df in diagnostics.items()):

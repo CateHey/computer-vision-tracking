@@ -73,16 +73,22 @@ brief:
 following:
   max_gap_sec: 0.5       # seconds. 15 frames at 30 fps.
 
-# --- Groups (column `group` in Events, `real_group` in PerFrame, sheet Grupos) ---
+# --- Groups (columns group / group_label in Events, real_group in PerFrame, sheet Groups) ---
 # Contact types that look alike, joined: level 1 = group (safest), level 2 = type,
 # level 3 = subtype. Each type + subtype goes to ONE group, so totals by group never count
 # a frame twice. "default" is used when the subtype is missing (runs without v3).
 groups:
-  N2N:  {frontal: "Cara a cara", perpendicular: "Cara a cara", lateral: "Lado a lado", default: "Cara a cara"}
-  SBS:  {default: "Lado a lado"}
-  N2AG: {classic: "Olfateo anogenital", following: "Persecución", default: "Olfateo anogenital"}
-  N2B:  {default: "Olfateo corporal"}
-  FOL:  {default: "Persecución"}
+  N2N:  {frontal: FTF, perpendicular: FTF, lateral: S2S, default: FTF}
+  SBS:  {default: S2S}
+  N2AG: {classic: AGS, following: CHS, default: AGS}
+  N2B:  {default: BDS}
+  FOL:  {default: CHS}
+group_labels:
+  FTF: Face-to-face
+  S2S: Side-to-side
+  AGS: Anogenital sniffing
+  BDS: Body sniffing
+  CHS: Chase
 
 # --- FPS fallback ---
 # Used only if no --fps flag, no session_summary.json, and no --video_path.
