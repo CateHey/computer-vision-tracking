@@ -110,6 +110,8 @@ def test_n2ag_needs_evidence_of_touching():
     # head circle on the rear: N2AG, and both walking -> subtype following
     a2 = _rat(198, 150)                                         # nose tip 2 px from the rear
     ev, _ = _run(a2, b, V3, vel_a=(30.0, 0.0), vel_b=(30.0, 0.0))
+    assert ev.n2ag_subtype == "classic"                         # 0.3 BL/s: below n2ag_walking_bls
+    ev, _ = _run(a2, b, V3, vel_a=(90.0, 0.0), vel_b=(90.0, 0.0))
     assert ev.head_touch_ij and ev.contact_type == ContactType.N2AG
     assert ev.n2ag_subtype == "following" and ev.investigator_role == "i"
     # slow for several frames at 0.27 BL also counts as evidence
@@ -264,7 +266,8 @@ def test_events_carry_v3_columns_and_following_episodes_merge():
     fol = following_episodes(df, extract_events(df, real, 30.0), 30.0, DEFAULT_CONFIG)
     assert len(fol) == 1                                        # FOL + N2AG following, same follower
     r = fol.iloc[0]
-    assert (r.start_frame, r.end_frame, r.composition, r.n_events) == (10, 69, "FOL+N2AG", 2)
+    assert (r.start_frame, r.end_frame, r.composition, r.n_events) == (10, 69, "FOL → N2AG", 2)
+    assert r.sequence == "FOL 10-39 → N2AG 40-69"
     assert following_episodes(df.drop(columns=["n2ag_subtype"]), ev, 30.0, DEFAULT_CONFIG) is None
 
 
@@ -281,3 +284,32 @@ def test_n2ag_gaze_is_ignored_with_the_nose_on_the_rear():
     # further away the gaze still counts: looking away at 0.25 BL scores low
     far = new._score_n2ag(0.25, **{**kw, "rear_j": (125.0, 100.0)})
     assert far[0] == pytest.approx(0.2)
+
+
+def test_groups_join_alike_types_and_similarity_table():
+    from scripts.postprocess_contacts_simple import (
+        DEFAULT_CONFIG, add_event_groups, contact_group, group_summary, group_table, type_similarity)
+    g = group_table(DEFAULT_CONFIG)
+    assert contact_group("N2N", "lateral", g) == "Lado a lado"                  # level 1 joins ...
+    assert contact_group("SBS", "", g) == "Lado a lado"
+    assert contact_group("N2N", "frontal", g) == "Cara a cara"                  # ... level 3 splits
+    assert contact_group("N2N", None, g) == "Cara a cara"                       # no subtype: default
+    assert contact_group("N2AG", "following", g) == "Persecución"
+    assert contact_group("FOL", "", g) == "Persecución"
+    assert contact_group("N2AG", "classic", g) == "Olfateo anogenital"
+    assert contact_group("N2B", "rear", g) == "Olfateo corporal"
+    custom = group_table({"groups": {"n2b": {"default": "Olfateo"}, "N2AG": {"default": "Olfateo"}}})
+    assert contact_group("N2AG", "classic", custom) == "Olfateo"                # editable in the config
+    ev = pd.DataFrame({"event_id": [0, 1, 2, 3], "pair_key": ["0_1", "0_1", "1_2", "0_1"],
+                       "contact_type": ["N2N", "SBS", "N2N", "NC"],
+                       "subtype": ["lateral", "", "frontal", ""], "duration_sec": [1.0, 2.0, 0.5, 9.0]})
+    ev = add_event_groups(ev, DEFAULT_CONFIG)
+    assert list(ev.group) == ["Lado a lado", "Lado a lado", "Cara a cara", ""]
+    gs = group_summary(ev)
+    assert list(gs.group) == ["Cara a cara", "Lado a lado"]
+    assert gs.set_index("group").loc["Lado a lado", "total_sec"] == 3.0       # no double counting
+    df = pd.DataFrame({"contact_type": ["N2AG"] * 4 + ["SBS"] * 2 + ["none"],
+                       "secondary_type": ["N2B", "N2B", "N2B", "", "N2N", "", "SBS"]})
+    sim = type_similarity(df).set_index("type")
+    assert sim.loc["N2AG", "N2B_%"] == 75.0 and sim.loc["N2AG", "no_second_%"] == 25.0
+    assert sim.loc["SBS", "N2N_%"] == 50.0 and sim.loc["N2N", "frames"] == 0

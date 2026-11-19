@@ -174,6 +174,54 @@ long and points anywhere, so the N2AG score fell (e.g. 0.75 -> 0.35) and N2B won
 
 ---
 
+### Entry 004 — Contact groups, similarity table, full following sequence, walking threshold
+
+- **Date:** 2026-11-19
+- **Video:** same 6-rat clip (rebuilt inputs, see Entry 003)
+- **Pipeline:** cutie_composite, `contact_rules_v3: true`
+- **Commit:** this commit
+
+**Observations:**
+- `CONTACT`: some types look alike. In this clip the second type of N2AG frames is N2B in
+  78 % of them; N2N has SBS as second type in 29 % and SBS has N2N in 31 %. Of the 20 frames
+  annotated as SBS that the program called N2N, 19 are lateral N2N.
+- `CONTACT`: the Following sheet listed only the distinct types of an episode, so two N2AG
+  events merged into one chase read as "N2AG".
+- `CONTACT`: `follow_min_speed_bls` (0.15 BL/s) also decided the N2AG subtype; it is below
+  90 % of all speeds (tracking jitter alone reaches ~0.25 BL/s), so almost every N2AG was
+  "following".
+
+**Action:**
+1. Three levels: **group** (safest) > type > subtype. Table `groups` in
+   `configs/contacts_postprocess_simple.yaml`, editable:
+
+   | Group | Type | Subtype |
+   |---|---|---|
+   | Cara a cara | N2N | frontal, perpendicular |
+   | Lado a lado | N2N / SBS | lateral / — |
+   | Olfateo anogenital | N2AG | classic |
+   | Olfateo corporal | N2B | head / torso / rear |
+   | Persecución | N2AG / FOL | following / — |
+
+   Column `group` in Events (from the event's type and most frequent subtype) and
+   `real_group` in PerFrame (the group of the event the frame belongs to). One group per
+   event, so totals by group never count a frame twice. New sheet **Grupos** in
+   `diagnostics.xlsx` with the totals per group.
+2. New sheet **Semejanza** in `diagnostics.xlsx`: per type, % of its frames whose second
+   type is each other type (how alike the types are in that video).
+3. Following: `composition` keeps every event in order ("N2AG → N2AG") and the new column
+   `sequence` adds the frames ("N2AG 84-101 → N2AG 111-123").
+4. New `n2ag_walking_bls: 0.5` (cutie configs) decides N2AG following / classic; FOL keeps
+   `follow_min_speed_bls`.
+
+**Result:** 135 tests pass. Contact detection and the Entry 003 metrics are unchanged
+(kappa 0.645). Groups in the clip: Cara a cara 5 events (3.1 s), Lado a lado 7 (3.3 s),
+Olfateo anogenital 3 (3.1 s), Persecución 6 (3.6 s), Olfateo corporal 4 (1.6 s). With 0.5
+BL/s, 3 of the 7 N2AG events are classic (were all following); Following 6 -> 5 episodes.
+_Pending: calibrate `n2ag_walking_bls` with the annotator marking which N2AG had both rats walking._
+
+---
+
 <!-- TEMPLATE: Copy this for new entries
 
 ### Entry NNN — [Short description]

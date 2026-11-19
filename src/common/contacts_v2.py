@@ -1223,6 +1223,9 @@ class ContactClassifier:
         self.n2n_lateral_factor = float(config.get("n2n_lateral_factor", 0.85))    # 7
         self.low_conf_min = float(config.get("low_confidence_min_score", 0.35))    # 8
         self.ambiguous_margin = float(config.get("ambiguous_margin", 0.10))        # 9
+        # 10: both animals at least this fast = N2AG "following". Own threshold, apart from
+        # follow_min_speed_bls (0.15, used by FOL): tracking jitter alone reaches ~0.25 BL/s.
+        self.n2ag_walking_bls = float(config.get("n2ag_walking_bls", 0.5))
         # frames in a row the investigator has been slow near the rear (per direction)
         self._slow_near_ij = 0
         self._slow_near_ji = 0
@@ -1540,7 +1543,7 @@ class ContactClassifier:
             if event.contact_type == ContactType.N2N:
                 event.n2n_subtype = self._n2n_subtype(orient_i, orient_j)
             elif event.contact_type == ContactType.N2AG:
-                walking = min(event.velocity_i_bls, event.velocity_j_bls) >= self.follow_min_speed_bls
+                walking = min(event.velocity_i_bls, event.velocity_j_bls) >= self.n2ag_walking_bls
                 event.n2ag_subtype = "following" if walking else "classic"
             elif event.contact_type == ContactType.N2B:
                 t = t_i_on_j if event.investigator_role == "i" else t_j_on_i

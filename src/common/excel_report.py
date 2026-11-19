@@ -34,6 +34,9 @@ validated, not for reporting):
                   the minimum duration (0.3 s; FOL 0.4 s) keeps out of Events
     Following   — following episodes: FOL + N2AG-while-walking events of the same pair and
                   the same follower, merged (contact_rules_v3 runs only)
+    Grupos      — totals per group (Cara a cara, Lado a lado, Olfateo anogenital, Olfateo
+                  corporal, Persecución): contact types that look alike, joined
+    Semejanza   — per type, % of its frames whose second type is each other type
     Bouts       — tracker bouts, with the voted `initiator`
     Dynamics    — approach / avoid episodes without contact, with `mover` (v2 only)
     Individual  — per-animal initiator statistics from individual_summary.json (v2 only)
@@ -59,7 +62,7 @@ DIAGNOSTICS_NAME = "diagnostics.xlsx"
 
 # Tables built from the raw tracker output. The clip-review validation checks the
 # cleaned events, not these, so they live apart from the reported workbook.
-DIAGNOSTIC_SHEETS = ("Brief", "Following", "Bouts", "Dynamics", "Individual")
+DIAGNOSTIC_SHEETS = ("Brief", "Following", "Grupos", "Semejanza", "Bouts", "Dynamics", "Individual")
 DIAGNOSTICS_README = (
     "Diagnostic tables: brief interactions (3 frames up to the 0.3 s minimum of "
     "Events), and from the tracker raw bouts, approach/avoid episodes and "
@@ -93,6 +96,8 @@ SOURCE_FILES = [
     "contacts_real_events.csv",
     "brief_events.csv",
     "following_episodes.csv",        # contact_rules_v3 only
+    "groups_summary.csv",
+    "type_similarity.csv",
     "per_animal_summary.csv",        # v2 only
     "pair_contact_matrix.csv",       # v2 only
     "investigation_bouts.csv",       # v2 only
@@ -485,6 +490,8 @@ def build_excel_report(
     diagnostics: Dict[str, Optional[pd.DataFrame]] = {
         "Brief": _read_csv(contacts_dir / "brief_events.csv"),
         "Following": _read_csv(contacts_dir / "following_episodes.csv"),   # v3 only
+        "Grupos": _read_csv(contacts_dir / "groups_summary.csv"),
+        "Semejanza": _read_csv(contacts_dir / "type_similarity.csv"),
         "Bouts": _read_csv(contacts_dir / "contact_bouts.csv"),
         "Dynamics": _read_csv(contacts_dir / "dynamics_no_contact.csv"),   # v2 only
         "Individual": None,   # filled below from individual_summary.json (v2 only)
@@ -536,10 +543,17 @@ def build_excel_report(
 
     # Diagnostics go to their own file, next to results.xlsx.
     diagnostics_ok = True
-    # An empty Brief table alone (no brief interactions, no tracker tables) is no reason
-    # to write the file.
-    if any(df is not None and not (name == "Brief" and df.empty)
-           for name, df in diagnostics.items()):
+    # Tables derived from Events that came out empty (no brief interactions, no groups, no
+    # frames for the similarity table) are no reason on their own to write the file.
+    def _has_content(name, df):
+        if df is None:
+            return False
+        if name in ("Brief", "Following", "Grupos"):
+            return not df.empty
+        if name == "Semejanza":
+            return "frames" in df.columns and float(pd.to_numeric(df["frames"], errors="coerce").fillna(0).sum()) > 0
+        return True
+    if any(_has_content(name, df) for name, df in diagnostics.items()):
         diag_path = contacts_dir / DIAGNOSTICS_NAME
         diag_written = _write_workbook(diag_path, [
             ("README", pd.DataFrame({"README": [DIAGNOSTICS_README]})),

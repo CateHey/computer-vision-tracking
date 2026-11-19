@@ -126,6 +126,7 @@ contacts:
   n2ag_slow_bls: 0.15               # N2AG evidence: investigator this slow ...
   n2ag_slow_frames: 5               # ... for this many frames in a row within 0.30 BL
   n2ag_gaze_floor: 0.2              # gaze factor 0.2 + 0.8 (cos + 1) / 2 (was 0.4 + 0.6 ...)
+  n2ag_walking_bls: 0.5             # N2AG "following" when both rats move >= this (BL/s); else "classic"
   n2n_lateral_factor: 0.85          # N2N with heads side by side keeps 85 % of its score
   low_confidence_min_score: 0.35    # bodies touch, no type >= 0.5: best type >= this, flagged
   ambiguous_margin: 0.10            # primary - secondary below this = ambiguous

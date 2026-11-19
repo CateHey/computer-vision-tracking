@@ -108,6 +108,7 @@ DEFAULT_CONFIG = {
     "investigation": {"max_gap": INVESTIGATION_MAX_GAP_DEFAULT},
     "brief": {"enabled": True, "min_frames": 3},
     "following": {"max_gap_sec": 0.5},
+    "groups": None,          # None -> DEFAULT_GROUPS
     "fps_fallback": 30.0,
 }
 
@@ -265,7 +266,7 @@ def load_per_frame(input_dir: Path) -> pd.DataFrame:
         logger.info("Reading per-frame table from %s (PerFrame sheet)", xlsx_path.name)
         df = pd.read_excel(xlsx_path, sheet_name="PerFrame")
         df = df.drop(
-            columns=[c for c in ("real_type", "real_zone", "real_event_id")
+            columns=[c for c in ("real_type", "real_zone", "real_event_id", "real_group")
                      if c in df.columns],
         )
         return load_and_validate(df, source=xlsx_path)
@@ -1144,6 +1145,7 @@ def write_real_per_frame(
     df: pd.DataFrame,
     real_types: np.ndarray,
     output_dir: Path,
+    events: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Write contacts_real_per_frame.csv with appended columns."""
     out = df.copy()
@@ -1161,6 +1163,10 @@ def write_real_per_frame(
     # Incluye eventos NC para coincidir con contacts_real_events.csv
     event_ids = assign_event_ids(df, real_types)
     out["real_event_id"] = event_ids
+    # real_group: the group of the event the frame belongs to (one per event, as in Events)
+    if events is not None and "group" in events.columns:
+        gmap = dict(zip(events["event_id"].astype(int), events["group"].fillna("").astype(str)))
+        out["real_group"] = [gmap.get(int(e), "") if int(e) >= 0 else "" for e in event_ids]
 
     path = output_dir / "contacts_real_per_frame.csv"
     out.to_csv(path, index=False)
@@ -1176,10 +1182,105 @@ def write_real_events(events_df: pd.DataFrame, output_dir: Path) -> Path:
     return path
 
 
+# Groups: contact types that look alike, joined. Each type + subtype goes to ONE group, so
+# summing by group never counts a frame twice. Level 1 = group (safest), level 2 = type,
+# level 3 = subtype. "default" is used when the subtype is missing (runs without v3).
+DEFAULT_GROUPS: Dict[str, Dict[str, str]] = {
+    "N2N": {"frontal": "Cara a cara", "perpendicular": "Cara a cara",
+            "lateral": "Lado a lado", "default": "Cara a cara"},
+    "SBS": {"default": "Lado a lado"},
+    "N2AG": {"classic": "Olfateo anogenital", "following": "Persecución",
+             "default": "Olfateo anogenital"},
+    "N2B": {"default": "Olfateo corporal"},
+    "FOL": {"default": "Persecución"},
+}
+
+
+def group_table(config: dict) -> Dict[str, Dict[str, str]]:
+    """The groups table from config["groups"] (same shape as DEFAULT_GROUPS), or the default."""
+    g = config.get("groups") if isinstance(config, dict) else None
+    return {str(k).upper(): dict(v) for k, v in g.items()} if g else DEFAULT_GROUPS
+
+
+def contact_group(contact_type: str, subtype: str, groups: Dict[str, Dict[str, str]]) -> str:
+    """Group of one contact: by type and subtype, falling back to the type's default."""
+    row = groups.get(str(contact_type).upper())
+    if not row:
+        return ""
+    sub = "" if subtype is None or str(subtype).lower() == "nan" else str(subtype)
+    return row.get(sub, row.get("default", ""))
+
+
+def add_event_groups(events: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Adds the `group` column to Events (empty for NC rows). The group of an event uses
+    its subtype (the most frequent one over its frames)."""
+    if events is None or not len(events) or "contact_type" not in events.columns:
+        return events
+    groups = group_table(config)
+    sub = events["subtype"] if "subtype" in events.columns else pd.Series("", index=events.index)
+    events = events.copy()
+    events["group"] = [contact_group(ct, st, groups) if str(ct) != "NC" else ""
+                       for ct, st in zip(events["contact_type"], sub)]
+    return events
+
+
+def group_summary(events: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """Totals per group (Grupos sheet): events, seconds, and the type / subtype mix."""
+    if events is None or "group" not in events.columns:
+        return None
+    ev = events[events["group"].astype(str) != ""]
+    rows = []
+    for g, e in ev.groupby("group", sort=False):
+        sub = e["subtype"].fillna("").astype(str) if "subtype" in e.columns else pd.Series("", index=e.index)
+        mix = Counter(f"{ct} {st}".strip() for ct, st in zip(e.contact_type, sub))
+        rows.append({"group": g, "n_events": len(e),
+                     "total_sec": round(float(e.duration_sec.sum()), 4),
+                     "mean_sec": round(float(e.duration_sec.mean()), 4),
+                     "n_pairs": int(e.pair_key.nunique()) if "pair_key" in e.columns else 0,
+                     "types": ", ".join(f"{k} ({v})" for k, v in mix.most_common())})
+    order = {name: i for i, name in enumerate(dict.fromkeys(
+        v for row in DEFAULT_GROUPS.values() for v in row.values()))}
+    rows.sort(key=lambda r: (order.get(r["group"], 99), r["group"]))
+    return pd.DataFrame(rows, columns=["group", "n_events", "total_sec", "mean_sec", "n_pairs", "types"])
+
+
+SIMILARITY_TYPES = ["N2N", "N2AG", "FOL", "SBS", "N2B"]
+
+
+def type_similarity(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """Semejanza sheet: for the frames whose (raw) type is each row, the % whose second type
+    (secondary_type, a score >= 0.4 that did not win) is each column. A high % means the two
+    types look alike in this video."""
+    if "secondary_type" not in df.columns or "contact_type" not in df.columns:
+        return None
+    ct = df["contact_type"].fillna("").astype(str).str.upper()
+    st = df["secondary_type"].fillna("").astype(str).str.upper()
+    rows = []
+    for t in SIMILARITY_TYPES:
+        m = ct == t
+        n = int(m.sum())
+        row = {"type": t, "frames": n}
+        for u in SIMILARITY_TYPES:
+            row[f"{u}_%"] = round(100.0 * float((st[m] == u).mean()), 1) if n else 0.0
+        row["no_second_%"] = round(100.0 * float((~st[m].isin(SIMILARITY_TYPES)).mean()), 1) if n else 0.0
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def write_groups_tables(events: pd.DataFrame, df: pd.DataFrame, output_dir: Path) -> None:
+    """groups_summary.csv (sheet Grupos) and type_similarity.csv (sheet Semejanza)."""
+    gs = group_summary(events)
+    if gs is not None:
+        gs.to_csv(output_dir / "groups_summary.csv", index=False)
+    sim = type_similarity(df)
+    if sim is not None:
+        sim.to_csv(output_dir / "type_similarity.csv", index=False)
+
+
 FOLLOWING_COLUMNS = [
     "episode_id", "pair_key", "pair_label", "follower_slot", "start_frame", "end_frame",
     "start_time_sec", "end_time_sec", "duration_sec", "start_time", "end_time", "duration",
-    "n_events", "composition", "fol_sec", "n2ag_following_sec", "event_ids",
+    "n_events", "composition", "sequence", "fol_sec", "n2ag_following_sec", "event_ids",
 ]
 
 
@@ -1241,7 +1342,8 @@ def following_episodes(df: pd.DataFrame, events: pd.DataFrame, fps: float,
             "start_time": format_time(start_sec), "end_time": format_time(end_sec),
             "duration": format_duration(end_sec - start_sec),
             "n_events": len(evs),
-            "composition": "+".join(dict.fromkeys(kinds)),
+            "composition": " → ".join(kinds),
+            "sequence": " → ".join(f"{e.contact_type} {int(e.start_frame)}-{int(e.end_frame)}" for e in evs),
             "fol_sec": round(sum(e.duration_sec for e in evs if e.contact_type == "FOL"), 4),
             "n2ag_following_sec": round(sum(e.duration_sec for e in evs if e.contact_type == "N2AG"), 4),
             "event_ids": ", ".join(str(int(e.event_id)) for e in evs),
@@ -2078,7 +2180,7 @@ def run_postprocess(
     raw_types, pre_min, real_types = _label_stages(df, config, fps)
     groups = pair_groups(df)
 
-    events_df = extract_events(df, real_types, fps)
+    events_df = add_event_groups(extract_events(df, real_types, fps), config)
     brief_df = brief_events(df, pre_min, real_types, fps, config, events_df)
     follow_df = following_episodes(df, events_df, fps, config)
 
@@ -2093,12 +2195,13 @@ def run_postprocess(
     pair_matrix = pair_contact_matrix(
         events_df, n_animals_in_table(df), fps, session_frames(df) / fps)
 
-    write_real_per_frame(df, real_types, contacts_dir)
+    write_real_per_frame(df, real_types, contacts_dir, events_df)
     write_real_events(events_df, contacts_dir)
     if (config.get("brief") or {}).get("enabled", True):
         write_brief_events(brief_df, contacts_dir)
     if follow_df is not None:
         write_following_episodes(follow_df, contacts_dir)
+    write_groups_tables(events_df, df, contacts_dir)
     write_investigation_bouts(bouts_df, contacts_dir)
     write_per_animal_summary(per_animal, contacts_dir)
     write_pair_contact_matrix(pair_matrix, contacts_dir)
@@ -2225,7 +2328,7 @@ def main():
     groups = pair_groups(df)
 
     # Extract events
-    events_df = extract_events(df, real_types, fps)
+    events_df = add_event_groups(extract_events(df, real_types, fps), config)
     brief_df = brief_events(df, pre_min, real_types, fps, config, events_df)
     follow_df = following_episodes(df, events_df, fps, config)
     logger.info("Brief interactions (>= %d frames, below the minimum duration): %d",
@@ -2245,12 +2348,13 @@ def main():
     pair_matrix = pair_contact_matrix(
         events_df, n_animals_in_table(df), fps, session_frames(df) / fps)
 
-    write_real_per_frame(df, real_types, output_dir)
+    write_real_per_frame(df, real_types, output_dir, events_df)
     write_real_events(events_df, output_dir)
     if (config.get("brief") or {}).get("enabled", True):
         write_brief_events(brief_df, output_dir)
     if follow_df is not None:
         write_following_episodes(follow_df, output_dir)
+    write_groups_tables(events_df, df, output_dir)
     write_investigation_bouts(bouts_df, output_dir)
     write_per_animal_summary(per_animal, output_dir)
     write_pair_contact_matrix(pair_matrix, output_dir)
