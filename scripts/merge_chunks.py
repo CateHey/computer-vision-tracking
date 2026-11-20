@@ -438,7 +438,7 @@ def generate_merged_report(contacts_dir: Path) -> None:
                         color="#ff7f0e", linewidth=0.5, alpha=0.8, label="Centroid (BL)")
             ax.set_xlabel("Time (seconds)")
             ax.set_ylabel("Distance (body lengths)")
-            ax.set_title("Inter-Rat Distance Over Time")
+            ax.set_title("Inter-Mouse Distance Over Time")
             line_handles = ax.get_legend_handles_labels()[0]
             zone_patches = [mpatches.Patch(color=c, alpha=0.3, label=z.capitalize())
                             for z, c in zone_colors_bg.items()]
@@ -472,7 +472,7 @@ def generate_merged_report(contacts_dir: Path) -> None:
                             for j_idx, ct in enumerate(asym_types):
                                 left[j_idx] += inv_data[ct].get(prev_slot, 0)
                     ax.barh(y_pos, vals, left=left, height=0.5,
-                            color=color, label=f"Rat {slot_id}", edgecolor="white")
+                            color=color, label=f"Mouse {slot_id}", edgecolor="white")
                 ax.set_yticks(y_pos)
                 ax.set_yticklabels(asym_types)
                 ax.set_xlabel("Number of Bouts")

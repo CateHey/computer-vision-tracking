@@ -1,1 +1,1 @@
-"""Cutie composite pipeline — Cutie tracking + SAM3 safety net for multi-rat tracking."""
+"""Cutie composite pipeline — Cutie tracking + SAM3 safety net for multi-mouse tracking."""

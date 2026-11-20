@@ -163,9 +163,9 @@ keypoint was mislabelled — "nose" was really the tail tip. See §2.6.
 - **A fixed handoff frame.** CUTIE is seeded once, at frame 124, from whatever
   SAM3 produced. If SAM3 has not locked onto every animal by then, the missing
   ones are never recovered — the run log reports the handoff count
-  (`Phase 1 complete. Handoff: n/N rats`), and it is worth checking.
+  (`Phase 1 complete. Handoff: n/N mice`), and it is worth checking.
 - **Identity after handoff.** The area guard catches an animal that is lost or
   swallowed by a neighbour (§1.3). It does not catch a clean swap, where two animals
   exchange identities and both masks keep a normal area; that still needs the
   identity check (§3.7). Every episode is in the run log and marked on
-  `tracks/area_per_rat.png`.
+  `tracks/area_per_mouse.png`.

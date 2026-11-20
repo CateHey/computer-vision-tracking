@@ -1,8 +1,8 @@
-# Rat Tracking Vision Pipeline
+# Mouse Tracking Vision Pipeline
 
 ## Project
 
-SAM3 + CUTIE + YOLO pose pipeline for laboratory rat tracking (6 animals) and social
+SAM3 + CUTIE + YOLO pose pipeline for laboratory mouse tracking (6 animals) and social
 contact classification. Runs locally (short clips) and on UQ Bunya HPC (full videos, 1 GPU).
 
 ## Production Pipeline

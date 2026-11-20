@@ -33,6 +33,7 @@ import html
 import json
 import logging
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -327,12 +328,24 @@ def find_fps(run: Path, video: Optional[Path]) -> float:
     return 30.0
 
 
+def update_section(run: Path, title: str, markdown: str) -> None:
+    """Refresh this tool's section of the run README (README_WHAT_TO_REVIEW.md), if it exists."""
+    try:
+        root = str(Path(__file__).resolve().parents[1])
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from src.common.run_readme import update_section as _update
+        _update(run, title, markdown)
+    except Exception as exc:  # noqa: BLE001  the README is a convenience, never a failure
+        logger.warning("Could not update the run README: %s", exc)
+
+
 def find_overlay(run: Path) -> Path:
-    """Locate the main overlay video (not the per-animal unitary ones)."""
+    """Locate the main overlay video (not the per-animal ones: cutie_mouseN_*, or cutie_unitary_ratN_* in old runs)."""
     ov = run / "overlays"
     for pat in ("cutie_composite_*.avi", "*composite*.avi", "*.avi", "*.mp4"):
         for p in sorted(ov.glob(pat)):
-            if "unitary" not in p.name:
+            if "unitary" not in p.name and not re.match(r"cutie_mouse\d+_", p.name):
                 return p
     raise FileNotFoundError(f"No overlay video in {ov}")
 
@@ -1241,6 +1254,12 @@ def cmd_sample(args: argparse.Namespace, overrides: List[str]) -> int:
             logger.warning("Could not read %s: %s", prov, exc)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
     logger.info("Wrote %d clips for %d events to %s", n_clips, len(rows), out)
+    update_section(run, "Blind clip review (validation/)", (
+        f"Sampled {len(rows)} rows ({n_clips} clips, {n_nc} no-contact windows) from `{src}`; "
+        f"clips play at {speed:g}x. Open `validation/index.html`, fill `validation/review.xlsx` "
+        "(only `in_sample = TRUE` rows: `verdict`, `correct_type`, `investigator_ok`, `boundaries_ok`, "
+        "`subtype_ok`; NC rows: `nc_correct` or `missed_contact`), then run "
+        "`python scripts/validate_contacts.py score <run>/validation/review.xlsx`."))
     return 0
 
 
@@ -2097,6 +2116,11 @@ def cmd_identity(args: argparse.Namespace, overrides: List[str]) -> int:
     write_identity_html(records, slots, colors, out / "identity.html", f"Identity check - {run.name}")
     logger.info("Wrote %d checkpoints (every %g s, max %d) for %d animals to %s",
                 len(records), every, max_n, len(slots), out)
+    update_section(run, "Identity check (validation/identity/)", (
+        f"{len(records)} checkpoint images, every {every:g} s, {len(slots)} mice. Open "
+        "`validation/identity/identity.html`: does each label stay on the same mouse all session? "
+        "Record yes / no / unsure per mouse in `identity.xlsx` (`identity_ok`); a single `no` means "
+        "the per-mouse numbers are wrong from that point."))
     return 0
 
 

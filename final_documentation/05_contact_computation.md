@@ -373,7 +373,7 @@ it by hand. Example from run `2026-10-23_191936` (6 mice, 300 frames at 30 fps):
 | FOL | R2-R3 | 239–248 (0.33 s) | 1.00 / 0.80 | mean nose–nose 1.33 BL, i.e. no contact, as FOL requires |
 
 **Per run.** `logs/run.log` reports the tracking quality the contacts depend on:
-`Handoff: 6/6 rats` (every animal reached CUTIE), pose detected in 300/300 frames for each
+`Handoff: 6/6 mice` (every animal reached CUTIE), pose detected in 300/300 frames for each
 animal, 0 % keypoint carry-over, 0.3 % mask carry-over. 86 raw bouts became 27 tracker bouts
 and 46 cleaned events (30 NC, 7 N2AG, 5 SBS, 3 N2N, 1 FOL). The `Parameters` sheet records
 the smoothing, gap and minimum-duration values that were applied.

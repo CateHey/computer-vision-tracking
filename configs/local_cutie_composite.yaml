@@ -87,7 +87,7 @@ tracks:
   file: tracks.jsonl.gz
   min_part_px: 20                  # pieces smaller than this are not counted in n_parts
   flush_every_frames: 300          # the file stays readable if the job is killed
-  area_plot: true                  # tracks/area_per_rat.png: area / median per animal with the episodes
+  area_plot: true                  # tracks/area_per_mouse.png: area / median per animal with the episodes
 
 composition:
   erase_dilate_px: 15

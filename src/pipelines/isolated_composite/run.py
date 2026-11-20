@@ -629,7 +629,7 @@ def run_pipeline(
     )
     for i in range(max_animals):
         logger.info(
-            "Rat %d: pose detected in %d/%d frames (%.1f%%)",
+            "Mouse %d: pose detected in %d/%d frames (%.1f%%)",
             i + 1, yolo_hit_counts[i], frame_count,
             100 * yolo_hit_counts[i] / max(frame_count, 1),
         )
