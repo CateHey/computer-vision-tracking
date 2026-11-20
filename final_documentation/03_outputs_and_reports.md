@@ -9,15 +9,16 @@ exact configuration used is saved alongside the results.
 
 ```
 outputs/runs/<YYYY-MM-DD_HHMMSS>_cutie_composite/
+├── README_WHAT_TO_REVIEW.md      # what every file is and what to review first (written at the end of the run)
 ├── config_used.yaml              # exact parameters for this run
 ├── overlays/
 │   ├── cutie_composite_<date>.avi   # overlay: masks, keypoints, ids
-│   └── cutie_unitary_ratN_<date>.avi # one isolated video per animal
+│   └── cutie_mouseN_<date>.avi # one isolated video per animal
 ├── logs/
 │   └── run.log
 ├── tracks/                       # tracks.enabled (on by default)
 │   ├── tracks.jsonl.gz           # one line per frame: every mask, keypoint and id (see below)
-│   └── area_per_rat.png          # mask area / own median per animal, recovery episodes shaded
+│   └── area_per_mouse.png          # mask area / own median per animal, recovery episodes shaded
 └── contacts/                     # only when contacts.enabled=true
     ├── results.xlsx              # the reported tables, one workbook  <-- the file to keep
     ├── diagnostics.xlsx          # tracker diagnostics: not validated, not for reporting
@@ -40,6 +41,21 @@ keep them instead.
 `cutie_composite` has no chunk mode, so there is no batch/merge layout for it. The
 parallel runner and chunk merger belong to the older `centroid` pipeline.
 
+### The review guide
+
+`README_WHAT_TO_REVIEW.md` (`src/common/run_readme.py`) opens with one line saying what the run
+is, then the order to review it in (`run.log` tail, identity check, area plot, `results.xlsx`,
+the blind clip review, scoring), a table of every file in the folder, and the red flags
+(handoff below N/N, pose under 90 % for a mouse, an unresolved or over-2-s recovery episode,
+`identity_ok = no`, a type whose events are mostly 0.3-0.4 s), with those found in this run
+listed. `validate_contacts.py sample` and `identity` refresh their own section of it.
+
+Since 2026-11-20 every name and message a person reads says "mouse": `cutie_mouseN_<date>.avi`,
+`tracks/area_per_mouse.png`, the log lines (`Handoff: 6/6 mice`, `Mouse 1: pose detected ...`), the
+chart titles. Runs made before keep the old names (`cutie_unitary_ratN_<date>.avi`,
+`area_per_rat.png`, `Rat N`); the scripts that read runs accept both. The data format is
+unchanged: each frame of `tracks.jsonl.gz` still keys its animals under `rats`.
+
 ### The tracks file
 
 `tracks/tracks.jsonl.gz` is the full history of the run, about 20–40 MB for 10 minutes
@@ -60,7 +76,7 @@ Two kinds, both for visual validation:
 
 - **`cutie_composite_<date>.avi`** — the original frame with each animal's mask
   tinted in its own colour, its keypoints, and an `R1`…`RN` label at its centroid.
-- **`cutie_unitary_ratN_<date>.avi`** — one video per animal showing only that
+- **`cutie_mouseN_<date>.avi`** — one video per animal showing only that
   animal against the background plate. This is the direct way to check the
   composite step: if a second animal is visible in one of these, the erase step
   failed and that animal's keypoints are suspect.
@@ -270,7 +286,7 @@ python -m src.pipelines.cutie_composite.run     --config configs/hpc_cutie_compo
 One GPU, one process — this pipeline has no chunk mode. Only the SAM3 phase (the
 first 125 frames) is held in memory and CUTIE streams the rest of the video, so
 memory does not grow with the session length and `--mem=32G` is enough; a longer
-session only needs a longer `--time`. Watch the `Phase 1 complete. Handoff: n/N rats`
+session only needs a longer `--time`. Watch the `Phase 1 complete. Handoff: n/N mice`
 line in the log: if `n < N`, the missing animals were never handed to CUTIE and will
 be absent for the whole run.
 
@@ -371,10 +387,10 @@ defective (pre-2026-09-30) behaviour for comparison. Old `demo_as_shipped` /
    `event_log.txt` and confirming the label by eye.
 6. **Confirm which post-processing parameters were applied** in the `Parameters` sheet;
    they must match `configs/contacts_postprocess_simple.yaml`, which the pipeline reads.
-7. **Check the handoff** in `run.log`: `Phase 1 complete. Handoff: n/N rats`. If
+7. **Check the handoff** in `run.log`: `Phase 1 complete. Handoff: n/N mice`. If
    `n < N`, re-run — the missing animals cannot be recovered mid-session.
-8. **Watch a unitary video.** If a second animal appears in
-   `cutie_unitary_ratN_*.avi`, the composite failed and that animal's keypoints
+8. **Watch a per-mouse video.** If a second animal appears in
+   `cutie_mouseN_*.avi`, the composite failed and that animal's keypoints
    are unreliable.
 9. **Confirm the run post-dates the 2026-09-30 fixes.** Anything produced earlier
    (e.g. `outputs/2026-07-28_*`) used wrong keypoint names, could not fire SBS, and

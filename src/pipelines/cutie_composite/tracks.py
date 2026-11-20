@@ -10,6 +10,7 @@ tracks.jsonl.gz holds one JSON line per frame, after a first `meta` line:
 
 - `rle` is a COCO run-length encoding (column-major, compressed counts; the size is
   [height, width] from the meta line). `rle_decode` here or pycocotools read it.
+- The JSON key `rats` is kept for compatibility with existing files; it holds one entry per animal (mouse).
 - `n_parts` counts the separate pieces of an animal's mask (2+ = split mask).
 - `src`: sam3 (SAM3 phase), cutie, recovered (SAM3 recovery replaced CUTIE's mask),
   carry (mask carried over from the previous frame), null (no mask).

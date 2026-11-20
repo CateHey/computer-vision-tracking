@@ -1641,7 +1641,7 @@ def write_event_log(
 
             if inv != "" and pd.notna(inv):
                 inv_int = int(inv)
-                rat = f"R{inv_int + 1}" if has_pair else f"Rat {inv_int}"
+                rat = f"R{inv_int + 1}" if has_pair else f"Mouse {inv_int}"
                 inv_str = f"{rat} follows" if ct == "FOL" else rat
             else:
                 inv_str = "--"
@@ -1683,7 +1683,7 @@ def write_event_log(
             ).dropna()
             if len(inv_vals) > 0:
                 inv_counts = Counter(inv_vals.astype(int))
-                parts = [(f"R{k + 1}" if has_pair else f"Rat {k}") + f": {v}"
+                parts = [(f"R{k + 1}" if has_pair else f"Mouse {k}") + f": {v}"
                          for k, v in sorted(inv_counts.items())]
                 line += ", " + " | ".join(parts)
 
@@ -1720,7 +1720,7 @@ def write_event_log(
     lines.append("")
     lines.append("--- Validation guidelines ---")
     lines.append("  N2N  (Nose-to-nose):       Both noses within contact zone (<0.3 body lengths)")
-    lines.append("  N2AG (Nose-to-anogenital):  Nose near tail base of the other rat")
+    lines.append("  N2AG (Nose-to-anogenital):  Nose near tail base of the other mouse")
     lines.append("  N2B  (Nose-to-body):        Nose near body — most common, check for false positives")
     lines.append("  FOL  (Following):           Sustained following (speed + alignment + min frames)")
     lines.append("  SBS  (Side-by-side):        Parallel movement with shared mask border")

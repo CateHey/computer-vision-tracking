@@ -13,7 +13,7 @@ Three systems:
 
 Decision hierarchy (checkpoint):
   - Cutie==N, SAM3==N, IoU>thr        -> all good, Cutie continues
-  - Cutie==N, SAM3<N                  -> trust Cutie (SAM3 likely fused close rats)
+  - Cutie==N, SAM3<N                  -> trust Cutie (SAM3 likely fused close mice)
   - Cutie<N                           -> SAM3 wins, recover the missing rat
   - Cutie==N, SAM3==N, IoU<thr        -> drift/swap, SAM3 wins
 
@@ -204,7 +204,7 @@ def checkpoint_decision(
             triggered=False,
             system="checkpoint",
             reason="trust_cutie",
-            detail=f"Cutie {n_cutie} OK, SAM3 only {n_sam3} (likely fused close rats)",
+            detail=f"Cutie {n_cutie} OK, SAM3 only {n_sam3} (likely fused close mice)",
         )
 
     # Case 1 & 4: both have N -> check IoU

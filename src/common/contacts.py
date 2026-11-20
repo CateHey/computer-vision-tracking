@@ -1194,7 +1194,7 @@ class ContactTracker:
                             color="#ff7f0e", linewidth=0.5, alpha=0.8, label="Centroid (BL)")
                 ax.set_xlabel("Time (seconds)")
                 ax.set_ylabel("Distance (body lengths)")
-                ax.set_title("Inter-Rat Distance Over Time")
+                ax.set_title("Inter-Mouse Distance Over Time")
                 line_handles = ax.get_legend_handles_labels()[0]
                 zone_patches = [mpatches.Patch(color=c, alpha=0.3, label=z.capitalize())
                                 for z, c in zone_colors.items()]
@@ -1223,7 +1223,7 @@ class ContactTracker:
                     slot_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
                     for idx, slot_id in enumerate(slot_ids):
                         vals = [inv_data[ct].get(slot_id, 0) for ct in asym_types]
-                        label = f"Rat {slot_id}" if slot_id >= 0 else "Unknown"
+                        label = f"Mouse {slot_id}" if slot_id >= 0 else "Unknown"
                         color = slot_colors[idx % len(slot_colors)]
                         left = [0] * len(asym_types)
                         if idx > 0:

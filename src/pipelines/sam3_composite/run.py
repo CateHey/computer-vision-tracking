@@ -337,7 +337,7 @@ def get_chunk_init_points(
                 result[slot_idx] = fresh_centroids[new_i]
 
     n_found = sum(1 for r in result if r is not None)
-    logger.info("Chunk init: SAM3 image found %d/%d rats", n_found, num_slots)
+    logger.info("Chunk init: SAM3 image found %d/%d mice", n_found, num_slots)
     return result
 
 
@@ -1145,7 +1145,7 @@ def run_pipeline(
 
     for i in range(num_slots):
         logger.info(
-            "Rat %d: pose detected in %d/%d frames (%.1f%%)",
+            "Mouse %d: pose detected in %d/%d frames (%.1f%%)",
             i + 1, yolo_hit_counts[i], global_frame_idx,
             100 * yolo_hit_counts[i] / max(global_frame_idx, 1),
         )

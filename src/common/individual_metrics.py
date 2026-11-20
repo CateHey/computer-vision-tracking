@@ -435,7 +435,7 @@ def _add_individual_summary_table(pdf, summary: Dict, plt) -> None:
         return
 
     # Construir tabla
-    headers = ["Rat", "Events Init.", "Preferred", "Active (s)", "Passive (s)", "Activity Ratio"]
+    headers = ["Mouse", "Events Init.", "Preferred", "Active (s)", "Passive (s)", "Activity Ratio"]
     rows = []
     for label, data in individual_metrics.items():
         ratio = data.get("activity_ratio", 0)
@@ -504,7 +504,7 @@ def _add_initiation_bar_chart(pdf, summary: Dict, plt) -> None:
 
     ax.set_xlabel("Contact Type")
     ax.set_ylabel("Number of Events Initiated")
-    ax.set_title("Initiation by Contact Type (per rat)")
+    ax.set_title("Initiation by Contact Type (per mouse)")
     ax.set_xticks(x)
     ax.set_xticklabels(types)
     ax.legend()
@@ -543,7 +543,7 @@ def _add_distribution_pie_charts(pdf, summary: Dict, plt) -> None:
             ax.pie(sizes, labels=labels_pie, autopct="%1.0f%%", startangle=90)
         ax.set_title(f"{label} — Initiated Contacts")
 
-    fig.suptitle("Distribution of Contact Types per Rat", fontsize=14, fontweight="bold")
+    fig.suptitle("Distribution of Contact Types per Mouse", fontsize=14, fontweight="bold")
     fig.tight_layout()
     pdf.savefig(fig)
     plt.close(fig)
@@ -574,7 +574,7 @@ def _add_active_passive_comparison(pdf, summary: Dict, plt) -> None:
     ax.set_yticks(y_pos)
     ax.set_yticklabels(labels)
     ax.set_xlabel("Time (seconds)")
-    ax.set_title("Active vs Passive Contact Time per Rat")
+    ax.set_title("Active vs Passive Contact Time per Mouse")
     ax.legend()
     ax.grid(axis="x", alpha=0.3)
 

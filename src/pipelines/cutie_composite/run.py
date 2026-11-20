@@ -11,7 +11,7 @@ Recovery:         (recovery.enabled) each animal's mask area is compared with it
                   identities re-assigned by overlap + centroid, the corrected masks
                   re-injected into Cutie (area_guard.py, recovery.py).
 History:          (tracks.enabled) tracks/tracks.jsonl.gz, one line per frame with every
-                  mask, keypoint and id, plus tracks/area_per_rat.png (tracks.py).
+                  mask, keypoint and id, plus tracks/area_per_mouse.png (tracks.py).
 
 Both phases share the per-frame processing (composites -> YOLO -> keypoints ->
 carry-over -> contacts -> render).
@@ -43,6 +43,7 @@ from src.common.utils import Detection
 from src.common.io_video import create_video_writer
 from src.common.model_loaders import load_yolo
 from src.common.provenance import write_provenance
+from src.common.run_readme import write_run_readme
 from src.common.yolo_inference import detect_only
 from src.common.contacts_v2 import ContactTrackerV2
 from src.pipelines.isolated_composite.composition import (
@@ -201,7 +202,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     if write_individual_videos:
         for i in range(num_slots):
             unitary_writers.append(create_video_writer(
-                overlays_dir / f"cutie_unitary_rat{i+1}_{today}{ext}",
+                overlays_dir / f"cutie_mouse{i+1}_{today}{ext}",
                 fps, width, height, codec=codec))
     else:
         unitary_writers = [None] * num_slots
@@ -478,7 +479,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
         torch.cuda.empty_cache()
     gc.collect()
     handoff_count = sum(1 for m in last_good_slot_masks if m is not None)
-    logger.info("=== PHASE 1 complete. Handoff: %d/%d rats ===", handoff_count, num_slots)
+    logger.info("=== PHASE 1 complete. Handoff: %d/%d mice ===", handoff_count, num_slots)
     if handoff_count < num_slots and require_all:
         logger.error("Handoff has %d/%d animals: one was lost during the SAM3 phase. Aborting "
                      "(sam3.require_all_animals: true); a missing animal cannot be recovered later.",
@@ -581,7 +582,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
             png = plot_area(guard.frame_series, guard.ratio_series, fps,
                             [ep.as_dict() for ep in guard.episodes], colors,
                             guard_cfg.low_ratio, guard_cfg.high_ratio,
-                            run_dir / "tracks" / "area_per_rat.png",
+                            run_dir / "tracks" / "area_per_mouse.png",
                             title=f"{video_path}  ({num_slots} animals)")
             if png is not None:
                 logger.info("Area plot written: %s", png)
@@ -601,7 +602,7 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
 
     gidx_total = state["global_frame_idx"]
     for i in range(num_slots):
-        logger.info("Rat %d: pose detected in %d/%d frames (%.1f%%)",
+        logger.info("Mouse %d: pose detected in %d/%d frames (%.1f%%)",
                     i + 1, state["yolo_hit_counts"][i], gidx_total,
                     100 * state["yolo_hit_counts"][i] / max(gidx_total, 1))
     logger.info("Frames with keypoint carry-over: %d/%d (%.1f%%)",
@@ -610,6 +611,15 @@ def run_pipeline(config_path, cli_overrides=None, start_frame=0, end_frame=None)
     logger.info("Frames with mask carry-over: %d/%d (%.1f%%)",
                 state["carried_mask_frames"], gidx_total,
                 100 * state["carried_mask_frames"] / max(gidx_total, 1))
+    try:
+        readme = write_run_readme(
+            run_dir, num_slots, fps, gidx_total / fps if fps else 0.0,
+            {"video_path": video_path,
+             "contact_rules_v3": bool((config.get("contacts") or {}).get("contact_rules_v3", False)),
+             "recovery_enabled": recovery_enabled})
+        logger.info("Review guide written: %s", readme)
+    except Exception:  # noqa: BLE001  a guide must never fail the run
+        logger.warning("Could not write the run README", exc_info=True)
     logger.info("Pipeline complete. Output directory: %s", run_dir)
     return run_dir
 
