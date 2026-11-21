@@ -149,4 +149,4 @@ fills `subtype_ok`, and `score` reports `subtype_accuracy`.
   (B8).
 - Lateral nose-to-nose can take time from side-by-side (B7); both are S2S, so group totals are
   not affected.
-- Outputs still say "rat" in places; the animals are mice (D5, not changed yet).
+- Outputs still say "mouse" in places; the animals are mice (D5, not changed yet).

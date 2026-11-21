@@ -33,11 +33,11 @@ python -m src.pipelines.sam2_video.run --config configs/local_sam2video.yaml \
 | Criterion | What to check |
 |-----------|---------------|
 | **Identity stability** | Do colors stay consistent? Count ID swaps. |
-| **Detection coverage** | Are both rats detected in every frame? Count drops. |
-| **Close interaction** | What happens when rats touch/overlap? |
-| **Fast crossing** | What happens when rats cross paths quickly? |
+| **Detection coverage** | Are both mice detected in every frame? Count drops. |
+| **Close interaction** | What happens when mice touch/overlap? |
+| **Fast crossing** | What happens when mice cross paths quickly? |
 | **Wall interaction** | False detections near cage borders? |
-| **Mask quality** | Do SAM2 masks fit the rat shape well? |
+| **Mask quality** | Do SAM2 masks fit the mouse shape well? |
 | **Contact accuracy** | Are N2N, N2B, SBS, FOL contacts correct? |
 | **Speed** | FPS, total processing time |
 

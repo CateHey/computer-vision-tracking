@@ -1,18 +1,18 @@
 # Centroid Pipeline — Technical Documentation
 
-> Production pipeline for laboratory rat tracking and social contact classification.
+> Production pipeline for laboratory mouse tracking and social contact classification.
 > SAM2 centroid propagation (identity) + YOLO keypoints (read-only, for contacts).
 
 ---
 
 ## Overview
 
-Tracks 2 laboratory rats in video using:
+Tracks 2 laboratory mice in video using:
 
 | Model | Role |
 |-------|------|
 | **YOLO26** | Frame 0: bounding boxes for init. Every frame: keypoints for contacts (read-only) |
-| **SAM2** | Segments each rat every frame (pixel-precise mask via centroid propagation) |
+| **SAM2** | Segments each mouse every frame (pixel-precise mask via centroid propagation) |
 
 **Key principle**: SAM2 masks are the sole source of identity. YOLO provides keypoints as a read-only overlay — it never influences SAM2 prompting.
 
@@ -66,7 +66,7 @@ masks, scores = _segment_from_centroids(sam, frame_rgb, prev_centroids, threshol
 ```
 
 - Previous frame's centroid as **positive prompt** ("segment here")
-- Other rat's centroid as **negative prompt** ("NOT here")
+- Other mouse's centroid as **negative prompt** ("NOT here")
 - `multimask_output=False` → single direct mask (no candidate selection)
 - Centroids update from new masks; if mask empty, keep previous centroid
 
@@ -77,7 +77,7 @@ resolve_overlaps(slot_masks, slot_centroids)
 ```
 
 - When two masks share pixels, each contested pixel goes to nearest centroid
-- Ensures no pixel belongs to both rats
+- Ensures no pixel belongs to both mice
 
 ---
 
@@ -101,7 +101,7 @@ Why True fails: the "best score" candidate is not the best for temporal consiste
 | YOLO every frame → boxes as SAM2 prompts | **Identity swaps** — permanent, unrecoverable |
 | YOLO init only → SAM2 centroid propagation | **Best results** — stable identity throughout |
 
-Why: YOLO detection order is arbitrary (no tracking memory). `detection[0]` might be either rat. When used as SAM2 prompts, wrong box → wrong slot → permanent swap.
+Why: YOLO detection order is arbitrary (no tracking memory). `detection[0]` might be either mouse. When used as SAM2 prompts, wrong box → wrong slot → permanent swap.
 
 **Rule: YOLO runs ONLY on frame 0. Never after.**
 
@@ -110,7 +110,7 @@ Why: YOLO detection order is arbitrary (no tracking memory). `detection[0]` migh
 Validated on 3600 frames (120s video): only 1 blink in entire video.
 
 What it handles well:
-- Rats crossing paths
+- Mice crossing paths
 - Prolonged close interactions (negative prompts keep masks separate)
 - Rapid posture changes
 - Temporary occlusion
@@ -119,9 +119,9 @@ What it handles well:
 
 The reference pipeline (YOLO every frame + IdentityMatcher) had 4 failure modes:
 
-1. **Mask bleeding** — overlapping YOLO boxes → SAM2 segments both rats as one blob
+1. **Mask bleeding** — overlapping YOLO boxes → SAM2 segments both mice as one blob
 2. **ID swaps** — IdentityMatcher MERGED state timeout → wrong assignment
-3. **Rat disappears** — YOLO intermittent detection → missing masks for 10-50+ frames
+3. **Mouse disappears** — YOLO intermittent detection → missing masks for 10-50+ frames
 4. **Flickering** — YOLO detection count fluctuates between 1 and 2 every frame
 
 All traced to YOLO's per-frame instability. SAM2 centroid propagation eliminates all 4.
@@ -162,12 +162,12 @@ Frame N:
 
 ### What to watch for during testing
 
-1. **Identity swaps** — Do the masks (green/red) ever swap between rats? If yes, SAM2 prompting is somehow affected (should NOT happen with this approach)
-2. **Keypoint assignment errors** — Are keypoints from rat A appearing on rat B's mask? Check during close interactions when YOLO boxes overlap
-3. **Carried-over keypoint quality** — When YOLO misses a rat, carried-over keypoints shift by centroid delta. Are they accurate enough for contacts?
+1. **Identity swaps** — Do the masks (green/red) ever swap between mice? If yes, SAM2 prompting is somehow affected (should NOT happen with this approach)
+2. **Keypoint assignment errors** — Are keypoints from mouse A appearing on mouse B's mask? Check during close interactions when YOLO boxes overlap
+3. **Carried-over keypoint quality** — When YOLO misses a mouse, carried-over keypoints shift by centroid delta. Are they accurate enough for contacts?
 4. **Contact classification accuracy** — Are N2N, N2AG, etc. firing at the right moments? Are there false positives or missed contacts?
 5. **Performance** — Does YOLO running every frame slow things down significantly on HPC?
-6. **Carry-over percentage** — Log shows `Frames with keypoint carry-over: X/Y (Z%)`. High % means YOLO is missing rats often
+6. **Carry-over percentage** — Log shows `Frames with keypoint carry-over: X/Y (Z%)`. High % means YOLO is missing mice often
 
 ### If Approach A fails
 
@@ -182,7 +182,7 @@ Use SAM2 mask shape to infer body parts without any pose model:
 - PCA orientation → head-tail direction
 - Extremity detection → narrower end = head
 
-Paper: [Self-Supervised Body Part Segmentation for Rats](https://arxiv.org/abs/2405.04650)
+Paper: [Self-Supervised Body Part Segmentation for Mice](https://arxiv.org/abs/2405.04650)
 
 **Risk to SAM2**: NONE (purely post-processing on masks)
 **Limitation**: Less precise than keypoints, struggles with curled postures
@@ -196,13 +196,13 @@ Replace YOLO with dedicated pose estimation ([DeepLabCut](https://github.com/Dee
 
 ### Approach D: SAM2 Multi-Prompt Body Parts — NOT RECOMMENDED
 
-Multiple SAM2 prompts per rat for body parts. **Risk: HIGH** — could interfere with centroid propagation.
+Multiple SAM2 prompts per mouse for body parts. **Risk: HIGH** — could interfere with centroid propagation.
 
 ### What ContactTracker Needs
 
 | Contact | Keypoints Required | Masks Required |
 |---------|-------------------|----------------|
-| N2N | nose (both rats) | No |
+| N2N | nose (both mice) | No |
 | N2AG | nose + tail_base | No |
 | T2T | tail_base (both) | No |
 | FOL | nose + tail_base + velocity | No |
@@ -311,24 +311,24 @@ outputs/runs/<timestamp>_centroid/
 
 ## Test Checklist
 
-### Test 1: Rats far apart
+### Test 1: Mice far apart
 - [ ] Both masks clean, separate
 - [ ] Status bar shows `CENTROID`
 
-### Test 2: Rats approaching
+### Test 2: Mice approaching
 - [ ] Masks remain separate
 
-### Test 3: Rats interacting (touching/overlapping)
-- [ ] Both rats have masks (resolve_overlaps handles bleeding)
-- [ ] **No identity swap** (same color stays on same rat)
+### Test 3: Mice interacting (touching/overlapping)
+- [ ] Both mice have masks (resolve_overlaps handles bleeding)
+- [ ] **No identity swap** (same color stays on same mouse)
 
-### Test 4: Rats separating after interaction
+### Test 4: Mice separating after interaction
 - [ ] Masks recover cleanly
 - [ ] No identity swap
 
 ### Test 5: Full video (120s)
 - [ ] Pipeline completes without crash
-- [ ] Overlay video shows masks on both rats at all times
+- [ ] Overlay video shows masks on both mice at all times
 
 ---
 
@@ -344,7 +344,7 @@ outputs/runs/<timestamp>_centroid/
 
 ## Research Sources
 
-- [Self-Supervised Body Part Segmentation for Rats](https://arxiv.org/abs/2405.04650)
+- [Self-Supervised Body Part Segmentation for Mice](https://arxiv.org/abs/2405.04650)
 - [Multi-animal pose estimation with DeepLabCut](https://www.nature.com/articles/s41592-022-01443-0)
 - [SLEAP: Multi-animal pose tracking](https://www.nature.com/articles/s41592-022-01426-1)
 - [Multi-animal 3D social pose estimation](https://www.nature.com/articles/s42256-023-00776-5)

@@ -1,6 +1,6 @@
 # YOLO26 Migration Plan
 
-Migration path from our current YOLOv8 rat pose model to YOLO26.
+Migration path from our current YOLOv8 mouse pose model to YOLO26.
 
 All technical details verified against the installed `ultralytics==8.4.14` package,
 which already includes full YOLO26 support.
@@ -145,7 +145,7 @@ are selected by score only — no IoU comparison needed.
 |--------|--------------------------|-------------------|
 | Duplicate boxes | Removed by IoU threshold | Don't exist (one-to-one head) |
 | `detection.nms_iou` | Configurable | **No effect** |
-| Merged boxes (2 rats → 1 box) | Tunable via NMS IoU | Handled by architecture |
+| Merged boxes (2 mice → 1 box) | Tunable via NMS IoU | Handled by architecture |
 | Close-contact behavior | NMS may merge or suppress | One-to-one head decides |
 | Latency | NMS adds sequential step | Faster (no NMS overhead) |
 
@@ -187,7 +187,7 @@ are selected by score only — no IoU comparison needed.
 
 ### Phase 2: Retrain -- DONE
 
-- [x] Train YOLO26 pose model on the same rat dataset
+- [x] Train YOLO26 pose model on the same mouse dataset
 - [x] Monitor training loss curves
 - [x] Validate on held-out set
 - [x] Export best weights to `models/yolo/best.pt`
@@ -205,7 +205,7 @@ are selected by score only — no IoU comparison needed.
 - [ ] Compare: detection count per frame, ID switch count, keypoint accuracy
 - [ ] Specifically test:
   - Wall interactions (border detections)
-  - Close contact (two rats touching)
+  - Close contact (two mice touching)
   - Fast movement (crossing paths)
   - Partial occlusion
 - [ ] If worse on any metric, analyze and consider:
@@ -249,5 +249,5 @@ are selected by score only — no IoU comparison needed.
 | `yolo26-obb.yaml` | Oriented bounding boxes | n, s, m, l, x |
 | `yolo26-cls.yaml` | Classification | n, s, m, l, x |
 
-For our rat tracking pipeline with 7 keypoints, use **`yolo26l-pose`** (large
+For our mouse tracking pipeline with 7 keypoints, use **`yolo26l-pose`** (large
 scale, matching current `yolov8l` performance tier).

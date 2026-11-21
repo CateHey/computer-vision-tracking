@@ -48,7 +48,7 @@ and what we chose not to adopt.
 
 **Our implementation:** Was implemented as `_filter_by_area()` with EMA-based reference learning and configurable tolerance. Tested in production.
 
-**Why removed:** Consistently dropped valid wall-adjacent detections. Rats near walls produce legitimately smaller (clipped) bounding boxes that triggered the area filter. The tracker's soft area cost (`w_area=0.2`) handles area changes more gracefully without dropping detections.
+**Why removed:** Consistently dropped valid wall-adjacent detections. Mice near walls produce legitimately smaller (clipped) bounding boxes that triggered the area filter. The tracker's soft area cost (`w_area=0.2`) handles area changes more gracefully without dropping detections.
 
 **Status:** Removed from code entirely. Not in config, not in `infer_yolo.py`.
 

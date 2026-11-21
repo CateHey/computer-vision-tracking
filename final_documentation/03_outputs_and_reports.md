@@ -155,7 +155,7 @@ identically 0 with CUTIE's disjoint masks (kept only for the `high_mask_overlap`
 flag) — use `mask_contact_bl`, the shared mask border length in body lengths, which
 drives SBS. `nose_tailbase_ij_bl` is meaningful only when `tail_start` was detected.
 The soft score columns show how close a frame was to a different label.
-Multi-rat tables hold one row per (frame, `pair_key`); count session time from
+Multi-mouse tables hold one row per (frame, `pair_key`); count session time from
 unique `frame_idx`, never from row count.
 
 ### `Events` — the behavioural event table
@@ -230,8 +230,8 @@ reported numbers and the clip review does not validate it. Report from `results.
 | 3 | **Pie chart** — share of total contact time by type | summary |
 | 4 | **Contact rate over time** — stacked bars, contact seconds per one-minute bin | summary |
 | 5 | **Per-pair summary table** — total contact seconds and per-type duration and bout count | summary |
-| 6 | **Inter-rat distance over time** — nose–nose and centroid distance in body lengths, on a background shaded by proximity zone | per-frame table |
-| 7 | **Investigator breakdown** — who initiated, stacked by rat, for N2AG, N2B and FOL | bouts |
+| 6 | **Inter-mouse distance over time** — nose–nose and centroid distance in body lengths, on a background shaded by proximity zone | per-frame table |
+| 7 | **Investigator breakdown** — who initiated, stacked by mouse, for N2AG, N2B and FOL | bouts |
 | 8 | **Cumulative contact time** by type | per-frame table |
 
 Pages 6–8 are produced only if pandas can read the per-frame table; the first five need only
@@ -325,7 +325,7 @@ renders the session as a page. Open it, drop the workbook in, and it shows:
   share of pair-time (the `TOTAL` row of `Summary`), time with any contact (the `ANY` row: frames
   in which at least one pair is in contact, as seconds and as a share of the session), event
   count, longest event, and the percentage of raw bouts removed by filtering
-- **Ethogram** — every event on a time axis, with the inter-rat distance trace underneath
+- **Ethogram** — every event on a time axis, with the inter-mouse distance trace underneath
   so it is visible *why* an event fired. Hovering gives the type and timecode; clicking
   jumps to that row in the event table
 - **Time by type** and **filtering impact** — the `ByType` and `Global` sheets as charts
@@ -377,7 +377,7 @@ defective (pre-2026-09-30) behaviour for comparison. Old `demo_as_shipped` /
    label for the whole session. Any swap invalidates every per-animal measure
    downstream.
 2. **Check the carry-over rate** in `run.log`. A high percentage means YOLO was frequently
-   missing a rat and much of the geometry is interpolated.
+   missing a mouse and much of the geometry is interpolated.
 3. **Check the filtering impact** in the `Parameters` sheet (`filtering_impact` rows) or
    the viewer's "Raw bouts removed" tile. A high value points to unreliable keypoints,
    not to unusual behaviour.

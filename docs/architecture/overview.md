@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This project develops an AI-based workflow to analyze **laboratory rat movement** from real-world lab videos. The objective is to detect and track rat movement accurately, with emphasis on **body-part localization** (7 keypoints) to enable robust trajectory extraction and social behavior analysis (nose-touching, side-by-side, following).
+This project develops an AI-based workflow to analyze **laboratory mouse movement** from real-world lab videos. The objective is to detect and track mouse movement accurately, with emphasis on **body-part localization** (7 keypoints) to enable robust trajectory extraction and social behavior analysis (nose-touching, side-by-side, following).
 
 ## Key Deliverable
 
@@ -12,7 +12,7 @@ detections, masks, tracks, social contact classifications, and summary reports.
 ## Success Criteria
 
 ### Primary (movement + parts)
-- For each frame, accurately identify rat instances (bounding box + silhouette mask)
+- For each frame, accurately identify mouse instances (bounding box + silhouette mask)
 - Localize 7 body parts: **tail_tip, tail_base, tail_start, mid_body, nose, right_ear, left_ear**
 - Maintain consistent identity across time (tracking), especially during close interactions
 
@@ -24,9 +24,9 @@ detections, masks, tracks, social contact classifications, and summary reports.
 ## Models
 
 ### YOLO26 (Ultralytics)
-- **Role:** Fast pose detection — bounding boxes + 7 keypoints per rat
+- **Role:** Fast pose detection — bounding boxes + 7 keypoints per mouse
 - **Architecture:** NMS-free (end-to-end), dual detection head, C2PSA attention
-- **Weights:** `models/yolo/best.pt` (trained on custom rat dataset)
+- **Weights:** `models/yolo/best.pt` (trained on custom mouse dataset)
 - **Previous:** YOLOv8l-pose (`yolov8lrata.pt`, removed from the repo in October 2026; in git history)
 - See [YOLO26 Migration](../models/yolo26_migration.md) for upgrade details
 
@@ -58,7 +58,7 @@ See [Pipeline Comparison](pipelines.md) for detailed differences.
 
 ## Mental Model
 
-- **YOLO26** finds where and what (rats + body parts) — fast, NMS-free
+- **YOLO26** finds where and what (mice + body parts) — fast, NMS-free
 - **SAM2** refines detections into pixel-accurate masks
 - **IdentityMatcher** keeps IDs stable through crossings and close interactions
 - **ContactTracker** classifies social behaviors from keypoints + masks

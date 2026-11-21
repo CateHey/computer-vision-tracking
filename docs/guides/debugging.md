@@ -43,10 +43,10 @@ python scripts/debug_yolo_only.py --config configs/local_reference.yaml \
 ```
 
 **What to look for:**
-- Status bar shows `YOLO: N det` — should be 2 when both rats are visible
+- Status bar shows `YOLO: N det` — should be 2 when both mice are visible
 - Frames where detection count drops to 0 or 1
 - Boxes that overlap heavily during interactions
-- Keypoints landing on the wrong rat
+- Keypoints landing on the wrong mouse
 
 ## SAM2-Only Debug
 
@@ -73,7 +73,7 @@ python scripts/debug_sam2_only.py --config configs/hpc_reference.yaml \
 
 ## SAM2 without YOLO (Centroid Propagation)
 
-Uses YOLO **only on the first frame** to initialize, then SAM2 tracks both rats
+Uses YOLO **only on the first frame** to initialize, then SAM2 tracks both mice
 using previous-frame centroids as point prompts. No YOLO after initialization.
 
 This answers the question: **is YOLO's per-frame intermittency causing SAM2 failures?**
@@ -90,8 +90,8 @@ bash scripts/run_debug_parallel.sh sam2_no_yolo data/raw/original_120s.avi
 ```
 
 **How it works:**
-1. Frame 0: YOLO detects 2 rats → SAM2 segments with boxes → gets 2 centroids
-2. Frame N: Uses previous centroids as positive point prompts + other rat's centroid
+1. Frame 0: YOLO detects 2 mice → SAM2 segments with boxes → gets 2 centroids
+2. Frame N: Uses previous centroids as positive point prompts + other mouse's centroid
    as negative prompt → SAM2 segments → updates centroids
 3. No YOLO dependency after initialization
 

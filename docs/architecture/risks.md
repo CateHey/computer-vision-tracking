@@ -10,21 +10,21 @@ go wrong and how to mitigate it.
 
 | Risk | Impact | Mitigation | Status |
 |------|--------|------------|--------|
-| **ID swap during fast crossings** | Rats swap colors for 1-2 frames | Swap guard compares straight vs swapped cost (N=2) | Implemented |
+| **ID swap during fast crossings** | Mice swap colors for 1-2 frames | Swap guard compares straight vs swapped cost (N=2) | Implemented |
 | **Linear velocity assumption** | During curves/turns, predicted centroid overshoots | EMA smoothing (0.7/0.3) + clamping at ±half proximity_threshold | Implemented |
 | **N=2 only** | State machine assumes exactly 2 entities | Would need N×N Hungarian + cluster detection for N>2 | Design limitation |
 | **Resolution-dependent thresholds** | proximity_threshold=150px assumes ~640px width | Tune per resolution or normalize to frame diagonal | Manual tuning needed |
 | **Long occlusion (>30 frames)** | Force-resets MERGED→SEPARATE, may assign wrong IDs | max_merged_frames is configurable; increase for slower interactions | Configurable |
-| **No cross-gap re-identification** | If both rats leave frame and return, IDs may swap | Would need appearance features (Re-ID); not available for identical rats | Unsolved |
+| **No cross-gap re-identification** | If both mice leave frame and return, IDs may swap | Would need appearance features (Re-ID); not available for identical mice | Unsolved |
 
 ## Detection (YOLO)
 
 | Risk | Impact | Mitigation | Status |
 |------|--------|------------|--------|
-| **Identical appearance** | YOLO cannot distinguish rat A from rat B | We don't rely on YOLO identity — IdentityMatcher handles this | By design |
+| **Identical appearance** | YOLO cannot distinguish mouse A from mouse B | We don't rely on YOLO identity — IdentityMatcher handles this | By design |
 | **Border/edge hallucinations** | YOLO detects partial reflections at cage borders | `edge_margin` config parameter to ignore detections near frame edges | Available in sam2_yolo, not in reference |
-| **Keypoint errors during occlusion** | When rats overlap, keypoints may land on wrong rat | Negative keypoints from overlapping detections fed to SAM2/SAM3 | Implemented |
-| **YOLO misses during fast movement** | Rat moves too fast between frames → no detection | Centroid fallback in reference/SAM3 pipeline keeps tracking | Implemented |
+| **Keypoint errors during occlusion** | When mice overlap, keypoints may land on wrong mouse | Negative keypoints from overlapping detections fed to SAM2/SAM3 | Implemented |
+| **YOLO misses during fast movement** | Mouse moves too fast between frames → no detection | Centroid fallback in reference/SAM3 pipeline keeps tracking | Implemented |
 | **NMS-free YOLO26 double detections** | YOLO26 occasionally outputs overlapping boxes | filter_duplicates removes redundant masks by IoU | Implemented |
 
 ## Segmentation (SAM2 / SAM3)
@@ -33,7 +33,7 @@ go wrong and how to mitigate it.
 |------|--------|------------|--------|
 | **Mask quality depends on prompt** | Bad YOLO box → bad SAM mask | Keypoint prompts + negative points improve precision | Implemented |
 | **Centroid fallback accuracy** | Point prompt less precise than box prompt | Only used when YOLO misses; results are filtered by IoU dedup | Implemented |
-| **Merged blob segmentation** | When rats overlap, SAM segments them as one blob | MERGED state skips centroid fallback to avoid duplicating blob | Implemented |
+| **Merged blob segmentation** | When mice overlap, SAM segments them as one blob | MERGED state skips centroid fallback to avoid duplicating blob | Implemented |
 | **SAM3 coordinate normalization** | SAM3 uses [0,1] coords vs SAM2 pixel coords | sam3_processor.py converts all prompts to normalized space | Implemented |
 | **SAM3 API not yet validated** | Sam3Processor.predict() interface may differ from expected | Processor designed to be adaptable; verify after installing sam3 package | Needs testing |
 
@@ -42,9 +42,9 @@ go wrong and how to mitigate it.
 | Risk | Impact | Mitigation | Status |
 |------|--------|------------|--------|
 | **Depends on keypoint quality** | Wrong keypoints → wrong contact type (e.g., N2N vs N2AG) | `min_keypoint_conf` threshold filters low-confidence keypoints | Configurable |
-| **Skipped during MERGED state** | Contacts not classified when rats are close/overlapping | By design: identity is ambiguous during merge | Design decision |
+| **Skipped during MERGED state** | Contacts not classified when mice are close/overlapping | By design: identity is ambiguous during merge | Design decision |
 | **FOL sensitivity to jitter** | Following detection depends on velocity direction, tracking jitter causes false positives | `follow_min_frames` and `follow_min_speed_px` thresholds | Configurable |
-| **SBS false positives** | Side-by-side detected when rats are close but not aligned | `sbs_parallel_cos_min` checks directional alignment | Configurable |
+| **SBS false positives** | Side-by-side detected when mice are close but not aligned | `sbs_parallel_cos_min` checks directional alignment | Configurable |
 | **Bout gap tolerance** | Short interruptions split one interaction into multiple bouts | `bout_max_gap_frames` bridges small gaps (default 3) | Configurable |
 
 ## HPC / Parallel Processing

@@ -2,9 +2,9 @@
 
 ## Context
 
-The centroid pipeline proves SAM2 masks are stable even during close interactions, but YOLO misses keypoints when rats are close (showing "1 carried" in status bar). Retraining YOLO with close-interaction frames should improve keypoint detection during interactions.
+The centroid pipeline proves SAM2 masks are stable even during close interactions, but YOLO misses keypoints when mice are close (showing "1 carried" in status bar). Retraining YOLO with close-interaction frames should improve keypoint detection during interactions.
 
-**Goal:** Extract ~200 well-distributed frames where rats are interacting closely, save as JPEGs for Roboflow labeling, then retrain YOLO.
+**Goal:** Extract ~200 well-distributed frames where mice are interacting closely, save as JPEGs for Roboflow labeling, then retrain YOLO.
 
 ## Architecture: Two-Phase Approach
 
@@ -67,7 +67,7 @@ roboflow/frames/
 
 1. Run extraction on Bunya → get ~200 interaction frames
 2. SCP frames to local machine
-3. Upload to Roboflow → label keypoints (7 per rat)
+3. Upload to Roboflow → label keypoints (7 per mouse)
 4. Mix ~30-40% interaction frames with ~60-70% normal/separated frames
 5. Export dataset from Roboflow in YOLOv8 format
 6. Retrain YOLO26 on augmented dataset

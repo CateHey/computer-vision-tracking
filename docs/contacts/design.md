@@ -4,7 +4,7 @@
 
 Our SAM2+YOLO pipeline already produces per-frame:
 - **Detections** with bounding boxes, confidence, track_id (stable via BoT-SORT)
-- **7 keypoints** per rat: `tail_tip`(0), `tail_base`(1), `tail_start`(2), `mid_body`(3), `nose`(4), `right_ear`(5), `left_ear`(6)
+- **7 keypoints** per mouse: `tail_tip`(0), `tail_base`(1), `tail_start`(2), `mid_body`(3), `nose`(4), `right_ear`(5), `left_ear`(6)
 - **SAM2 instance masks** (boolean arrays per slot)
 - **Slot centroids** with stable identity across frames
 
@@ -28,7 +28,7 @@ Six contact types plus NC (No Contact), ordered by classification priority:
 |---|---|
 | **Behavior** | Snouts directed at each other. Social recognition / greeting. |
 | **Geometry** | `dist(nose_A, nose_B) < contact_radius` |
-| **Keypoints used** | `nose` (index 4) of both rats |
+| **Keypoints used** | `nose` (index 4) of both mice |
 | **Confidence** | **High** — nose is the most reliably detected keypoint |
 | **Fallback** | If one nose is missing: check `dist(nose_A, head_centroid_B) < contact_radius` where head centroid = midpoint of `(right_ear + left_ear)` |
 
@@ -46,11 +46,11 @@ if nose_A.conf >= min_kp_conf and nose_B.conf >= min_kp_conf:
 
 | | |
 |---|---|
-| **Behavior** | Snout of rat A near tail base of rat B. Primary individual recognition via pheromones. **The single most important metric for social phenotyping.** |
+| **Behavior** | Snout of mouse A near tail base of mouse B. Primary individual recognition via pheromones. **The single most important metric for social phenotyping.** |
 | **Geometry** | `dist(nose_A, tail_base_B) < contact_radius` OR `dist(nose_B, tail_base_A) < contact_radius` |
-| **Keypoints used** | `nose` (4) of one rat, `tail_base` (1) of the other |
+| **Keypoints used** | `nose` (4) of one mouse, `tail_base` (1) of the other |
 | **Confidence** | **High** — both keypoints are well-detected in our model |
-| **Asymmetric** | Records which rat is the investigator (nose owner) and which is the target (tail_base owner) |
+| **Asymmetric** | Records which mouse is the investigator (nose owner) and which is the target (tail_base owner) |
 
 **Detection rule:**
 ```
@@ -70,11 +70,11 @@ if nose_B.conf >= min_kp_conf and tail_base_A.conf >= min_kp_conf:
 
 | | |
 |---|---|
-| **Behavior** | Snout of rat A near trunk/flank of rat B. General social investigation. |
-| **Geometry** | `nose_A` is within `contact_radius` of rat B's body but NOT near nose or tail_base of B |
-| **Keypoints used** | `nose` (4) of one rat, `mid_body` (3) of the other |
+| **Behavior** | Snout of mouse A near trunk/flank of mouse B. General social investigation. |
+| **Geometry** | `nose_A` is within `contact_radius` of mouse B's body but NOT near nose or tail_base of B |
+| **Keypoints used** | `nose` (4) of one mouse, `mid_body` (3) of the other |
 | **Confidence** | **Medium** — mid_body is reliable but the "body zone" is broad |
-| **Catch-all** | This is the fallback when nose-A is near rat-B but doesn't qualify as N2N or N2AG |
+| **Catch-all** | This is the fallback when nose-A is near mouse-B but doesn't qualify as N2N or N2AG |
 
 **Detection rule:**
 ```
@@ -91,7 +91,7 @@ if mask_B[int(nose_A.y), int(nose_A.x)] == True:
 ```
 
 **Mask-based check is preferred** when SAM2 masks are available: if the nose
-keypoint of rat A falls inside the mask of rat B, that's definitive body contact.
+keypoint of mouse A falls inside the mask of mouse B, that's definitive body contact.
 
 ### 2.4 Tail-to-tail (T2T)
 
@@ -99,7 +99,7 @@ keypoint of rat A falls inside the mask of rat B, that's definitive body contact
 |---|---|
 | **Behavior** | Both tail bases close together. Rear-to-rear contact. |
 | **Geometry** | `dist(tail_base_A, tail_base_B) < contact_radius` |
-| **Keypoints used** | `tail_base` (index 1) of both rats |
+| **Keypoints used** | `tail_base` (index 1) of both mice |
 | **Confidence** | **High** — tail_base is reliably detected |
 | **Symmetric** | No investigator assigned |
 
@@ -118,7 +118,7 @@ if tail_base_A.conf >= min_kp_conf and tail_base_B.conf >= min_kp_conf:
 | | |
 |---|---|
 | **Behavior** | Bodies parallel, in contact, low velocity. Affiliative resting / huddling. |
-| **Geometry** | `mask_iou(A, B) > sbs_iou_threshold` AND both rats have low velocity |
+| **Geometry** | `mask_iou(A, B) > sbs_iou_threshold` AND both mice have low velocity |
 | **Keypoints used** | Centroids (from masks), body orientation from `nose` → `tail_base` vector |
 | **Confidence** | **Medium** — relies on mask quality and velocity estimation |
 
@@ -143,7 +143,7 @@ if iou > sbs_iou_threshold:
 
 | | |
 |---|---|
-| **Behavior** | Rat A moves in same direction as rat B at close range. Social pursuit. |
+| **Behavior** | Mouse A moves in same direction as mouse B at close range. Social pursuit. |
 | **Geometry** | `dist(nose_A, tail_base_B) < follow_radius` AND both moving AND velocity vectors aligned |
 | **Keypoints used** | `nose` (4), `tail_base` (1), centroids across frames |
 | **Confidence** | **Low-Medium** — requires multi-frame velocity estimation, sensitive to tracking jitter |
@@ -181,7 +181,7 @@ If keypoints are unavailable, fallback:
 body_length = bbox_diagonal * 0.6     # empirical ratio
 ```
 
-The body length is smoothed per rat with an EMA across frames to avoid
+The body length is smoothed per mouse with an EMA across frames to avoid
 jitter from keypoint noise.
 
 ### Zone definitions
@@ -193,7 +193,7 @@ jitter from keypoint noise.
 | **Independent** | > 1.0 BL | No social interaction |
 
 The `contact_radius` used in Section 2 corresponds to the **Contact zone**
-(< 0.3 body-lengths). In absolute pixels (640x480 video, typical rat BL ~120px):
+(< 0.3 body-lengths). In absolute pixels (640x480 video, typical mouse BL ~120px):
 
 | Zone | Approx. pixels |
 |------|---------------|
@@ -228,13 +228,13 @@ contacts suppress lower-priority ones** to avoid double-counting:
 6. NOSE_TO_BODY        (catch-all — nose inside mask or near mid_body)
 ```
 
-**N2B is last** because its mask-containment check (nose inside the other rat's
+**N2B is last** because its mask-containment check (nose inside the other mouse's
 SAM2 mask) is very broad. Placing it before FOL/SBS/T2T would absorb those more
-specific contact types, since a nose is almost always inside the other rat's mask
+specific contact types, since a nose is almost always inside the other mouse's mask
 during any close interaction.
 
 **N2B has guards** to prevent absorbing near-miss N2N/N2AG contacts: if the nose
-is within 1.5× contact_radius of the other rat's nose or tail_base, N2B skips
+is within 1.5× contact_radius of the other mouse's nose or tail_base, N2B skips
 (those regions are N2N/N2AG territory).
 
 **N2AG picks the closer direction** when both A→B and B→A qualify simultaneously,
@@ -269,7 +269,7 @@ eliminating systematic A-first bias in investigator statistics.
 
 | Existing | Contact module usage |
 |----------|---------------------|
-| `evaluate_closeness()` | **Kept as fast pre-filter.** Only run contact classification on frames where `is_close=True`. Saves compute on the 80%+ of frames where rats are apart. |
+| `evaluate_closeness()` | **Kept as fast pre-filter.** Only run contact classification on frames where `is_close=True`. Saves compute on the 80%+ of frames where mice are apart. |
 | `extract_frames.py` encounters | **Extended.** Encounters are enriched with contact type breakdown. The encounter grouping logic stays the same. |
 | `SlotTracker` | **Read-only dependency.** Contact module reads slot states (centroids, masks, track_ids) but doesn't modify them. |
 | `Detection.keypoints` | **Primary input.** All geometric rules use the 7 keypoints from YOLO. |
@@ -309,7 +309,7 @@ Both options use the same `src/common/contacts.py` module.
 
 | Scenario | Handling |
 |----------|---------|
-| One nose missing (conf < min_kp_conf) | Skip N2N. N2AG/N2B only check the rat with a valid nose. |
+| One nose missing (conf < min_kp_conf) | Skip N2N. N2AG/N2B only check the mouse with a valid nose. |
 | Both noses missing | No keypoint-based contacts. Fall back to mask_iou for SBS. |
 | tail_base missing | Skip N2AG for that pair direction. Use `tail_start` (index 2) as fallback with wider radius. |
 | All keypoints missing | Zone classification only (centroid distance → PROXIMITY/INDEPENDENT). |
@@ -318,28 +318,28 @@ Both options use the same `src/common/contacts.py` module.
 
 | Scenario | Flag |
 |----------|------|
-| `mask_iou > 0.5` | **Tracking error flag.** Two rats can't physically overlap >50%. Likely: identity swap, merged detection, or SAM2 error. Log as `quality_flag: "high_mask_overlap"`. |
+| `mask_iou > 0.5` | **Tracking error flag.** Two mice can't physically overlap >50%. Likely: identity swap, merged detection, or SAM2 error. Log as `quality_flag: "high_mask_overlap"`. |
 | `mask_iou > 0` but `< 0.1` | Border contact. Valid for SBS / physical contact. |
 | `mask_iou > 0.1` but `< 0.5` | Significant overlap. Likely close huddling or partial tracking error. |
 
 ### 6.3 Partial visibility (wall occlusion)
 
-When a rat is near the frame border:
+When a mouse is near the frame border:
 - Bounding box is clipped → bbox area is artificially small
 - Some keypoints may be outside the frame (conf drops)
-- **Rule:** Require at least 2 valid keypoints per rat to classify contacts.
+- **Rule:** Require at least 2 valid keypoints per mouse to classify contacts.
   Otherwise, fall back to centroid distance only.
 
 ### 6.4 Rapid ID switches
 
-If YOLO track_id changes between frames for the same physical rat:
+If YOLO track_id changes between frames for the same physical mouse:
 - The SlotTracker already handles this (Hungarian assignment maintains slot identity)
 - Contact bouts use **slot index** (not track_id) as the identity key
 - A bout is not broken by a track_id switch if the slot remains the same
 
-### 6.5 Single rat detected
+### 6.5 Single mouse detected
 
-When only 1 of 2 rats is detected:
+When only 1 of 2 mice is detected:
 - No pair exists → no contacts possible
 - Frame is recorded as `zone: INDEPENDENT` with note `"single_detection"`
 

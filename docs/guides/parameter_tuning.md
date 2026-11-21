@@ -21,12 +21,12 @@ what it controls, and how to adjust it based on common error symptoms.
 
 | Symptom | Action | Example |
 |---------|--------|---------|
-| Missed detections (rat not detected) | **Lower** to 0.15–0.20 | `detection.confidence=0.15` |
+| Missed detections (mouse not detected) | **Lower** to 0.15–0.20 | `detection.confidence=0.15` |
 | Too many false positives (phantom boxes) | **Raise** to 0.35–0.50 | `detection.confidence=0.4` |
 | Boxes appear/disappear between frames (flicker) | **Lower** slightly to stabilize detections near the threshold | `detection.confidence=0.20` |
-| Slow/partial rats at borders missed | **Lower** to 0.15 | `detection.confidence=0.15` |
+| Slow/partial mice at borders missed | **Lower** to 0.15 | `detection.confidence=0.15` |
 
-**Trade-off:** Lower confidence = more detections but more noise. Higher = cleaner but may miss rats in difficult poses.
+**Trade-off:** Lower confidence = more detections but more noise. Higher = cleaner but may miss mice in difficult poses.
 
 ---
 
@@ -43,8 +43,8 @@ what it controls, and how to adjust it based on common error symptoms.
 
 | Symptom | Action |
 |---------|--------|
-| Third rat appears temporarily, confuses tracking | Keep at `2` (or however many rats are in the video) |
-| One rat consistently missing | Check if it's filtered out — try raising to `3` temporarily to diagnose |
+| Third mouse appears temporarily, confuses tracking | Keep at `2` (or however many mice are in the video) |
+| One mouse consistently missing | Check if it's filtered out — try raising to `3` temporarily to diagnose |
 | Video has more animals | Set to actual animal count |
 
 ---
@@ -62,7 +62,7 @@ what it controls, and how to adjust it based on common error symptoms.
 
 | Symptom | Action | Example |
 |---------|--------|---------|
-| Phantom boxes on non-rat objects | Set to `"ratas"` | `detection.filter_class=ratas` |
+| Phantom boxes on non-mouse objects | Set to `"ratas"` | `detection.filter_class=ratas` |
 | All detections disappearing | Check class names in YOLO output match the filter | Set to `null` to debug |
 
 ---
@@ -75,13 +75,13 @@ what it controls, and how to adjust it based on common error symptoms.
 | **Default** | `0` (disabled) |
 | **Range** | `0` – `128` (recommended: 32 or 64) |
 | **Where in code** | `infer_yolo.py` — `pad_frame()` + `correct_boxes_after_padding()` |
-| **What it does** | Mirror-pads the frame before YOLO inference. Helps detect rats at borders. Boxes and keypoints are corrected back to original coordinates. SAM2 operates on the unpadded frame. |
+| **What it does** | Mirror-pads the frame before YOLO inference. Helps detect mice at borders. Boxes and keypoints are corrected back to original coordinates. SAM2 operates on the unpadded frame. |
 
 **Tuning:**
 
 | Symptom | Action | Example |
 |---------|--------|---------|
-| Rats at borders not detected or unstable | Set to 32–64 | `detection.yolo_border_padding_px=64` |
+| Mice at borders not detected or unstable | Set to 32–64 | `detection.yolo_border_padding_px=64` |
 | False detections in padding area | **Lower** or disable | `detection.yolo_border_padding_px=0` |
 
 **Trade-off:** Adds ~5-10% computation time for YOLO. Values >128 may cause hallucinated reflections.
@@ -136,9 +136,9 @@ what it controls, and how to adjust it based on common error symptoms.
 | Symptom | Action | Example |
 |---------|--------|---------|
 | Flickering boxes at walls/borders | Set to 10–15 | `detection.edge_margin=10` |
-| Real rats near walls being dropped | **Lower** or disable | `detection.edge_margin=0` |
+| Real mice near walls being dropped | **Lower** or disable | `detection.edge_margin=0` |
 
-**Trade-off:** Higher values suppress more border noise but may drop rats that walk along walls. For 640x480 video with ~100-150px rat bodies, 10-15px is safe.
+**Trade-off:** Higher values suppress more border noise but may drop mice that walk along walls. For 640x480 video with ~100-150px mouse bodies, 10-15px is safe.
 
 ---
 
@@ -156,8 +156,8 @@ what it controls, and how to adjust it based on common error symptoms.
 
 | Symptom | Action | Example |
 |---------|--------|---------|
-| Two boxes for the same rat (merged detection) | **Lower** to 0.4–0.5 | `detection.nms_iou=0.5` |
-| Two overlapping rats merged into one box | **Raise** to 0.8–0.9 | `detection.nms_iou=0.8` |
+| Two boxes for the same mouse (merged detection) | **Lower** to 0.4–0.5 | `detection.nms_iou=0.5` |
+| Two overlapping mice merged into one box | **Raise** to 0.8–0.9 | `detection.nms_iou=0.8` |
 | Default works fine | Leave as `null` | |
 
 ---
@@ -200,7 +200,7 @@ what it controls, and how to adjust it based on common error symptoms.
 | Symptom | Action | Example |
 |---------|--------|---------|
 | Masks too large / bleed into background | **Raise** to 0.5–2.0 | `segmentation.sam_threshold=1.0` |
-| Masks too small / don't cover the whole rat | **Lower** to -1.0 or -2.0 | `segmentation.sam_threshold=-1.0` |
+| Masks too small / don't cover the whole mouse | **Lower** to -1.0 or -2.0 | `segmentation.sam_threshold=-1.0` |
 
 ---
 
@@ -218,8 +218,8 @@ what it controls, and how to adjust it based on common error symptoms.
 
 | Symptom | Action | Example |
 |---------|--------|---------|
-| Two masks for the same rat (double-masking) | **Lower** to 0.3 | `segmentation.mask_iou_threshold=0.3` |
-| Two overlapping rats lose one mask | **Raise** to 0.7–0.8 | `segmentation.mask_iou_threshold=0.7` |
+| Two masks for the same mouse (double-masking) | **Lower** to 0.3 | `segmentation.mask_iou_threshold=0.3` |
+| Two overlapping mice lose one mask | **Raise** to 0.7–0.8 | `segmentation.mask_iou_threshold=0.7` |
 
 ---
 
@@ -251,8 +251,8 @@ See [pipeline_improvements.md](pipeline_improvements.md) for BoT-SORT config det
 
 | Symptom | Action | Example |
 |---------|--------|---------|
-| Colors swap between rats | **Lower** to 80–100 (makes distance cost more sensitive) | `tracking.max_centroid_distance=100` |
-| Fast-moving rat loses identity | **Raise** to 200–300 | `tracking.max_centroid_distance=250` |
+| Colors swap between mice | **Lower** to 80–100 (makes distance cost more sensitive) | `tracking.max_centroid_distance=100` |
+| Fast-moving mouse loses identity | **Raise** to 200–300 | `tracking.max_centroid_distance=250` |
 
 ---
 
@@ -336,7 +336,7 @@ See [bunya_step_by_step.md](../setup/bunya_step_by_step.md) for detailed GPU set
 
 ### Problem: Color flicker / ID switching near frame borders
 
-**Cause:** Rats at frame borders → unstable YOLO detections → centroid jumps → tracker reassigns identity.
+**Cause:** Mice at frame borders → unstable YOLO detections → centroid jumps → tracker reassigns identity.
 
 **Knobs (try in order):**
 1. `detection.edge_margin=10` — suppress flickering partial detections at walls
@@ -346,11 +346,11 @@ See [bunya_step_by_step.md](../setup/bunya_step_by_step.md) for detailed GPU set
 
 ---
 
-### Problem: Missed detections (rat not detected in some frames)
+### Problem: Missed detections (mouse not detected in some frames)
 
 1. `detection.confidence=0.15` — lower threshold
 2. `detection.yolo_border_padding_px=64` — helps at borders
-3. Check if rat is partially occluded — model limitation
+3. Check if mouse is partially occluded — model limitation
 4. If consistently missed: more training data needed
 
 ---
@@ -358,7 +358,7 @@ See [bunya_step_by_step.md](../setup/bunya_step_by_step.md) for detailed GPU set
 ### Problem: Too many false positives
 
 1. `detection.confidence=0.4` — raise threshold
-2. `detection.filter_class=ratas` — reject non-rat classes
+2. `detection.filter_class=ratas` — reject non-mouse classes
 3. `detection.max_animals=2` — filter keeps only top N by area
 
 ---
@@ -371,7 +371,7 @@ See [bunya_step_by_step.md](../setup/bunya_step_by_step.md) for detailed GPU set
 
 ---
 
-### Problem: Two rats merged during close contact
+### Problem: Two mice merged during close contact
 
 1. `detection.nms_iou=0.5` — tighter NMS catches merged YOLO boxes
 2. `segmentation.mask_iou_threshold=0.8` — keep both overlapping masks

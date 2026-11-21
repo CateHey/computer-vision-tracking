@@ -1,6 +1,6 @@
 # Pipeline Comparison
 
-This project has 5 pipelines for rat segmentation and tracking.
+This project has 5 pipelines for mouse segmentation and tracking.
 All use YOLO (detection + keypoints) paired with a segmentation model
 (SAM2 or SAM3), but differ in how they handle identity and what happens
 when YOLO fails.
@@ -9,7 +9,7 @@ when YOLO fails.
 
 > **Use the `reference` pipeline.** It has the best balance of speed,
 > robustness, and batch support. The centroid fallback + IdentityMatcher
-> state machine handles interactions where YOLO loses a rat, without the
+> state machine handles interactions where YOLO loses a mouse, without the
 > BoT-SORT ID switching problems of sam2_yolo.
 
 ### Decision Tree
@@ -90,13 +90,13 @@ python scripts/merge_chunks.py outputs/runs/*_chunk*/ -o outputs/runs/merged
 
 ### Weaknesses
 
-- Depends on YOLO every frame. If YOLO loses a rat → empty slot, rat "disappears"
+- Depends on YOLO every frame. If YOLO loses a mouse → empty slot, mouse "disappears"
 - BoT-SORT can cause ID switches during crossings/interactions
 - No fallback: if YOLO doesn't detect, SAM2 has no prompt
 
 ### When to use
 
-- Videos without frequent rat interactions
+- Videos without frequent mouse interactions
 - When you need batch processing for long videos
 - When speed is the priority
 
@@ -191,7 +191,7 @@ See [Identity Matcher Design](identity_matcher.md) for full details.
 
 ### Centroid fallback (key feature)
 
-When YOLO detects only 1 rat but IdentityMatcher knows there are 2 active slots:
+When YOLO detects only 1 mouse but IdentityMatcher knows there are 2 active slots:
 
 ```python
 # The lost slot has a previous centroid
@@ -201,7 +201,7 @@ prev_centroid = matcher.prev_centroids[slot_idx]
 SAM2.predict(point_coords=prev_centroid, point_labels=[1])
 ```
 
-This recovers the lost rat's mask using SAM2 with a point instead of a box.
+This recovers the lost mouse's mask using SAM2 with a point instead of a box.
 This is what makes the pipeline work during occlusions.
 
 ### Batch support
@@ -224,7 +224,7 @@ bash scripts/run_parallel.sh data/raw/original_120s.avi
 ### When to use
 
 - **Default choice** for most videos
-- Videos with interactions where YOLO loses rats momentarily
+- Videos with interactions where YOLO loses mice momentarily
 - When you need batch processing + robustness
 - Direct alternative to sam2_yolo when ID switches are a problem
 
@@ -241,7 +241,7 @@ Inverts the reference pipeline's architecture:
 - **SAM2 centroid propagation** drives masks and identity (stable backbone)
 - **YOLO** is demoted to a keypoint provider on the full image (noisy signal)
 - **No IdentityMatcher** — identity is inherent from SAM2 propagation ordering
-- **Temporal carry-over** fills missing keypoints when YOLO misses a rat
+- **Temporal carry-over** fills missing keypoints when YOLO misses a mouse
 
 ### Per-frame flow
 
@@ -298,7 +298,7 @@ python -m src.pipelines.centroid.run --config configs/hpc_centroid.yaml \
 
 ### Weaknesses
 
-- Keypoints still come from YOLO (noisy, can miss rats on some frames)
+- Keypoints still come from YOLO (noisy, can miss mice on some frames)
 - Temporal carry-over is approximate (shifts by centroid delta, not true tracking)
 - If SAM2 loses a mask entirely, no recovery mechanism (would need re-initialization)
 - Experimental: not yet validated on full-length videos

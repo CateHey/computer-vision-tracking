@@ -7,12 +7,12 @@ backbone does, how it failed here, and what the failure implies.
 
 ## 4.1 The task the backbone has to do
 
-Not "segment a rat". The backbone must **keep the same label on the same animal
+Not "segment a mouse". The backbone must **keep the same label on the same animal
 for the whole session**, through touching, crossing, mounting and occlusion,
 between animals that are visually identical.
 
 That framing is what separates the candidates. Segmentation quality was never the
-bottleneck — every model tested produces a good mask of a rat. Identity over time
+bottleneck — every model tested produces a good mask of a mouse. Identity over time
 was the bottleneck.
 
 Two properties decide it:

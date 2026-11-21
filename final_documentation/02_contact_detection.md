@@ -150,7 +150,7 @@ defaults were applied and the YAML was ignored). The `Parameters` sheet of
 
 Threshold rationale (literature review in
 `docs/contacts/threshold_research.md`): A-SOiD's CalMS21-derived 400 ms default
-with a 200 ms floor is the closest reference point; manual scoring of rat social
+with a 200 ms floor is the closest reference point; manual scoring of mouse social
 investigation reports bouts of 0.5–5 s; contacts under ~300 ms are typically
 incidental. v2's 200 ms per-type floor sits at that floor, with FOL held to
 400 ms because brief same-direction movement is unavoidable in a small arena.
