@@ -62,3 +62,10 @@ data/*.mp4
 data/*.avi
 data/*.mov
 data/*.zip
+
+# --- Experimental YOLO weights (not used by the production pipeline) ---
+models/yolo/modelyolo26.pt
+models/yolo/yolov8lrata.pt
+
+# --- Local test clips (keep the committed 10 s clip; ignore ad-hoc ones) ---
+data/clips/output-6s.mp4

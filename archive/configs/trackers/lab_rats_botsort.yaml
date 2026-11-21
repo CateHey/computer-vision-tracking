@@ -1,0 +1,33 @@
+# BoT-SORT config optimized for lab rat tracking
+# Static overhead camera, 2 visually similar rats, 25fps, 640x480
+#
+# Key changes from ultralytics defaults:
+#   new_track_thresh: 0.25 → 0.3  (reduce false new tracks during occlusion)
+#   track_buffer: 30 → 60         (survive 2s occlusion instead of 1s)
+#   gmc_method: sparseOptFlow → none (static camera, save compute)
+#
+# See docs/tracking-techniques-analysis.md for full parameter analysis.
+
+tracker_type: botsort
+
+# --- Two-stage association ---
+track_high_thresh: 0.25    # First pass: confident detections
+track_low_thresh: 0.1      # Second pass floor: recover partial occlusions
+new_track_thresh: 0.3      # Above high_thresh to reduce false new tracks
+
+# --- Track persistence ---
+track_buffer: 60           # ~2 seconds at 25fps. Survives brief occlusions
+                           # without excessive ID drift risk.
+
+# --- Association ---
+match_thresh: 0.8          # Permissive IoU matching (Kalman bridges gaps)
+fuse_score: true           # Bias toward high-confidence detections
+
+# --- Camera motion ---
+gmc_method: none           # Static camera — no compensation needed.
+
+# --- ReID (disabled for visually identical rats) ---
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: false
+model: auto

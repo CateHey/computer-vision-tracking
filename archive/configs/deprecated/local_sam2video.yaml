@@ -1,0 +1,86 @@
+# ============================================================================
+# Local SAM2 Video Pipeline Configuration
+# ============================================================================
+# Uses SAM2VideoPredictor with temporal memory for robust tracking through
+# rat interactions and occlusions. YOLO runs in detect-only mode (no tracking).
+#
+# Usage:
+#   python -m src.pipelines.sam2_video.run --config configs/local_sam2video.yaml
+#   python -m src.pipelines.sam2_video.run --config configs/local_sam2video.yaml \
+#       video_path=data/clips/output-10s.mp4 contacts.enabled=true
+# ============================================================================
+
+# --- Input video ---
+video_path: data/clips/output-10s.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  yolo_path: models/yolo/best.pt
+
+  # SAM2 checkpoint — tiny for local testing
+  sam2_checkpoint: models/sam2/segment-anything-2/checkpoints/sam2.1_hiera_tiny.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_t.yaml
+
+  device: auto
+
+# --- SAM2 Video settings ---
+sam2_video:
+  # Frames per segment. Smaller = less memory, more re-initializations.
+  # 500 is good for local testing. Use 2000 on HPC.
+  segment_size: 500
+
+  # Keep video frames on CPU to save GPU memory.
+  # Only a small overhead — recommended for all cases.
+  offload_video_to_cpu: true
+
+  # Keep inference state on CPU. Saves more GPU memory but slower.
+  # Only needed if GPU has < 8GB VRAM.
+  offload_state_to_cpu: false
+
+# --- Detection (YOLO — detect-only mode, no tracking) ---
+detection:
+  confidence: 0.25
+  max_animals: 2
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+  filter_class: null
+  nms_iou: 0.5  # no-op with YOLO26 (NMS-free architecture)
+
+# --- Social contact classification ---
+contacts:
+  enabled: false
+  min_keypoint_conf: 0.3
+  contact_zone_bl: 0.3
+  proximity_zone_bl: 1.0
+  fallback_body_length_px: 120
+  sbs_mask_iou_min: 0.02
+  sbs_max_velocity_bl: 0.04
+  sbs_parallel_cos_min: 0.7
+  follow_radius_bl: 0.5
+  follow_min_speed_bl: 0.025
+  follow_alignment_cos: 0.7
+  follow_min_frames: 5
+  bout_max_gap_frames: 3
+  bout_min_duration_frames: 2
+  mask_overlap_warning: 0.5
+
+# --- Video output ---
+output:
+  video_codec: XVID
+  overlay_colors:
+    - [0, 255, 0, 150]    # Green
+    - [255, 0, 0, 150]    # Red
+
+# --- Scan limits ---
+scan:
+  max_frames: null

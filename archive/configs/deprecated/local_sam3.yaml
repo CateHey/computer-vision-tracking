@@ -1,0 +1,95 @@
+# ============================================================================
+# Local SAM3 Pipeline Configuration
+# ============================================================================
+# Uses SAM3 Sam3Processor + IdentityMatcher.
+# Same architecture as reference pipeline but with SAM3 instead of SAM2.
+# YOLO runs in detect-only mode (no BoT-SORT tracking).
+# Centroid fallback keeps tracking when YOLO loses a rat during occlusion.
+#
+# Usage:
+#   python -m src.pipelines.sam3.run --config configs/local_sam3.yaml
+#   python -m src.pipelines.sam3.run --config configs/local_sam3.yaml \
+#       video_path=data/clips/output-10s.mp4 contacts.enabled=true
+# ============================================================================
+
+# --- Input video ---
+video_path: data/clips/output-10s.mp4
+
+# --- Output ---
+output_dir: outputs/runs
+
+# --- Models ---
+models:
+  yolo_path: models/yolo/best.pt
+
+  # SAM3 — single checkpoint, no config YAML needed
+  sam3_checkpoint: models/sam3/sam3.pt
+
+  device: auto
+
+# --- Detection (YOLO — detect-only, no tracking) ---
+detection:
+  confidence: 0.25
+  max_animals: 2
+  keypoint_names:
+    - tail_tip
+    - tail_base
+    - tail_start
+    - mid_body
+    - nose
+    - right_ear
+    - left_ear
+  keypoint_min_conf: 0.3
+  filter_class: null
+  nms_iou: 0.5  # no-op with YOLO26 (NMS-free architecture)
+
+# --- Segmentation (SAM3) ---
+segmentation:
+  sam_threshold: 0.0
+  mask_iou_threshold: 0.5
+
+# --- Identity Matcher (same as reference pipeline) ---
+# Uses Hungarian assignment with soft cost (distance + mask IoU + area).
+# Includes N=2 state machine: SEPARATE ↔ MERGED for close-interaction handling.
+# No YOLO track IDs — identity is purely spatial + shape-based.
+identity_matcher:
+  # Normalization distance (px) for soft distance cost.
+  # Not a hard cutoff — distances beyond this just saturate at cost=1.0.
+  proximity_threshold: 150.0
+
+  # Used in soft area cost (not a hard veto). Hard veto only at 5× change.
+  area_tolerance: 0.4
+
+  # Max frames in MERGED state before force-resetting to SEPARATE.
+  # 30 frames ≈ 1 second at 30fps. Most close interactions resolve faster.
+  max_merged_frames: 30
+
+# --- Social contact classification ---
+contacts:
+  enabled: false
+  min_keypoint_conf: 0.3
+  contact_zone_bl: 0.3
+  proximity_zone_bl: 1.0
+  fallback_body_length_px: 120
+  sbs_mask_iou_min: 0.02
+  sbs_max_velocity_bl: 0.04
+  sbs_parallel_cos_min: 0.7
+  follow_radius_bl: 0.5
+  follow_min_speed_bl: 0.025
+  follow_alignment_cos: 0.7
+  follow_min_frames: 30
+  bout_max_gap_frames: 3
+  bout_min_duration_frames: 9
+  mask_overlap_warning: 0.5
+  det_slot_match_radius: 200.0
+
+# --- Video output ---
+output:
+  video_codec: XVID
+  overlay_colors:
+    - [0, 255, 0, 150]    # Green
+    - [255, 0, 0, 150]    # Red
+
+# --- Scan limits ---
+scan:
+  max_frames: null
