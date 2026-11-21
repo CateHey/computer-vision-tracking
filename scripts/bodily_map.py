@@ -1,6 +1,6 @@
 """Bodily map of social contact, increment 1: located-contacts CSV + passive heatmap.
 
-Usage: python scripts/bodily_map.py <run_dir> [--out <dir>] [--focal R2]
+Usage: python scripts/bodily_map.py <run_dir> [--out <dir>] [--focal R2] [--all]
 """
 from __future__ import annotations
 
@@ -61,11 +61,45 @@ def render_passive(records, focal: str, path: Path) -> int:
     return len(rows)
 
 
+def run_all(records, run_dir, out: Path) -> Path:
+    """Generate every passive / active / combined map for all mice, plus index.html."""
+    from src.common.bodily_map import render as R
+    from src.common.bodily_map.gallery import build_gallery
+    mice = sorted({r[k] for r in records for k in ("focal_mouse", "other_mouse")}, key=R.mouse_slot)
+    print("mice:", ", ".join(mice))
+    written = []
+    R.render_template_key(out)
+    for a in mice:
+        for name, rows, fn in (
+                (f"passive_{a}", R.select_passive(records, a), lambda a=a: R.render_passive(records, a, out)),
+                (f"active_{a}_combined", R.select_active_combined(records, a),
+                 lambda a=a: R.render_active_combined(records, a, out))):
+            if rows:
+                fn()
+                written.append(name)
+            else:
+                print(f"  skip {name}: no contacts")
+        for b in mice:
+            if a == b:
+                continue
+            rows = R.select_active(records, a, b)
+            if rows:
+                R.render_active(records, a, b, out)
+                written.append(f"active_{a}_to_{b}")
+                if len(rows) < 20:
+                    print(f"  note: {a}->{b} has only {len(rows)} contact frames")
+            else:
+                print(f"  skip active_{a}_to_{b}: no contacts")
+    print(f"wrote {len(written)} PNG maps")
+    return build_gallery(run_dir, records, out, mice)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir")
     ap.add_argument("--out", default=None)
     ap.add_argument("--focal", default="R2")
+    ap.add_argument("--all", action="store_true", help="all maps for all mice + index.html gallery")
     a = ap.parse_args()
     tracks_p, xlsx_p = find_run_files(a.run_dir)
     out = Path(a.out) if a.out else xlsx_p.parent.parent / "bodily_map"
@@ -74,6 +108,10 @@ def main() -> None:
     pf = load_perframe(xlsx_p)
     records, stats = locate_contacts(meta, frames, pf)
     write_csv(records, out / "contacts_located.csv")
+    if a.all:
+        print("stats:", stats)
+        print("gallery written to", run_all(records, a.run_dir, out))
+        return
     n = render_passive(records, a.focal, out / f"passive_{a.focal}.png")
     print("stats:", stats)
     print(f"\n{a.focal} passive: {n} rows\n{'region':<12}{'count':>8}{'dur_sec':>10}")
