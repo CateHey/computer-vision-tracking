@@ -8,6 +8,7 @@ from typing import Dict, Sequence
 from .locate import slot_color_rgb
 from .render import (MARKER_NAMES, MARKER_SHAPES, mouse_slot, region_table, select_active,
                      select_active_combined, select_passive)
+from .summary import PROVISIONAL, SUMMARY_FILES, active_passive, mice_of
 from .template import REGION_ORDER
 
 FEW = 20  # fewer contact frames than this: flagged as low-evidence
@@ -20,8 +21,12 @@ header{background:var(--acc);color:#fff;padding:28px 6vw}
 header h1{margin:0 0 6px;font-size:26px;font-weight:600}
 header p{margin:0;opacity:.85}
 main{max-width:1500px;margin:0 auto;padding:24px 4vw 60px}
-nav{position:sticky;top:0;background:rgba(246,247,249,.95);padding:10px 0;border-bottom:1px solid var(--line);z-index:5}
-nav a{display:inline-block;margin-right:14px;color:var(--acc);text-decoration:none;font-weight:600}
+nav{position:sticky;top:0;background:rgba(246,247,249,.97);padding:10px 4vw;border-bottom:1px solid var(--line);z-index:5;display:flex;flex-wrap:wrap;gap:8px}
+nav button{border:1px solid var(--line);background:#fff;color:var(--acc);font:inherit;font-weight:600;padding:6px 16px;border-radius:18px;cursor:pointer}
+nav button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.tab{display:none}.tab.on{display:block}
+.sumimg{width:100%;max-width:1100px;height:auto;border:1px solid var(--line);border-radius:6px;background:#fff;display:block;margin:8px 0}
+.explain{border-left:4px solid #c27c0e;background:#fff8ec}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:20px 0}
 .card h2{margin:0 0 4px;font-size:21px}
 .card h3{margin:22px 0 8px;font-size:16px;color:var(--acc)}
@@ -38,7 +43,7 @@ th{color:var(--mute);font-weight:600}
 .legend svg{vertical-align:middle;margin-right:4px}
 .empty{color:var(--mute);font-style:italic;padding:8px 0}
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
-@media print{nav{display:none}.card{break-inside:avoid}}
+@media print{nav{display:none}.tab{display:block!important}.card{break-inside:avoid}}
 """
 
 
@@ -83,63 +88,102 @@ def _figure(out: Path, fname: str, rows, caption: str) -> str:
             f'alt="{html.escape(caption)}"></a><div>{_table(rows)}{warn}</div></div>')
 
 
-def _overview(records, mice) -> str:
-    """Matrix of total duration of A (rows, toucher) touching B (columns, touched)."""
-    head = "".join(f"<th>{b}</th>" for b in mice)
-    body = []
-    for a in mice:
-        cells = []
-        for b in mice:
-            if a == b:
-                cells.append("<td>–</td>")
-            else:
-                sel = select_active(records, a, b)
-                cells.append(f"<td>{sum(r['dur_sec'] for r in sel):.1f}</td>")
-        body.append(f"<tr><td>{a}</td>{''.join(cells)}</tr>")
-    return (f"<table><tr><th>toucher ↓ / touched →</th>{head}</tr>{''.join(body)}</table>")
+EXPLAINER = (
+    "For a contact where one mouse's nose investigates another's body, the investigator is the ACTIVE mouse and the one "
+    "investigated is PASSIVE. The active mouse is decided by geometry: its nose or head is on the other's body or rear, it is "
+    "facing the other, and there is evidence of real touch. This applies to nose-to-anogenital and nose-to-body contacts (and to "
+    "following, which is not a bodily touch and is left out of the maps). Nose-to-nose and side-by-side are MUTUAL: both mice "
+    "investigate each other, so no active/passive direction is assigned and they are reported separately.")
+CAVEATS = (
+    "The direction is inferred per frame from pose, which is least reliable at the moment of contact, then decided per contact "
+    "by majority vote; when both mice sniff at once the higher score wins, which can be close. The active/passive accuracy has "
+    "not yet been scored by a blinded human rater, so the active-direction numbers are provisional.")
+
+JS = """
+function show(id){document.querySelectorAll('.tab').forEach(function(e){e.classList.toggle('on',e.id===id)});
+document.querySelectorAll('nav button').forEach(function(b){b.classList.toggle('on',b.dataset.tab===id)});
+try{history.replaceState(null,'','#'+id)}catch(e){}window.scrollTo(0,0)}
+document.querySelectorAll('nav button').forEach(function(b){b.addEventListener('click',function(){show(b.dataset.tab)})});
+var h=location.hash.replace('#','');show(document.getElementById(h)&&document.getElementById(h).classList.contains('tab')?h:'summary');
+"""
 
 
-def build_gallery(run_dir, records: Sequence[dict], out_dir, mice: Sequence[str]) -> Path:
-    """Write ``index.html`` in ``out_dir`` referencing the sibling PNGs. Returns its path."""
+def _ap_table(records, mice) -> str:
+    ap = active_passive(records, mice)
+    out = ['<table><tr><th>Mouse</th><th>Active (s)</th><th>Passive (s)</th><th>% initiated (provisional)</th>'
+           '<th>Mutual N2N+SBS (s)</th></tr>']
+    for m in mice:
+        v = ap[m]
+        p = "n/a" if v["pct_initiated"] is None else f"{v['pct_initiated']:.0f}%"
+        out.append(f"<tr><td>{m}</td><td>{v['active']:.1f}</td><td>{v['passive']:.1f}</td><td>{p}</td>"
+                   f"<td>{v['mutual']:.1f}</td></tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
+HOWTO = """<div class="card"><h2>How to read these maps</h2>
+<p>A bodily map shows <em>where on a mouse's body</em> social contacts land. Each contact is placed on the body of the
+<strong>touched</strong> mouse, using its own pose (nose to tail tip), so contacts from different frames can be pooled on one
+template mouse, drawn from above with the <strong>nose on the left and the tail on the right</strong> (the mouse's right side is the top).</p>
+<ul>
+<li><strong>Passive map of A</strong>: where the other mice touch A.</li>
+<li><strong>Active map of A (all partners)</strong>: where A touches others, pooled on one generic mouse.</li>
+<li><strong>Active map A &rarr; B</strong>: where A's touches land on B's body.</li>
+</ul>
+<p>The colour scale is <strong>contact duration in seconds</strong> (smoothed, square-root scale), so a long sniff counts more than a
+brief touch. The large combined panel is a clean heatmap with no markers. The four per-type panels (nose-to-nose, nose-to-anogenital,
+nose-to-body, side-by-side) also show individual contact frames as markers: shape and colour identify the other mouse. Each panel has
+its own colour scale. Following is excluded. Nose-to-nose dominates the total, so the per-type panels are the place to look for contacts
+elsewhere on the body.</p>
+<p>Region names are not printed on the maps; see the template key (dashed lines mark the same regions).</p>"""
+
+CAPS = {
+    "summary_contacts_per_mouse.png": "Who is most social: total contact duration and frame count per mouse, by contact type.",
+    "summary_active_passive.png": "Active vs passive duration per mouse, directional contacts only. % initiated is "
+                                  + PROVISIONAL + ".",
+    "summary_region_preference.png": "Where each mouse is touched: share of its touched duration per body region.",
+    "summary_contact_matrix.png": "Who touches whom: duration (s), row = toucher, column = touched.",
+}
+
+
+def _summary_tab(out: Path, records, mice, legend) -> str:
+    key = ('<img src="template_key.png" alt="Template mouse key" style="max-width:700px;width:100%">'
+           if (out / "template_key.png").exists() else "")
+    p = ['<div class="tab" id="summary">', HOWTO, key, f'<div class="legend"><strong>Mice:</strong> {legend}</div></div>',
+         f'<div class="card explain"><h2>How we tell active from passive, and when we cannot</h2><p>{html.escape(EXPLAINER)}</p>'
+         f'<p><strong>Caveats.</strong> {html.escape(CAVEATS)}</p></div>',
+         '<div class="card"><h2>Active vs passive numbers (directional contacts only)</h2>' + _ap_table(records, mice)
+         + f'<p class="note">Active/passive uses nose-to-anogenital and nose-to-body only. % initiated = active / (active + passive); '
+           f'{html.escape(PROVISIONAL)}. Mutual contacts (N2N + SBS) are never split into active or passive.</p></div>']
+    for f in SUMMARY_FILES:
+        if (out / f).exists():
+            p.append(f'<div class="card"><h2>{html.escape(f[8:-4].replace("_", " ").capitalize())}</h2>'
+                     f'<a href="{f}"><img class="sumimg" src="{f}" alt="{html.escape(CAPS[f])}"></a>'
+                     f'<p class="note">{html.escape(CAPS[f])}</p></div>')
+    p.append("</div>")
+    return "".join(p)
+
+
+def build_gallery(run_dir, records: Sequence[dict], out_dir, mice: Sequence[str] = None) -> Path:
+    """Write a tabbed ``index.html`` in ``out_dir`` referencing the sibling PNGs. Returns its path."""
     out = Path(out_dir)
     run_name = Path(run_dir).name
-    mice = sorted(mice, key=mouse_slot)
+    mice = sorted(mice or mice_of(records), key=mouse_slot)
     total_dur = sum(r["dur_sec"] for r in records)
     legend = "".join(f'<span>{_shape_svg(m)}{m} ({MARKER_NAMES[mouse_slot(m) % 6]})</span>' for m in mice)
-    nav = "".join(f'<a href="#{m}">{m}</a>' for m in mice)
+    nav = '<button data-tab="summary" class="on">Summary</button>' + "".join(
+        f'<button data-tab="{m}">{m}</button>' for m in mice)
     parts = [f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bodily maps of social contact — {html.escape(run_name)}</title><style>{CSS}</style></head><body>
 <header><h1>Bodily maps of social contact — {html.escape(run_name)}</h1>
 <p>{len(records)} located contact frames, {total_dur:.1f} s of contact, {len(mice)} mice ({", ".join(mice)})</p></header>
-<main>
-<div class="card"><h2>How to read these maps</h2>
-<p>A bodily map shows <em>where on a mouse's body</em> social contacts land. Each contact is placed on the body of the
-<strong>touched</strong> mouse, using its own pose (nose to tail tip), so contacts from different frames and positions can be pooled
-on one template mouse. The template is drawn from above with the <strong>nose on the left and the tail on the right</strong>;
-the mouse's right side is the top and its left side the bottom.</p>
-<ul>
-<li><strong>Passive map of A</strong>: where the other mice touch A.</li>
-<li><strong>Active map of A (all partners)</strong>: where A touches others, pooled on one generic mouse.</li>
-<li><strong>Active map A → B</strong>: where A's touches land on B's body.</li>
-</ul>
-<p>The colour scale is <strong>contact duration in seconds</strong> (smoothed, square-root colour scale), so a long sniff counts
-more than a brief touch. Markers show individual contact frames: shape and colour identify the other mouse, and the shape
-carries the identity for colour-blind readers. Each figure has a combined panel plus one panel per contact type
-(nose-to-nose, nose-to-anogenital, nose-to-body, side-by-side), each with its own colour scale. Following-type contacts are excluded.
-Nose-to-nose contacts dominate the total, so the per-type panels are the place to look for contacts elsewhere on the body.</p>
-<p>Region names are not printed on the maps; see the template key below (dashed lines on the maps mark the same regions).
-Markers appear in the four per-type panels only; the large combined panel is a clean heatmap.</p>
-{'<img src="template_key.png" alt="Template mouse key" style="max-width:700px;width:100%">' if (out / "template_key.png").exists() else ""}
-<div class="legend"><strong>Mice:</strong> {legend}</div></div>
-<div class="card"><h2>Overview: duration of contact (s)</h2>{_overview(records, mice)}
-<p class="note">Row mouse touches column mouse. Detail below.</p></div>
-<nav>{nav}</nav>"""]
+<nav>{nav}</nav><main>""", _summary_tab(out, records, mice, legend)]
     for m in mice:
         pas = select_passive(records, m)
         comb = select_active_combined(records, m)
-        sec = [f'<div class="card" id="{m}"><h2><span class="sw" style="background:{_rgb(m)}"></span>Mouse {m}</h2>'
-               f'<p class="note">Touched {len(pas)} frames, touching {len(comb)} frames.</p>']
+        sec = [f'<div class="tab card" id="{m}"><h2><span class="sw" style="background:{_rgb(m)}"></span>Mouse {m}</h2>'
+               f'<p class="note">Touched in {len(pas)} frames, touching in {len(comb)} frames.</p>']
         sec.append(_figure(out, f"passive_{m}.png", pas, f"Passive map of {m}: where others touch {m}"))
         sec.append(_figure(out, f"active_{m}_combined.png", comb,
                            f"Active map of {m}: where {m} touches others (all partners pooled)"))
@@ -149,7 +193,7 @@ Markers appear in the four per-type panels only; the large combined panel is a c
                                    f"Active map {m} → {b}: where {m} touches {b}"))
         sec.append("</div>")
         parts.append("".join(sec))
-    parts.append("</main></body></html>")
+    parts.append(f"</main><script>{JS}</script></body></html>")
     path = out / "index.html"
     path.write_text("".join(parts), encoding="utf-8")
     return path

@@ -91,6 +91,8 @@ def run_all(records, run_dir, out: Path) -> Path:
             else:
                 print(f"  skip active_{a}_to_{b}: no contacts")
     print(f"wrote {len(written)} PNG maps")
+    from src.common.bodily_map.summary import render_all_summaries
+    print(f"wrote {len(render_all_summaries(records, out))} summary PNGs")
     return build_gallery(run_dir, records, out, mice)
 
 
