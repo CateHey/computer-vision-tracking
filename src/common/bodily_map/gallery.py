@@ -20,15 +20,17 @@ from .template import REGION_ORDER
 
 FEW = 20  # fewer contact frames than this: flagged as low-evidence
 
-_DARK = """--ground:#0e1312;--surface:#161d1b;--surface-2:#1d2624;--border:#2a3431;--border-firm:#3b4744;
---ink:#e9efec;--ink-2:#b3bfbb;--ink-3:#879591;--accent:#4fd1bd;--accent-ink:#06211d;--accent-soft:#16302c;
---warn:#e0b062;--warn-soft:#2c2417;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);"""
+_DARK = """--ground:#0A0C17;--surface:#141829;--surface-2:#1C2138;--border:#272C48;--border-firm:#3A4068;
+--ink:#ECEEF8;--ink-2:#ADB3D4;--ink-3:#7C83AA;--accent:#9B93FF;--accent-ink:#0A0C17;--accent-soft:#201E42;
+--accent-2:#34E3E3;--accent-3:#FF74D4;--warn:#E0B062;--warn-soft:#2C2417;
+--shadow:0 1px 2px rgba(0,0,0,.5),0 12px 34px -16px rgba(0,0,0,.75);--grad:linear-gradient(90deg,#9B93FF,#B79BFF,#FF74D4);"""
 
 CSS = """
-/* Tokens copied from scripts/report_viewer.html (light, OS-dark guarded by data-theme, explicit dark). */
-:root{color-scheme:light;--ground:#f4f6f5;--surface:#ffffff;--surface-2:#eef1f0;--border:#dbe1df;--border-firm:#c3ccc9;
---ink:#12181a;--ink-2:#444f4c;--ink-3:#6b7773;--accent:#0f6e63;--accent-ink:#ffffff;--accent-soft:#e2f0ed;
---warn:#8a5a00;--warn-soft:#fdf3e0;--shadow:0 1px 2px rgba(18,24,26,.06),0 8px 24px -12px rgba(18,24,26,.18);
+/* Vivid neuroscience palette (light, OS-dark guarded by data-theme, explicit dark). */
+:root{color-scheme:light;--ground:#F4F5FB;--surface:#FFFFFF;--surface-2:#EDEEF8;--border:#E0E2F0;--border-firm:#C7CBE4;
+--ink:#14152A;--ink-2:#40456A;--ink-3:#686F96;--accent:#5B4BF0;--accent-ink:#FFFFFF;--accent-soft:#EBE9FE;
+--accent-2:#0FB6C4;--accent-3:#E0489B;--warn:#9A5B00;--warn-soft:#FDF1DD;
+--shadow:0 1px 2px rgba(20,21,42,.06),0 10px 30px -14px rgba(60,40,200,.22);--grad:linear-gradient(90deg,#5B4BF0,#8B5CF6,#E0489B);
 --step--1:.75rem;--step-0:.875rem;--step-1:1rem;--step-2:1.375rem;--step-3:1.875rem;--step-4:2.5rem;
 --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -41,11 +43,12 @@ h1{font-size:var(--step-2)}h2{font-size:var(--step-1)}h3{font-size:var(--step-0)
 p{margin:0}
 a{color:var(--accent)}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.eyebrow{font-size:var(--step--1);font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.eyebrow{font-size:var(--step--1);font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
 :where(button,[tabindex],summary):focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 .topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
 .topin{max-width:1240px;margin:0 auto;padding:12px 20px 0;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
 .mark{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:-.01em;font-size:var(--step-1)}
+.mark .ttl{color:var(--ink);background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;font-weight:700}
 .spacer{flex:1 1 auto}
 .filechip{display:inline-flex;align-items:center;gap:8px;padding:5px 10px;background:var(--surface);border:1px solid var(--border);border-radius:999px;font-family:var(--mono);font-size:var(--step--1);color:var(--ink-2)}
 .pill{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--warn-soft);border:1px solid var(--warn);color:var(--warn);font-size:var(--step--1);font-weight:600}
@@ -53,11 +56,13 @@ a{color:var(--accent)}
 .btn:hover{background:var(--surface-2);border-color:var(--ink-3)}
 nav{max-width:1240px;margin:0 auto;padding:6px 12px 0;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
 nav::-webkit-scrollbar{display:none}
-nav button{flex:none;border:0;border-bottom:2px solid transparent;background:none;color:var(--ink-3);font:inherit;font-weight:500;padding:9px 14px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:color .12s ease,background .12s ease,border-color .12s ease;border-radius:6px 6px 0 0}
+nav button{flex:none;border:0;border-bottom:3px solid transparent;background:none;color:var(--ink-3);font:inherit;font-weight:500;padding:9px 14px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:color .12s ease,background .12s ease,border-color .12s ease;border-radius:6px 6px 0 0}
 nav button:hover{color:var(--ink);background:var(--surface-2)}
-nav button[aria-selected=true]{color:var(--ink);font-weight:600;border-bottom-color:var(--accent)}
+nav button[aria-selected=true]{color:var(--ink);font-weight:600;border-bottom-color:var(--accent);background:var(--accent-soft)}
 .wrap{max-width:1240px;margin:0 auto;padding:28px 20px 24px}
 .tab{display:none}.tab.on{display:block}
+#summary{position:relative;isolation:isolate}
+#summary::before{content:"";position:absolute;z-index:-1;pointer-events:none;top:-28px;left:-20px;right:-20px;height:340px;background:radial-gradient(60% 100% at 18% 0%,color-mix(in srgb,var(--accent) 12%,transparent),transparent 70%),radial-gradient(45% 80% at 88% 0%,color-mix(in srgb,var(--accent-3) 8%,transparent),transparent 70%)}
 .dot{display:inline-block;width:11px;height:11px;border-radius:50%;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.5),0 0 0 2px rgba(255,255,255,.4)}
 .dot.lg{width:20px;height:20px}
 .lead{color:var(--ink-2);font-size:var(--step-1);max-width:72ch;margin-bottom:8px}
@@ -70,7 +75,8 @@ nav button[aria-selected=true]{color:var(--ink);font-weight:600;border-bottom-co
 .stat{padding:16px 18px;display:grid;gap:4px;align-content:start;margin:0}
 .stat .k{display:flex;align-items:center;gap:8px;font-size:var(--step--1);color:var(--ink-3);font-weight:600}
 .stat .who{margin-left:auto;color:var(--ink-2);font-family:var(--mono)}
-.stat .v{font-family:var(--mono);font-size:var(--step-3);font-weight:600;letter-spacing:-.02em;line-height:1.2}
+.stat .v{color:var(--accent);font-family:var(--mono);font-size:var(--step-3);font-weight:600;letter-spacing:-.02em;line-height:1.2}
+.stats .stat{border-top:3px solid var(--accent)}
 .stat .sub{font-size:var(--step--1);color:var(--ink-2)}
 .callout{background:var(--warn-soft);border:1px solid var(--warn);border-radius:12px;padding:18px 20px;margin:28px 0 20px;color:var(--ink)}
 .callout h2{color:var(--warn);margin-bottom:8px}
@@ -332,7 +338,7 @@ def build_gallery(run_dir, records: Sequence[dict], out_dir, mice: Sequence[str]
     parts = [f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bodily Maps of Social Contact</title><style>{CSS}</style></head><body>
-<div class="topbar"><div class="topin"><span class="mark">{mark}Bodily Maps of Social Contact</span>
+<div class="topbar"><div class="topin"><span class="mark">{mark}<span class="ttl">Bodily Maps of Social Contact</span></span>
 <span class="spacer"></span><span class="filechip">{html.escape(meta)}</span><span class="pill">provisional</span>
 <button id="theme" class="btn" type="button">Theme: auto</button></div>
 <nav role="tablist" aria-label="Summary and mice">{nav}</nav></div><div class="wrap">""", _summary_tab(out, records, mice, legend)]
