@@ -16,8 +16,8 @@ Each pipeline run produces four contact analysis outputs:
 
 ## 2. Per-Frame CSV (`contacts_per_frame.csv`)
 
-One row per animal pair per frame. For 2 rats this means one row per frame
-(pair 0-1). For N rats this would be N*(N-1)/2 rows per frame.
+One row per animal pair per frame. For 2 mice this means one row per frame
+(pair 0-1). For N mice this would be N*(N-1)/2 rows per frame.
 
 ### Columns
 
@@ -25,24 +25,24 @@ One row per animal pair per frame. For 2 rats this means one row per frame
 |--------|------|-------------|
 | `frame_idx` | int | Frame number (0-indexed) |
 | `time_sec` | float | Timestamp in seconds (`frame_idx / fps`) |
-| `rat_a_slot` | int | Slot index of rat A (0 = green, 1 = red) |
-| `rat_b_slot` | int | Slot index of rat B |
-| `rat_a_track_id` | int/null | YOLO track ID of rat A (may change across video) |
-| `rat_b_track_id` | int/null | YOLO track ID of rat B |
+| `rat_a_slot` | int | Slot index of mouse A (0 = green, 1 = red) |
+| `rat_b_slot` | int | Slot index of mouse B |
+| `rat_a_track_id` | int/null | YOLO track ID of mouse A (may change across video) |
+| `rat_b_track_id` | int/null | YOLO track ID of mouse B |
 | `zone` | str | `"contact"`, `"proximity"`, or `"independent"` |
 | `contact_type` | str/null | `"N2N"`, `"N2AG"`, `"N2B"`, `"T2T"`, `"FOL"`, `"SBS"`, or null if no contact |
-| `investigator_slot` | int/null | For asymmetric contacts (N2AG, N2B, FOL): the active rat's slot |
+| `investigator_slot` | int/null | For asymmetric contacts (N2AG, N2B, FOL): the active mouse's slot |
 | `nose_nose_dist_px` | float/null | Distance between noses in pixels (null if keypoints missing) |
 | `nose_nose_dist_bl` | float/null | Same, normalized by body length |
 | `nose_tailbase_dist_px` | float/null | Min distance nose_A↔tail_base_B or nose_B↔tail_base_A |
 | `nose_tailbase_dist_bl` | float/null | Same, normalized |
 | `centroid_dist_px` | float | Centroid-to-centroid distance in pixels |
 | `centroid_dist_bl` | float/null | Same, normalized (null if BL unavailable) |
-| `mask_iou` | float | SAM2 mask IoU between the two rats (0 if no masks) |
-| `body_length_a_px` | float/null | Estimated body length of rat A (nose→tail_base) |
-| `body_length_b_px` | float/null | Estimated body length of rat B |
-| `velocity_a_px` | float/null | Rat A centroid displacement since previous frame |
-| `velocity_b_px` | float/null | Rat B centroid displacement since previous frame |
+| `mask_iou` | float | SAM2 mask IoU between the two mice (0 if no masks) |
+| `body_length_a_px` | float/null | Estimated body length of mouse A (nose→tail_base) |
+| `body_length_b_px` | float/null | Estimated body length of mouse B |
+| `velocity_a_px` | float/null | Mouse A centroid displacement since previous frame |
+| `velocity_b_px` | float/null | Mouse B centroid displacement since previous frame |
 | `orientation_cos` | float/null | Cosine of angle between body orientation vectors |
 | `quality_flag` | str/null | `"high_mask_overlap"`, `"missing_keypoints"`, `"single_detection"`, or null |
 | `bout_id` | int/null | ID of the contact bout this frame belongs to (null if no contact) |
@@ -70,9 +70,9 @@ allowing small gaps (up to `bout_max_gap_frames`).
 |--------|------|-------------|
 | `bout_id` | int | Unique bout identifier |
 | `contact_type` | str | `"N2N"`, `"N2AG"`, `"N2B"`, `"T2T"`, `"FOL"`, `"SBS"` |
-| `rat_a_slot` | int | Slot index of rat A |
-| `rat_b_slot` | int | Slot index of rat B |
-| `investigator_slot` | int/null | For asymmetric types: the active rat |
+| `rat_a_slot` | int | Slot index of mouse A |
+| `rat_b_slot` | int | Slot index of mouse B |
+| `investigator_slot` | int/null | For asymmetric types: the active mouse |
 | `start_frame` | int | First frame of the bout |
 | `end_frame` | int | Last frame of the bout |
 | `start_time_sec` | float | Start timestamp |
@@ -82,8 +82,8 @@ allowing small gaps (up to `bout_max_gap_frames`).
 | `total_frames` | int | `end_frame - start_frame + 1` (includes gap frames) |
 | `mean_nose_dist_px` | float/null | Average nose-nose distance during bout |
 | `mean_mask_iou` | float | Average mask IoU during bout |
-| `mean_velocity_a_px` | float/null | Average velocity of rat A during bout |
-| `mean_velocity_b_px` | float/null | Average velocity of rat B during bout |
+| `mean_velocity_a_px` | float/null | Average velocity of mouse A during bout |
+| `mean_velocity_b_px` | float/null | Average velocity of mouse B during bout |
 | `quality_flags` | str/null | Comma-separated list of any quality flags raised during bout |
 
 ### Example rows
@@ -307,9 +307,9 @@ sec/min
      0    5    10   15   20  minutes
 ```
 
-### Page 5: Per-Pair Summary Table (for N > 2 rats)
+### Page 5: Per-Pair Summary Table (for N > 2 mice)
 
-For 2-rat experiments this is a single row. For multi-rat experiments,
+For 2-mouse experiments this is a single row. For multi-mouse experiments,
 a table showing contact statistics per pair.
 
 | Pair | Total contact (s) | N2N | N2AG | N2B | SBS | FOL |

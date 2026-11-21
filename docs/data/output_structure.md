@@ -163,7 +163,7 @@ All three pipelines produce the same contact output format when
 
 ### `contacts_per_frame.csv`
 
-One row per frame per rat pair. Key columns:
+One row per frame per mouse pair. Key columns:
 
 | Column                 | Description                                      |
 |------------------------|--------------------------------------------------|
@@ -173,13 +173,13 @@ One row per frame per rat pair. Key columns:
 | `rat_b_slot`           | Identity slot (0 or 1)                           |
 | `zone`                 | `contact` / `proximity` / `independent`          |
 | `contact_type`         | `N2N` / `N2AG` / `N2B` / `SBS` / `FOL` / null   |
-| `investigator_slot`    | Which rat initiates (for asymmetric types)       |
+| `investigator_slot`    | Which mouse initiates (for asymmetric types)       |
 | `nose_nose_dist_px`    | Nose-to-nose distance in pixels                  |
 | `nose_nose_dist_bl`    | Same, in body lengths                            |
 | `centroid_dist_px`     | Centroid distance in pixels                       |
 | `mask_iou`             | Intersection-over-union of masks                 |
-| `body_length_a_px`     | Body length of rat A in pixels                   |
-| `velocity_a_px`        | Velocity of rat A in pixels/frame                |
+| `body_length_a_px`     | Body length of mouse A in pixels                   |
+| `velocity_a_px`        | Velocity of mouse A in pixels/frame                |
 | `orientation_cos`      | Cosine of angle between body vectors             |
 | `quality_flag`         | `high_mask_overlap` / `missing_keypoints` / null |
 | `bout_id`              | Assigned during finalization                     |
@@ -246,7 +246,7 @@ Visual contact analysis with 5 pages:
 | `SBS`  | Side-by-Side      | Yes       | High mask overlap, low velocity, parallel     |
 | `FOL`  | Following         | No        | One nose near other's tail, both moving, aligned |
 
-For asymmetric types, `investigator_slot` indicates which rat initiates.
+For asymmetric types, `investigator_slot` indicates which mouse initiates.
 
 ---
 

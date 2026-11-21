@@ -1,6 +1,6 @@
 # Contacts
 
-Social contact classification system — how rat interactions are detected and reported.
+Social contact classification system — how mouse interactions are detected and reported.
 
 ## Files
 

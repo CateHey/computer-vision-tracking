@@ -1,4 +1,4 @@
-# Temporal Threshold Research for Rat Social Contact Classification
+# Temporal Threshold Research for Mouse Social Contact Classification
 
 ## 1. Context
 
@@ -17,7 +17,7 @@ chosen thresholds.
 
 ## 2. Distance Thresholds in Real-World Units
 
-For reference, using adult lab rat body length (BL) ~ 22 cm (nose to tail base):
+For reference, using adult lab mouse body length (BL) ~ 22 cm (nose to tail base):
 
 | Zone | Threshold (BL) | Real distance | Meaning |
 |------|----------------|---------------|---------|
@@ -97,15 +97,15 @@ Contact-type specific distances:
   of exponential processes
 - **No universal time value** — BEC must be empirically derived per behavior/species
 
-### 3.7 Rat-Specific Social Behavior Timing
+### 3.7 Mouse-Specific Social Behavior Timing
 
-From behavioral neuroscience literature on rat social interaction:
+From behavioral neuroscience literature on mouse social interaction:
 
 - **Social recognition test** (Kogan et al., 2000): investigation bouts measured
   with manual scoring typically range **0.5–5 seconds**
 - **Resident-intruder paradigm**: social investigation bouts averaged **1–3 seconds**
 - **Anogenital sniffing** is the most stereotyped: typically **0.5–2 seconds** per bout
-- **Brief nose touches** (< 300 ms) are often incidental — two rats passing near each
+- **Brief nose touches** (< 300 ms) are often incidental — two mice passing near each
   other, not deliberate social investigation
 - **Following** requires sustained pursuit: literature uses **1–3 seconds** minimum
 
@@ -121,10 +121,10 @@ From behavioral neuroscience literature on rat social interaction:
 | DeepEthogram | General | 33–67 ms | Model handles temporal coherence |
 | Freezing (IMPReSS) | Immobility | 2,000 ms | Passive behavior |
 | Freezing (VideoFreeze) | Immobility | 1,000 ms | Passive behavior |
-| Rat social (literature) | Investigation | 500–5,000 ms | Manual scoring standard |
-| Rat social (literature) | Following | 1,000–3,000 ms | Sustained pursuit |
+| Mouse social (literature) | Investigation | 500–5,000 ms | Manual scoring standard |
+| Mouse social (literature) | Following | 1,000–3,000 ms | Sustained pursuit |
 
-**Key insight**: There is no single universal minimum. But for **rat social contacts
+**Key insight**: There is no single universal minimum. But for **mouse social contacts
 classified from keypoint distances**, the consensus points to:
 
 - **< 200 ms**: Almost certainly noise (even A-SOiD's floor is 200 ms)

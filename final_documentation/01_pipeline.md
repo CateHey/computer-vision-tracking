@@ -12,7 +12,7 @@ The selected pipeline is **`cutie_composite`**
 
 ## 1.1 The problem it solves
 
-Rats in an arena are visually identical. Any tracker that re-detects them
+Mice in an arena are visually identical. Any tracker that re-detects them
 independently each frame cannot know which detection is which — detector output
 order is arbitrary. When animals touch, cross, or occlude one another the
 identities swap, and once swapped they never recover. Every measure of *who did

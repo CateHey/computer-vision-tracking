@@ -1,6 +1,6 @@
-# Rat Social Behaviour Tracking — Final Documentation
+# Mouse Social Behaviour Tracking — Final Documentation
 
-Automated tracking and social-contact classification for pairs of laboratory rats
+Automated tracking and social-contact classification for pairs of laboratory mice
 from overhead video. Written as the methods reference for the paper.
 
 > **Read this first.** The current pipeline lives on `origin/develop`, not `main`.
@@ -25,7 +25,7 @@ from overhead video. Written as the methods reference for the paper.
 
 ## System in one page
 
-**Input.** A video of rats in an arena, single fixed overhead camera. The shipped
+**Input.** A video of mice in an arena, single fixed overhead camera. The shipped
 configs are set up for **6 animals**.
 
 **Output.** An overlay video, `results.xlsx` holding the reported tables (per-frame
@@ -69,7 +69,7 @@ also carries a **dynamics** label (closing / stable / separating).
 > **Fixed 2026-09-30.** The v2 configs declared the wrong keypoint names (every
 > index was mislabelled), SBS was gated on a mask IoU that is always 0 with CUTIE,
 > `individual_summary.json` was never written, and post-processing mixed pairs in
-> multi-rat sessions. All are fixed
+> multi-mouse sessions. All are fixed
 > ([02 §2.6](02_contact_detection.md#26-defects-found-and-fixed-2026-09-30)).
 > **Every output produced before this date (e.g. `outputs/2026-07-28_*`) is invalid
 > and must be re-run.**

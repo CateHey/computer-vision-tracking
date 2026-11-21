@@ -54,7 +54,7 @@ Tick items off here. Last update: 2026-10-28.
 - [ ] **Figures**: pair contact matrix (heat map), per-animal rates per minute, precision per
       behaviour with CIs, sensitivity curves.
 - [ ] **Operational**: rotate the Hugging Face token (OPEN_ISSUES D1); delete the stray copies
-      with `git clean -f -d` (D2); decide the "rat" → "mouse" renaming (D5).
+      with `git clean -f -d` (D2); decide the "mouse" → "mouse" renaming (D5).
 
 ## Known limitations to state in the paper
 

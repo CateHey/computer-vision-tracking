@@ -20,14 +20,14 @@ After watching an overlay video, add an entry below with:
 
 | Tag | Meaning |
 |-----|---------|
-| `ID-SWAP` | Identity swap — colors flip between rats |
-| `ID-LOST` | Identity lost — rat disappears from tracking |
-| `MERGE` | Merged detection — two rats become one blob |
+| `ID-SWAP` | Identity swap — colors flip between mice |
+| `ID-LOST` | Identity lost — mouse disappears from tracking |
+| `MERGE` | Merged detection — two mice become one blob |
 | `SPLIT` | Split error — wrong IDs assigned after separation |
-| `FALSE-DET` | False detection — wall, shadow, or artifact detected as rat |
+| `FALSE-DET` | False detection — wall, shadow, or artifact detected as mouse |
 | `KEYPOINT` | Keypoint error — wrong body part position |
 | `CONTACT` | Contact classification error — wrong type or missed contact |
-| `MASK` | Mask quality — SAM2 mask doesn't match rat shape |
+| `MASK` | Mask quality — SAM2 mask doesn't match mouse shape |
 | `PERF` | Performance — speed, memory, GPU usage |
 
 ---
@@ -43,11 +43,11 @@ After watching an overlay video, add an entry below with:
 
 **Observations:**
 - `ID-SWAP`: Colors flip during close interactions (BoT-SORT swaps IDs)
-- `MERGE`: Two rats merge into one blob when touching → one slot gets corrupted
+- `MERGE`: Two mice merge into one blob when touching → one slot gets corrupted
 - `SPLIT`: After separation, IDs don't recover correctly
-- General tracking works well when rats are apart
+- General tracking works well when mice are apart
 
-**Problem:** BoT-SORT relies on appearance features, but both rats look identical.
+**Problem:** BoT-SORT relies on appearance features, but both mice look identical.
 SlotTracker tries to compensate but the corrupted state cascades.
 
 **Action:** Designed reference pipeline with IdentityMatcher + state machine.
@@ -71,11 +71,11 @@ Switched to YOLO26 model.
 - `CONTACT`: when and between whom are found well; the type is weak, mostly N2B and FOL.
 - `CONTACT`: ~30 % of the manual interactions last less than the 0.3 s minimum of Events
   and vanish from every sheet.
-- `CONTACT` / `MASK`: a nose on the other rat's tail counted as nose-to-body, because the
+- `CONTACT` / `MASK`: a nose on the other mouse's tail counted as nose-to-body, because the
   tail is part of the CUTIE mask; thin leaks of background inflate mask contact.
 - `CONTACT`: N2B was zeroed whenever SBS was strong; FOL was annulled whenever the bodies
   were < 0.5 BL apart, with no touch; N2AG fired on distance alone (nose < 0.30 BL from the rear).
-- `CONTACT`: one rat trailing another while sniffing alternated N2AG / FOL and split one
+- `CONTACT`: one mouse trailing another while sniffing alternated N2AG / FOL and split one
   chase into many events.
 
 **Problem:** the touch tests used the full mask (tail included) and a fixed 6 px window
@@ -85,7 +85,7 @@ from distance alone.
 **Action** (`src/common/contacts_v2.py` unless noted; all behind `contact_rules_v3`):
 1. Body mask for detection: opening with a disk of 0.10 BL (`body_mask_open_bl`), largest
    component, border restored. Removes the tail and thin leaks. Internal only: the video
-   still shows full masks. `suspect_mask_i/j` flags a mask > 1.4x the rat's median area.
+   still shows full masks. `suspect_mask_i/j` flags a mask > 1.4x the mouse's median area.
 2. Refined nose tip from the own mask (most forward border pixel within 0.15 BL of the
    nose keypoint) and a head circle of 0.08 BL (`head_circle_bl`) instead of the fixed 6 px.
 3. N2AG: nose tip <= 0.30 BL from the rear **and** evidence of touching (head circle on the
@@ -111,7 +111,7 @@ from distance alone.
 
 Unchanged: the 5 types, the hierarchy, smoothing and gap bridging.
 
-**Calibration of the head circle** (masks rebuilt from the per-rat overlay videos, centroid
+**Calibration of the head circle** (masks rebuilt from the per-mouse overlay videos, centroid
 error median 1.5 px; 409 directed frames annotated as N2N / N2AG / N2B against ~7 900
 frames with no annotation):
 
@@ -142,7 +142,7 @@ Watch: lateral N2N competing with SBS when two animals walk side by side with he
 - **Commit:** this commit
 
 **How it was tested:** the run saved no masks or keypoints, so both were rebuilt from the
-per-rat overlay videos (the mask is the tinted area; the keypoints are the pure-colour dots)
+per-mouse overlay videos (the mask is the tinted area; the keypoints are the pure-colour dots)
 and ContactTrackerV2 + post-processing were rerun. With the old rules the rebuilt run gives
 the same type as the original `results.xlsx` in 98.8 % of the pair-frames, and its 21 Events
 match within 1-3 frames (2 lost, 2 gained), so the inputs are faithful.
@@ -243,7 +243,7 @@ _Pending: calibrate `n2ag_walking_bls` with the annotator marking which N2AG had
   §4.6, §7, §9, §10), `07` (methods text and parameter table), `08`, `README`; root `CLAUDE.md`,
   `src/common/CLAUDE.md`, `docs/setup/local.md`; `OPEN_ISSUES.md` (A1, A3, A4 updated; new
   B7 lateral N2N vs SBS, B8 walking threshold, B9 subtypes not validated).
-- Wording: the animals are mice; "6-rat clip" in Entries 002–004 corrected to "6-mouse clip".
+- Wording: the animals are mice; "6-mouse clip" in Entries 002–004 corrected to "6-mouse clip".
 
 **Result:** 136 tests pass; `sample` on the rebuilt run writes the new columns.
 

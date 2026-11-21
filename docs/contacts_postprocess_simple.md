@@ -138,8 +138,8 @@ Our ContactTracker post-processing applies **3 simple rules** in sequence. The d
 ### Rule 3: Minimum bout duration (default = 0.5 s = 15 frames at 30 fps)
 
 - **What it does**: After smoothing and gap bridging, bouts shorter than 0.5 s are discarded as noise.
-- **Why 0.5 s**: A-SOiD found that 200 ms (10th percentile of CalMS21 annotated bouts) was the floor for resolving real behavioral events, with 400 ms as the default. Research on rat social behavior indicates that meaningful social contacts require sustained interaction — a brief nose-touch under 300 ms is more likely detector noise than intentional social investigation. The 500 ms threshold ensures only sustained contacts are reported, sitting above the A-SOiD 400 ms default while remaining practical for rat social contacts. See [Threshold Research](contacts/threshold_research.md) for detailed literature review.
-- **Literature support**: A-SOiD (200–400 ms range), SimBA (per-classifier thresholds, nosing=50ms to adjacent lying=750ms), freezing literature (1–2 s upper bound), rat behavioral studies (300 ms minimum for meaningful social contact).
+- **Why 0.5 s**: A-SOiD found that 200 ms (10th percentile of CalMS21 annotated bouts) was the floor for resolving real behavioral events, with 400 ms as the default. Research on mouse social behavior indicates that meaningful social contacts require sustained interaction — a brief nose-touch under 300 ms is more likely detector noise than intentional social investigation. The 500 ms threshold ensures only sustained contacts are reported, sitting above the A-SOiD 400 ms default while remaining practical for mouse social contacts. See [Threshold Research](contacts/threshold_research.md) for detailed literature review.
+- **Literature support**: A-SOiD (200–400 ms range), SimBA (per-classifier thresholds, nosing=50ms to adjacent lying=750ms), freezing literature (1–2 s upper bound), mouse behavioral studies (300 ms minimum for meaningful social contact).
 
 ### Why not Kleinberg / HMM?
 
@@ -149,7 +149,7 @@ SimBA recommends Kleinberg burst detection, and MARS uses HMM smoothing. Both ar
 - **Sufficient**: covers the same error modes (flicker, short gaps, spurious bouts) that motivate the more complex approaches
 - **Consistent with JAABA's architecture**: gap-fill first, then minimum bout — the cleanest conceptual model
 
-For a 2-rat social contact system with 5 contact types at 30 fps, the 3-rule approach matches the accuracy needs without the overhead of fitting HMM transition matrices or Kleinberg hyperparameters.
+For a 2-mouse social contact system with 5 contact types at 30 fps, the 3-rule approach matches the accuracy needs without the overhead of fitting HMM transition matrices or Kleinberg hyperparameters.
 
 ---
 
@@ -240,7 +240,7 @@ human-readable timestamps that can be looked up directly in the video:
 | `end_time_sec` | float | 13.733 | Raw seconds |
 | `duration_sec` | float | 1.233 | Raw seconds |
 | `duration_frames` | int | 37 | Number of frames |
-| `investigator_slot` | int/empty | 0 | Which rat initiated (for asymmetric types) |
+| `investigator_slot` | int/empty | 0 | Which mouse initiated (for asymmetric types) |
 | `mean_nose_nose_dist_px` | float/null | 42.3 | Mean nose-nose distance during event |
 | `mean_centroid_dist_px` | float/null | 65.1 | Mean centroid distance during event |
 | `mean_mask_iou` | float/null | 0.02 | Mean mask overlap during event |

@@ -1,6 +1,6 @@
 # YOLO Limitations for Multi-Animal Pose Tracking
 
-Research notes on why YOLO underperforms in our rat tracking scenario and what
+Research notes on why YOLO underperforms in our mouse tracking scenario and what
 alternatives exist.
 
 ---
@@ -8,13 +8,13 @@ alternatives exist.
 ## 1. Our Problem
 
 YOLO26 in detect-only mode is intermittent and unstable when tracking 2 identical
-rats in a cage. Running `debug_yolo_only.py` on 120s of video showed:
+mice in a cage. Running `debug_yolo_only.py` on 120s of video showed:
 
 - Detection count fluctuates between 0, 1, and 2 unpredictably
 - Detections appear and disappear every second
 - Box identity swaps frame-to-frame (box 0 ↔ box 1)
 - Overlapping/merged boxes during close interactions
-- Even when rats are clearly separated, YOLO sometimes detects only 1
+- Even when mice are clearly separated, YOLO sometimes detects only 1
 
 This instability cascades through the entire reference pipeline — SAM2 gets bad
 prompts, IdentityMatcher gets unstable inputs, masks bleed/flicker/swap.
@@ -29,11 +29,11 @@ YOLO is a **pure single-frame detector**. It has no concept of what it detected
 in the previous frame. Every frame is an independent prediction from scratch.
 
 This means:
-- Small appearance changes (rat turns slightly) can cause a detection to appear
+- Small appearance changes (mouse turns slightly) can cause a detection to appear
   or disappear
 - There is no smoothing — confidence can jump from 0.9 to 0.1 between frames
 - Keypoint positions can jump or drift with no continuity
-- Detection ordering (which rat is "box 0") is arbitrary each frame
+- Detection ordering (which mouse is "box 0") is arbitrary each frame
 
 Recent "temporal YOLO" research adds spatiotemporal modules specifically because
 vanilla YOLO has keypoint drift and temporal instability. Standard YOLO was not
@@ -41,7 +41,7 @@ designed to maintain identity or consistency across frames.
 
 ### 2.2 Identical appearance
 
-Both rats are the same species, color, and size. YOLO relies on appearance
+Both mice are the same species, color, and size. YOLO relies on appearance
 features to distinguish detections — when two objects look identical, the model
 has no reliable signal to decide which is which.
 
@@ -50,19 +50,19 @@ where objects have visible differences (color, size, shape, clothing).
 
 ### 2.3 Posture changes
 
-Rats contract, stretch, curl up, stand on hind legs, and groom — their
-silhouette changes drastically between frames. A curled-up rat looks very
+Mice contract, stretch, curl up, stand on hind legs, and groom — their
+silhouette changes drastically between frames. A curled-up mouse looks very
 different from a stretched-out one. If the training data was biased toward
-certain postures, the model's confidence will fluctuate when the rat assumes
+certain postures, the model's confidence will fluctuate when the mouse assumes
 under-represented poses.
 
 ### 2.4 Close interactions
 
 During nose-to-nose, side-by-side, or climbing interactions:
 - Bounding boxes overlap heavily or merge into one
-- Keypoints from both rats fall within overlapping regions
-- The model can't reliably assign keypoints to the correct rat
-- One rat may be partially occluded by the other
+- Keypoints from both mice fall within overlapping regions
+- The model can't reliably assign keypoints to the correct mouse
+- One mouse may be partially occluded by the other
 
 ### 2.5 YOLO26's NMS-free architecture
 
@@ -71,16 +71,16 @@ generally an improvement, but it means:
 - The `nms_iou` parameter in our config **does nothing** — it's silently ignored
 - We cannot tune NMS behavior to control how overlapping boxes are handled
 - The one-to-one head is designed for distinguishable objects — two identical
-  rats push it into an ambiguous regime
+  mice push it into an ambiguous regime
 
 ### 2.6 Training distribution
 
 Our YOLO26 model was trained at `imgsz=640` with 7 keypoints. If the training
 set was sparse on:
-- Occluded rats (one behind the other)
+- Occluded mice (one behind the other)
 - Close interactions (nose-to-nose, climbing)
 - Edge poses (curled up, standing, grooming)
-- Low-contrast positions (rat color similar to cage floor)
+- Low-contrast positions (mouse color similar to cage floor)
 
 ...then the model's confidence in those situations will be low and flickery.
 
@@ -91,7 +91,7 @@ set was sparse on:
 Ultralytics demos show YOLO counting potatoes on a conveyor belt with no
 identity swaps. This works because the task is fundamentally easier:
 
-| Factor | Potatoes on conveyor | Rats in cage |
+| Factor | Potatoes on conveyor | Mice in cage |
 |--------|---------------------|--------------|
 | Movement | One direction, constant speed | Free, unpredictable |
 | Overlap | Never touch | Nose-to-nose, climb over |
@@ -115,7 +115,7 @@ scenario simply never hits this limitation because potatoes don't interact.
 
 Currently `detection.confidence=0.25` (default). Options:
 - Lower (0.10–0.20): fewer missed detections, but more false positives
-- Higher (0.30–0.40): fewer false positives, but more missed rats
+- Higher (0.30–0.40): fewer false positives, but more missed mice
 
 Worth testing on HPC to see if detection count stabilizes at lower thresholds.
 
@@ -177,30 +177,30 @@ or specialized identity modules.
 
 ---
 
-## 6. Experiment: YOLO on Per-Rat Crops (2026-03-04)
+## 6. Experiment: YOLO on Per-Mouse Crops (2026-03-04)
 
 **Script:** `scripts/research/test_yolo_cropped_keypoints.py`
 
-**Idea:** Run YOLO on cropped, mask-isolated rat regions instead of the full
-image. Each crop contains only one rat (non-mask pixels blacked out), so YOLO
+**Idea:** Run YOLO on cropped, mask-isolated mouse regions instead of the full
+image. Each crop contains only one mouse (non-mask pixels blacked out), so YOLO
 can't confuse identities. This was the "short-term pragmatic option" from the
 proposed pipeline refactor.
 
 **Result:** YOLO keypoints degrade significantly on crops.
 
-- Full image: both rats detected, all 7 keypoints with labels and high confidence
-- Cropped: rat detected but only ~3-4 keypoints, lower confidence, some missing
+- Full image: both mice detected, all 7 keypoints with labels and high confidence
+- Cropped: mouse detected but only ~3-4 keypoints, lower confidence, some missing
 
 **Why it fails:**
 - **Out of distribution**: YOLO was trained on full 640x640 images with cage
-  context (floor, walls, both rats visible). A black background with just a rat
+  context (floor, walls, both mice visible). A black background with just a mouse
   silhouette is something the model has never seen.
-- **Small crops**: rat bounding boxes are ~120-200px, upscaled to fit YOLO's
+- **Small crops**: mouse bounding boxes are ~120-200px, upscaled to fit YOLO's
   input — loss of detail, blurry keypoints.
-- **Missing context**: YOLO uses surrounding context (cage edges, other rat) as
+- **Missing context**: YOLO uses surrounding context (cage edges, other mouse) as
   cues for keypoint localization. Removing context removes information.
 
-**Conclusion:** Running YOLO on per-rat crops is **not viable** with the current
+**Conclusion:** Running YOLO on per-mouse crops is **not viable** with the current
 model. A dedicated pose model trained on cropped instances would be needed, which
 is a larger effort (data collection, labeling, training).
 
@@ -218,14 +218,14 @@ from YOLO's per-frame interference.
 ### The remaining contradiction
 
 - **Masks**: SAM2 centroid propagation works — YOLO not needed after init
-- **Keypoints**: ContactTracker needs per-rat keypoints (nose, ears, tail) for
+- **Keypoints**: ContactTracker needs per-mouse keypoints (nose, ears, tail) for
   contact classification — only YOLO provides these
 - **Problem**: YOLO's keypoints are unreliable (intermittent, swapping), but we
   need them for contacts
 
 ### Ruled out
 
-- [x] ~~YOLO on per-rat crops~~ — keypoints degrade, out of distribution (Section 6)
+- [x] ~~YOLO on per-mouse crops~~ — keypoints degrade, out of distribution (Section 6)
 - [x] ~~Periodic YOLO re-initialization~~ — YOLO swaps break stable propagation
 - [x] ~~SAM2 multimask for tail coverage~~ — picks up background/cage
 
@@ -234,7 +234,7 @@ from YOLO's per-frame interference.
 - [ ] Can we use YOLO keypoints on the full image with temporal filtering
   (average across N frames, reject outliers) to smooth out the noise?
 - [ ] Can we extract keypoint-like positions from SAM2 masks? (e.g., nose as
-  the mask point closest to the other rat, tail as the furthest point)
+  the mask point closest to the other mouse, tail as the furthest point)
 - [ ] Should we look at DeepLabCut or SLEAP for keypoints instead of YOLO?
 - [ ] Would retraining YOLO with more interaction/occlusion data help?
 - [ ] Can the multimask IoU selection (pick candidate by prev-mask IoU) improve
