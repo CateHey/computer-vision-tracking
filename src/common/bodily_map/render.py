@@ -92,7 +92,7 @@ def duration_heatmap(rows: Sequence[dict]):
 def _draw_heat(ax, fig, rows, cbar_label=None, cbar_orient="vertical", small=False):
     import matplotlib.pyplot as plt
     from matplotlib.colors import PowerNorm
-    draw_template(ax, labels=not small, fontsize=6.5, lw=1.0 if small else 1.2)
+    draw_template(ax, labels=False, lw=1.0 if small else 1.2)
     if not rows:
         ax.text(0.5, 0.0, "no contacts", ha="center", va="center", color="#777777", fontsize=9, zorder=9)
         return 0
@@ -146,8 +146,8 @@ def _legend_panel(ax, keys, key_label, rows, title, subtitle):
                       ms=11 if marker_for(k) == "*" else 8, label=f"{k}  ({MARKER_NAMES[mouse_slot(k) % 6]})")
                for k in keys]
     if handles:
-        ax.legend(handles=handles, title=key_label, loc="upper left", bbox_to_anchor=(0.0, 0.68),
-                  frameon=False, fontsize=8, title_fontsize=8, alignment="left")
+        ax.legend(handles=handles, title=key_label, loc="upper left", bbox_to_anchor=(0.0, 0.64), ncol=2,
+                  frameon=False, fontsize=8, title_fontsize=8, alignment="left", columnspacing=1.2)
     tab = region_table(rows)
     lines = ["region        n   dur (s)"] + [
         f"{reg:<11}{v['count']:>5} {v['dur_sec']:>8.2f}" for reg, v in tab.items() if v["count"]]
@@ -165,7 +165,6 @@ def _render_map(rows, key, key_label, title, subtitle, path: Path) -> Dict[str, 
                           left=0.045, right=0.985, top=0.95, bottom=0.05)
     ax = fig.add_subplot(gs[0, 0:3])
     off = _draw_heat(ax, fig, rows, cbar_label="contact duration (s)")
-    _scatter(ax, rows, key)
     _style_axes(ax)
     ax.set_title("All contact types combined", fontsize=10, loc="left")
     keys = sorted({r[key] for r in rows}, key=mouse_slot)
@@ -208,3 +207,19 @@ def render_active_combined(records, focal: str, out_dir) -> Dict[str, dict]:
     return _render_map(rows, "focal_mouse", "touched mouse", f"Active map of {focal}, all partners pooled",
                        f"Where {focal} touches others,\non a generic template.\nMarker = touched mouse.",
                        Path(out_dir) / f"active_{focal}_combined.png")
+
+
+def render_template_key(out_dir) -> Path:
+    """template_key.png: the silhouette with every region labelled (labels kept off the data panels)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(9, 3.4))
+    draw_template(ax, labels=True, fontsize=8)
+    ax.set_title("Template mouse key (nose left, tail right; top = mouse's right side)", fontsize=10, loc="left")
+    ax.set_xlabel("t along body (0 = nose, 1 = tail tip)", fontsize=8)
+    ax.set_ylabel("s (body lengths)", fontsize=8)
+    path = Path(out_dir) / "template_key.png"
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    return path

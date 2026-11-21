@@ -68,6 +68,7 @@ def run_all(records, run_dir, out: Path) -> Path:
     mice = sorted({r[k] for r in records for k in ("focal_mouse", "other_mouse")}, key=R.mouse_slot)
     print("mice:", ", ".join(mice))
     written = []
+    R.render_template_key(out)
     for a in mice:
         for name, rows, fn in (
                 (f"passive_{a}", R.select_passive(records, a), lambda a=a: R.render_passive(records, a, out)),

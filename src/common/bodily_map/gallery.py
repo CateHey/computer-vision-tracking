@@ -128,6 +128,9 @@ more than a brief touch. Markers show individual contact frames: shape and colou
 carries the identity for colour-blind readers. Each figure has a combined panel plus one panel per contact type
 (nose-to-nose, nose-to-anogenital, nose-to-body, side-by-side), each with its own colour scale. Following-type contacts are excluded.
 Nose-to-nose contacts dominate the total, so the per-type panels are the place to look for contacts elsewhere on the body.</p>
+<p>Region names are not printed on the maps; see the template key below (dashed lines on the maps mark the same regions).
+Markers appear in the four per-type panels only; the large combined panel is a clean heatmap.</p>
+{'<img src="template_key.png" alt="Template mouse key" style="max-width:700px;width:100%">' if (out / "template_key.png").exists() else ""}
 <div class="legend"><strong>Mice:</strong> {legend}</div></div>
 <div class="card"><h2>Overview: duration of contact (s)</h2>{_overview(records, mice)}
 <p class="note">Row mouse touches column mouse. Detail below.</p></div>
