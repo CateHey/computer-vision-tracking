@@ -282,7 +282,7 @@ def _summary_tab(out: Path, records, mice, legend) -> str:
          '<div class="sec-head"><h2>Key findings</h2><span class="note">computed from the located contacts of this run</span></div>',
          _findings_html(records, mice),
          _live_card('Contacts over time', 'Press play: contacts appear on the template mouse as they happen, and the timeline below '
-                    'shows when. Drag the slider or click the timeline to jump to any moment.', '', 'passive'),
+                    'shows when. Drag the slider or click the timeline to jump to any moment.', '', 'all'),
          '<div class="callout"><h2>How we tell active from passive, and when we cannot</h2>'
          f'<p>{html.escape(EXPLAINER)}</p><details><summary>Caveats (provisional)</summary>'
          f'<p>{html.escape(CAVEATS)}</p></details></div>',
@@ -315,7 +315,7 @@ def _mouse_tab(out: Path, records, mice, m: str, st) -> str:
     sec = [f'<section class="tab" role="tabpanel" id="{m}"><div class="mhead">{_dot(m, "lg")}<h1>{m}</h1></div>'
            f'<p class="note">Touched in {len(pas)} frames, touching in {len(comb)} frames.</p>'
            f'<div class="chips">{chips_html}</div>',
-           _live_card(f'{m} over time', f'Where {m} is touched (or touches) as the session unfolds.', m, 'passive'),
+           _live_card(f'{m} over time', f'Where {m} is touched (or touches) as the session unfolds.', m, 'all'),
            _figure(out, f"passive_{m}.png", pas, f"Passive map of {m}: where others touch {m}"),
            _figure(out, f"active_{m}_combined.png", comb,
                    f"Active map of {m}: where {m} touches others (all partners pooled)"),

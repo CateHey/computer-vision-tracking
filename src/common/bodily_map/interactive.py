@@ -19,6 +19,8 @@ from . import template as T
 from .locate import slot_color_rgb
 
 TYPE_CODES = ["N2N", "N2AG", "N2B", "SBS"]
+MUTUAL_TYPES = ("N2N", "SBS")      # no active/passive direction
+DIRECTIONAL_TYPES = ("N2AG", "N2B")
 _DURATION_KEYS = ("duration_sec", "video_duration_sec", "session_duration_sec", "t_end")
 
 
@@ -80,7 +82,7 @@ def build_payload(records: Sequence[dict], mice: Sequence[str], run_dir=None) ->
     return {
         "t_end": session_end(run_dir, rows),
         "mice": mice, "colors": [mouse_hex(m) for m in mice],
-        "types": TYPE_CODES, "regions": reg_names,
+        "types": TYPE_CODES, "mutual": [TYPE_CODES.index(x) for x in MUTUAL_TYPES], "regions": reg_names,
         "records": {
             "time": [round(r["time_sec"], 3) for r in rows],
             "focal": [idx[r["focal_mouse"]] for r in rows],
@@ -101,7 +103,7 @@ def payload_script(payload: dict) -> str:
     return "<script>const BM_DATA=" + txt.replace("</", "<\\/") + ";</script>"
 
 
-def widget(focal: str = "", view: str = "passive") -> str:
+def widget(focal: str = "", view: str = "all") -> str:
     """Placeholder the JS fills in (lazily, when its tab is first shown)."""
     return (f'<div class="bmp" tabindex="0" data-focal="{focal}" data-view="{view}" '
             'aria-label="Interactive bodily map with timeline"><p class="empty">Loading interactive map...</p></div>')

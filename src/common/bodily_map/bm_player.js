@@ -11,7 +11,8 @@ function el(tag,cls,html){var e=document.createElement(tag);if(cls)e.className=c
 
 function BMPlayer(root){
   var R=D.records,TP=D.template,n=R.time.length;
-  var s={focal:-1,view:(root.dataset.view==='active'?'active':'passive'),color:'mouse',heat:false,T:0,playing:false,speed:1,last:0,sel:[],byType:[[],[],[],[]],count:0};
+  var VIEWS=['all','passive','active','mutual'];
+  var s={focal:-1,cat:'all',view:(VIEWS.indexOf(root.dataset.view)>=0?root.dataset.view:'all'),color:'mouse',heat:false,T:0,playing:false,speed:1,last:0,sel:[],byType:[[],[],[],[]],count:0};
   var f0=root.dataset.focal;if(f0){var k=D.mice.indexOf(f0);if(k>=0)s.focal=k}
   var rate=Math.max(1,D.t_end/45);
   root.innerHTML='';
@@ -24,10 +25,11 @@ function BMPlayer(root){
   var mo=[['-1','All mice']].concat(D.mice.map(function(m,i){return [String(i),m]}));
   var sSpeed=sel('Speed',[['1','1x'],['2','2x'],['4','4x']],'Playback speed');
   var sMouse=sel('Mouse',mo,'Which mouse to show');
-  var sView=sel('View',[['passive','Touched (passive)'],['active','Touching (active)']],'Passive: where others touch this mouse. Active: where this mouse touches others');
+  var sView=sel('View',[['all','Touched — all'],['passive','Passive (directional)'],['active','Active / Touching (directional)'],['mutual','Mutual (N2N + SBS)']],'Which contacts to show for this mouse: all touches on its body, directional passive, directional active, or mutual');
+  var sCat=sel('Category',[['all','All'],['dir','Directional'],['mut','Mutual']],'Category filter: all, directional (N2AG, N2B) or mutual (N2N, SBS)');
   var sCol=sel('Colour by',[['mouse','Mouse'],['type','Contact type']],'Colour dots by');
   var lh=el('label','','<input type="checkbox"> Density');var cHeat=lh.firstChild;cHeat.setAttribute('aria-label','Show density heatmap');
-  [bPlay,bReset,tr,sSpeed[0],sMouse[0],sView[0],sCol[0],lh].forEach(function(x){bar.appendChild(x)});
+  [bPlay,bReset,tr,sSpeed[0],sMouse[0],sView[0],sCat[0],sCol[0],lh].forEach(function(x){bar.appendChild(x)});
   var slider=document.createElement('input');slider.type='range';slider.className='bmp-slider';slider.min=0;slider.max=D.t_end;slider.step=0.1;slider.value=0;
   slider.setAttribute('aria-label','Session time');
   var plot=el('div','bmp-plot'),cv=document.createElement('canvas');cv.setAttribute('role','img');
@@ -36,20 +38,27 @@ function BMPlayer(root){
   tc.setAttribute('aria-label','Timeline of contacts by type with time cursor');tlw.appendChild(tc);
   var tip=el('div','bmp-tip');tlw.appendChild(tip);
   var foot=el('div','bmp-foot'),leg=el('div','legend'),note=el('span','note');foot.appendChild(leg);foot.appendChild(note);
-  [bar,slider,plot,tlw,foot].forEach(function(x){root.appendChild(x)});
+  var mnote=el('p','note','Hollow rings = mutual contacts: N2N (nose-to-nose) and SBS (side-by-side) have no active/passive direction, both mice investigate each other (as in the summary figure). Filled dots = directional (N2AG, N2B). A mutual contact is shown once on each mouse.');
+  [bar,slider,plot,tlw,foot,mnote].forEach(function(x){root.appendChild(x)});
   sMouse[1].value=String(s.focal);sView[1].value=s.view;
   var ctx=cv.getContext('2d'),tx=tc.getContext('2d');
   var ratio=TP.aspect*(TP.smax-TP.smin)/(TP.tmax-TP.tmin);
   var W=0,H=0,TW=0,TH=0,dpr=1,heatCv=document.createElement('canvas'),GW=120,GH=54;heatCv.width=GW;heatCv.height=GH;
   var heatN=-2;
 
+  function isMut(i){var t=R.type[i];return t===0||t===3}
   function recalc(){
     s.sel=[];s.byType=[[],[],[],[]];
     for(var i=0;i<n;i++){
-      var ok=s.focal<0||(s.view==='passive'?R.focal[i]===s.focal:R.other[i]===s.focal);
+      var mu=isMut(i),ok;
+      if(s.focal<0)ok=s.cat==='all'||(s.cat==='mut')===mu;
+      else if(s.view==='all')ok=R.focal[i]===s.focal;
+      else if(s.view==='passive')ok=!mu&&R.focal[i]===s.focal;
+      else if(s.view==='active')ok=!mu&&R.other[i]===s.focal;
+      else ok=mu&&R.focal[i]===s.focal;
       if(ok){s.sel.push(i);s.byType[R.type[i]].push(i)}}
     heatN=-2;
-    sView[1].disabled=s.focal<0;
+    sView[1].disabled=s.focal<0;sCat[1].disabled=s.focal>=0;
   }
   function upper(list,t){var lo=0,hi=list.length;while(lo<hi){var m=(lo+hi)>>1;if(R.time[list[m]]<=t)lo=m+1;else hi=m}return lo}
   function col(i){
@@ -96,12 +105,14 @@ function BMPlayer(root){
     c.lineWidth=.8;
     for(var q=0;q<cnt;q++){var i=s.sel[q],age=Tn-R.time[i];if(age<=RECENT)continue;
       var p=px(R.tt[i],R.ss[i]);c.globalAlpha=.5;c.fillStyle=col(i);c.strokeStyle='rgba(20,20,40,.55)';
-      c.beginPath();c.arc(p[0],p[1],r0*.72,0,6.283);c.fill();c.stroke()}
+      c.beginPath();c.arc(p[0],p[1],r0*.72,0,6.283);
+      if(isMut(i)){c.globalAlpha=.8;c.fillStyle='#fff';c.fill();c.strokeStyle=col(i);c.lineWidth=1.6;c.stroke();c.lineWidth=.8}else{c.fill();c.stroke()}}
     for(var q2=Math.max(0,cnt-4000);q2<cnt;q2++){var j=s.sel[q2],a=Tn-R.time[j];if(a>RECENT)continue;
       var f=1-a/RECENT,pp=px(R.tt[j],R.ss[j]),cl=col(j);
       c.globalAlpha=.28*f;c.fillStyle=cl;c.beginPath();c.arc(pp[0],pp[1],r0*(2.2+1.2*f),0,6.283);c.fill();
       c.globalAlpha=1;c.lineWidth=1.2;c.strokeStyle='#14152A';c.fillStyle=cl;
-      c.beginPath();c.arc(pp[0],pp[1],r0*(1+.6*f),0,6.283);c.fill();c.stroke()}
+      c.beginPath();c.arc(pp[0],pp[1],r0*(1+.6*f),0,6.283);
+      if(isMut(j)){c.fillStyle='#fff';c.fill();c.stroke();c.beginPath();c.arc(pp[0],pp[1],r0*(1+.6*f)-1.2,0,6.283);c.strokeStyle=cl;c.lineWidth=2;c.stroke()}else{c.fill();c.stroke()}}
     c.globalAlpha=1}
   var GUT=46,ROWH=0,TOP=6;
   function tlx(t){return GUT+t/D.t_end*(TW-GUT-8)}
@@ -128,8 +139,11 @@ function BMPlayer(root){
     slider.value=s.T;tr.textContent=fmt(s.T)+' / '+fmt(D.t_end);
     slider.setAttribute('aria-valuetext',fmt(s.T));
     drawMap();drawTL();
-    var who=s.focal<0?'all mice':(D.mice[s.focal]+(s.view==='passive'?' touched':' touching'));
-    note.textContent=s.count+' of '+s.sel.length+' contacts shown ('+who+'; last '+RECENT+' s highlighted)'+
+    var who=s.focal<0?'all mice':(D.mice[s.focal]+': '+sView[1].options[sView[1].selectedIndex].textContent);
+    var dir=0,mu=0,dirT=0,muT=0;
+    for(var q=0;q<s.sel.length;q++){var m=isMut(s.sel[q]);if(m)muT++;else dirT++;if(q<s.count){if(m)mu++;else dir++}}
+    var ev=s.focal<0?(dir+Math.round(mu/2)):(dir+mu),evT=s.focal<0?(dirT+Math.round(muT/2)):(dirT+muT);
+    note.textContent=ev+' of '+evT+' touch events shown ('+who+'; mutual contacts counted once; last '+RECENT+' s highlighted)'+
       (s.focal>=0&&s.view==='active'&&s.color==='mouse'?'. Colour = touched mouse.':'')}
   function resize(){
     var w=Math.floor(plot.clientWidth-14);if(w<40)return;
@@ -154,6 +168,7 @@ function BMPlayer(root){
   sSpeed[1].addEventListener('change',function(){s.speed=parseFloat(sSpeed[1].value)});
   sMouse[1].addEventListener('change',function(){s.focal=parseInt(sMouse[1].value,10);recalc();update()});
   sView[1].addEventListener('change',function(){s.view=sView[1].value;recalc();update()});
+  sCat[1].addEventListener('change',function(){s.cat=sCat[1].value;recalc();update()});
   sCol[1].addEventListener('change',function(){s.color=sCol[1].value;legend();update()});
   cHeat.addEventListener('change',function(){s.heat=cHeat.checked;update()});
   function tlT(e){var b=tc.getBoundingClientRect();return [(e.clientX-b.left-GUT)/(b.width-GUT-8)*D.t_end,e.clientX-b.left,e.clientY-b.top]}

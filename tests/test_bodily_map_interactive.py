@@ -58,3 +58,10 @@ def test_empty_and_script_safe(tmp_path):
     (tmp_path / "provenance.json").write_text('{"duration_sec": 99.5}')
     assert session_end(tmp_path, RECS) == 99.5
     assert 'data-focal="R2"' in widget("R2")
+
+
+def test_mutual_categories():
+    from src.common.bodily_map.interactive import DIRECTIONAL_TYPES, MUTUAL_TYPES
+    p = build_payload(RECS, ["R1", "R2", "R3"])
+    assert [p["types"][i] for i in p["mutual"]] == list(MUTUAL_TYPES) == ["N2N", "SBS"]
+    assert not set(DIRECTIONAL_TYPES) & set(MUTUAL_TYPES)
