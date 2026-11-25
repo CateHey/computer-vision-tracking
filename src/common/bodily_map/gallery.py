@@ -22,16 +22,16 @@ from .template import REGION_ORDER
 FEW = 20  # fewer contact frames than this: flagged as low-evidence
 
 _DARK = """--ground:#0A0C17;--surface:#141829;--surface-2:#1C2138;--border:#272C48;--border-firm:#3A4068;
---ink:#ECEEF8;--ink-2:#ADB3D4;--ink-3:#7C83AA;--accent:#9B93FF;--accent-ink:#0A0C17;--accent-soft:#201E42;
---accent-2:#34E3E3;--accent-3:#FF74D4;--warn:#E0B062;--warn-soft:#2C2417;
---shadow:0 1px 2px rgba(0,0,0,.5),0 12px 34px -16px rgba(0,0,0,.75);--grad:linear-gradient(90deg,#9B93FF,#B79BFF,#FF74D4);"""
+--ink:#ECEEF8;--ink-2:#ADB3D4;--ink-3:#7C83AA;--accent:#6C9CFF;--accent-ink:#0A0C17;--accent-soft:#1B1F47;
+--accent-2:#A78BFA;--accent-3:#8B8CFF;--warn:#E0B062;--warn-soft:#2C2417;
+--shadow:0 1px 2px rgba(0,0,0,.5),0 12px 34px -16px rgba(0,0,0,.75);--grad:linear-gradient(90deg,#6C9CFF,#8B8CFF,#A78BFA);"""
 
 CSS = """
 /* Vivid neuroscience palette (light, OS-dark guarded by data-theme, explicit dark). */
-:root{color-scheme:light;--ground:#F4F5FB;--surface:#FFFFFF;--surface-2:#EDEEF8;--border:#E0E2F0;--border-firm:#C7CBE4;
---ink:#14152A;--ink-2:#40456A;--ink-3:#686F96;--accent:#5B4BF0;--accent-ink:#FFFFFF;--accent-soft:#EBE9FE;
---accent-2:#0FB6C4;--accent-3:#E0489B;--warn:#9A5B00;--warn-soft:#FDF1DD;
---shadow:0 1px 2px rgba(20,21,42,.06),0 10px 30px -14px rgba(60,40,200,.22);--grad:linear-gradient(90deg,#5B4BF0,#8B5CF6,#E0489B);
+:root{color-scheme:light;--ground:#F3F4FC;--surface:#FFFFFF;--surface-2:#ECECF8;--border:#DEE0F2;--border-firm:#C6C8E8;
+--ink:#14152A;--ink-2:#3C4066;--ink-3:#656A93;--accent:#2563EB;--accent-ink:#FFFFFF;--accent-soft:#E7EAFF;
+--accent-2:#8B5CF6;--accent-3:#6366F1;--warn:#9A5B00;--warn-soft:#FDF1DD;
+--shadow:0 1px 2px rgba(20,21,42,.06),0 10px 30px -14px rgba(49,46,180,.24);--grad:linear-gradient(90deg,#2563EB,#6366F1,#8B5CF6);
 --step--1:.75rem;--step-0:.875rem;--step-1:1rem;--step-2:1.375rem;--step-3:1.875rem;--step-4:2.5rem;
 --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}

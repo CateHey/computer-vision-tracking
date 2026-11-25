@@ -1,6 +1,6 @@
 (function(){
 var D=(typeof BM_DATA!=='undefined')?BM_DATA:null;
-var TCOL=['#5B4BF0','#E0489B','#0FB6C4','#E69F00'],RECENT=1.5;
+var TCOL=['#2563EB','#E0489B','#0FB6C4','#E69F00'],RECENT=1.5;
 function pad(n){return (n<10?'0':'')+n}
 function fmt(t,dec){t=Math.max(0,t);var m=Math.floor(t/60),s=t-m*60;
   return pad(m)+':'+(dec?(s<10?'0':'')+s.toFixed(1):pad(Math.floor(s)))}
@@ -132,7 +132,7 @@ function BMPlayer(root){
     var span=D.t_end,steps=[1,2,5,10,15,30,60,120,300,600],st=steps[steps.length-1];
     for(var k=0;k<steps.length;k++){if(span/steps[k]<=Math.max(3,(TW-GUT)/70)){st=steps[k];break}}
     for(var t=0;t<=span+1e-6;t+=st){var xx=Math.round(tlx(t))+.5;c.beginPath();c.moveTo(xx,TOP+4*ROWH);c.lineTo(xx,TOP+4*ROWH+4);c.stroke();c.fillText(fmt(t),xx,TOP+4*ROWH+6)}
-    var cx=tlx(s.T);c.strokeStyle='#5B4BF0';c.fillStyle='#5B4BF0';c.lineWidth=2;
+    var cx=tlx(s.T);c.strokeStyle='#2563EB';c.fillStyle='#2563EB';c.lineWidth=2;
     c.beginPath();c.moveTo(cx,TOP-2);c.lineTo(cx,TOP+4*ROWH);c.stroke();
     c.beginPath();c.moveTo(cx-5,0);c.lineTo(cx+5,0);c.lineTo(cx,6);c.closePath();c.fill()}
   function update(){
