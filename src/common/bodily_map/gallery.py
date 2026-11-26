@@ -123,6 +123,7 @@ footer{max-width:1240px;margin:0 auto;padding:8px 20px 48px;color:var(--ink-3);f
 @media(max-width:520px){.wrap,.topin,footer{padding-left:16px;padding-right:16px}.mhead h1{font-size:var(--step-3)}.stats{grid-template-columns:minmax(0,1fr)}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 %BM%
+html.embed .topin{display:none}
 @media print{.topbar,#lb{display:none!important}.tab{display:block!important}.tab+.tab{break-before:page}
 .card,.chip,.callout{break-inside:avoid;box-shadow:none}body{background:#fff}details>*{display:block}}
 """.replace("%DARK%", _DARK).replace("%BM%", BM_CSS)
@@ -348,7 +349,7 @@ def build_gallery(run_dir, records: Sequence[dict], out_dir, mice: Sequence[str]
             '<circle cx="6" cy="10" r="4.5" fill="#0f6e63"/><circle cx="14" cy="10" r="4.5" fill="#4fd1bd" fill-opacity=".8"/></svg>')
     parts = [f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bodily Maps of Social Contact</title><style>{CSS}</style></head><body>
+<title>Bodily Maps of Social Contact</title><script>if(/[?&]embed=1/.test(location.search))document.documentElement.classList.add('embed')</script><style>{CSS}</style></head><body>
 <div class="topbar"><div class="topin"><span class="mark">{mark}<span class="ttl">Bodily Maps of Social Contact</span></span>
 <span class="spacer"></span><span class="filechip">{html.escape(meta)}</span><span class="pill">provisional</span>
 <button id="theme" class="btn" type="button">Theme: auto</button></div>
